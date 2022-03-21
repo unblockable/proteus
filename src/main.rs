@@ -4,20 +4,16 @@ mod socks;
 use log;
 use std::process;
 
-use crate::pt::config::{Config, ConfigError};
+use crate::pt::config::{Config, ConfigError, Mode};
 use crate::pt::control;
 
 fn main() {
     control::init_logger();
 
-    log::info!("Hello, world!");
+    log::info!("UPGen started and initialized logger.");
 
-    let _config = match Config::from_env() {
-        Ok(c) => {
-            control::send_to_parent(control::Message::Version);
-            control::send_to_parent(control::Message::ProxyDone);
-            c
-        }
+    let config = match Config::from_env() {
+        Ok(c) => c,
         Err(e) => {
             match e {
                 ConfigError::VersionError(_) => control::send_to_parent(control::Message::VersionError),
@@ -28,13 +24,33 @@ fn main() {
         }
     };
 
-    
-    // TODO
-    // if config.mode == Config::Mode::Client{
-    // start client
-    // control::send_to_parent(control::Message::ClientMethod(sockaddr that the client's socks server is listening on));
-    // }
-    // if config.mode == Config::Mode::Server{
-    // start server
-    // }
+    log::info!("Finished parsing configuration.");
+    log::debug!("{:?}", config);
+
+    // Tell parent that we support the PT version.
+    control::send_to_parent(control::Message::Version);
+
+    match config.mode {
+        Mode::Client(client_conf) => {
+            log::info!("UPGen is running in client mode.");
+
+            if client_conf.proxy.is_some() {
+                control::send_to_parent(control::Message::ProxyDone);
+            }
+
+            // TODO:
+            // start client (socks server)
+            // control::send_to_parent(control::Message::ClientMethod(sockaddr that the client's socks server is listening on));
+            // wait for socks connections
+        },
+        Mode::Server(_server_conf) => {
+            log::info!("UPGen is running in server mode.");
+
+            // TODO:
+            // start server (upgen reverse proxy)
+            // wait for connections from upgen clients
+        }
+    }
+
+    log::info!("UPGen completed, exiting now.");
 }

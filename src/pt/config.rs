@@ -4,52 +4,61 @@ use std::path::PathBuf;
 
 use crate::pt::env::{self, ParseEnvError};
 
+#[derive(Debug)]
 pub enum ConfigError {
     VersionError(String),
     ProxyError(String),
     EnvError(String),
 }
 
+#[derive(Debug)]
 pub enum Mode {
     Client(ClientConfig),
     Server(ServerConfig),
 }
 
+#[derive(Debug)]
 pub enum ForwardProtocol {
     Basic,
     Extended(PathBuf), // holds the auth cookie file location
 }
 
+#[derive(Debug)]
 pub struct SocksAuth {
     pub username: String,
     pub password: String,
 }
 
+#[derive(Debug)]
 pub struct SocksProxy {
     pub auth: Option<SocksAuth>,
     pub addr: SocketAddr,
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub common: CommonConfig,
     pub mode: Mode,
 }
 
+#[derive(Debug)]
 pub struct CommonConfig {
     pub state_location: PathBuf,
     pub exit_on_stdin_close: bool,
     pub connect_bind_addr: IpAddr,
 }
 
+#[derive(Debug)]
 pub struct ClientConfig {
     pub proxy: Option<SocksProxy>,
 }
 
+#[derive(Debug)]
 pub struct ServerConfig {
     pub options: HashMap<String, String>,
     pub listen_bind_addr: SocketAddr,
     pub forward_addr: SocketAddr,
-    pub forward_prot: ForwardProtocol,
+    pub forward_proto: ForwardProtocol,
 }
 
 impl From<ParseEnvError> for ConfigError {
@@ -144,7 +153,7 @@ impl Config {
         let listen_bind_addr = env::parse_server_bindaddr()?;
 
         // Special handling.
-        let (forward_addr, forward_prot) = match env::parse_server_or_port() {
+        let (forward_addr, forward_proto) = match env::parse_server_or_port() {
             Ok(sock_addr) => (sock_addr, ForwardProtocol::Basic),
             Err(e) => match e {
                 // If regular orport is missing, check for extor port.
@@ -164,7 +173,7 @@ impl Config {
             options,
             listen_bind_addr,
             forward_addr,
-            forward_prot,
+            forward_proto,
         })
     }
 }
