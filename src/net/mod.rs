@@ -12,8 +12,8 @@ pub mod socks;
 
 pub trait Frame<T> {
     /// Returns a parsed frame or `None` if it was incomplete.
-    fn parse(src: &mut Cursor<&[u8]>) -> Option<T>;
-    fn write<W: AsyncWriteExt>(&self, dst: &W) -> Result<(), net::Error>;
+    fn deserialize(src: &mut Cursor<&[u8]>) -> Option<T>;
+    fn serialize(&self) -> Bytes;
 }
 
 pub enum Error {
@@ -46,7 +46,7 @@ impl<'a> Connection {
             let mut read_cursor = Cursor::new(self.reader.buffer());
 
             // Try to parse the frame from the buffer.
-            if let Some(frame) = T::parse(&mut read_cursor) {
+            if let Some(frame) = T::deserialize(&mut read_cursor) {
                 let num_parsed = read_cursor.position() as usize;
 
                 // Mark the bytes as consumed.
@@ -69,15 +69,13 @@ impl<'a> Connection {
 
     /// Write a frame to the connection.
     pub async fn write_frame<T: Frame<T>>(&mut self, frame: &T) -> Result<(), net::Error> {
-        // implementation here
-        // let write_cursor = Cursor::new(&self.writer);
-
-        // let b = BytesMut::new();
-
-        // // let mut w = self.writer.by_ref();
-        // // w.w
-
-        // Ok(())
-        unimplemented!()
+        let buf = frame.serialize();
+        if let Err(e) = self.writer.write(&buf).await {
+            return Err(net::Error::IoError(e));
+        }
+        if let Err(e) = self.writer.flush().await {
+            return Err(net::Error::IoError(e));
+        }
+        Ok(())
     }
 }

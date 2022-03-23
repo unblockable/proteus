@@ -1,11 +1,9 @@
-use bytes::Buf;
-use std::io::{self, Cursor, BufWriter, Write, BufRead};
-use std::net::TcpStream;
+use std::io::{self, Cursor};
 use typestate::typestate;
 
-use tokio::io::AsyncWriteExt;
+use bytes::{Bytes, Buf, BytesMut, BufMut};
 
-use crate::net::{self, Frame};
+use crate::net::Frame;
 
 pub mod server;
 
@@ -180,7 +178,7 @@ fn get_u8(src: &mut Cursor<&[u8]>) -> Option<u8> {
 }
 
 impl Frame<Greeting> for Greeting {
-    fn parse(src: &mut Cursor<&[u8]>) -> Option<Greeting> {
+    fn deserialize(src: &mut Cursor<&[u8]>) -> Option<Greeting> {
         let version = get_u8(src)?;
         let num_auth_methods = get_u8(src)?;
 
@@ -196,7 +194,15 @@ impl Frame<Greeting> for Greeting {
         })
     }
 
-    fn write<W: AsyncWriteExt>(&self, dst: &W) -> Result<(), net::Error> {
-        todo!()
+    fn serialize(&self) -> Bytes {
+        let mut buf = BytesMut::with_capacity(10);
+
+        buf.put_u8(self.version);
+        buf.put_u8(self.supported_auth_methods.len() as u8);
+        for method in self.supported_auth_methods.iter() {
+            buf.put_u8(*method);
+        }
+
+        Bytes::from(buf)
     }
 }
