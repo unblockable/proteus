@@ -1,7 +1,11 @@
-use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Write};
-use std::net::TcpStream;
+// use std::io::{self, BufRead, Cursor, Write};
+use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{BufReader, BufWriter, AsyncBufReadExt, AsyncWriteExt};
 
-use bytes::{Bytes, Buf};
+use std::io::Cursor; 
+
+use bytes::{Bytes, Buf, BytesMut};
 
 use crate::net;
 pub mod socks;
@@ -9,32 +13,33 @@ pub mod socks;
 pub trait Frame<T> {
     /// Returns a parsed frame or `None` if it was incomplete.
     fn parse(src: &mut Cursor<&[u8]>) -> Option<T>;
-    fn write<W: Write>(&self, dst: &W) -> Result<(), net::Error>;
+    fn write<W: AsyncWriteExt>(&self, dst: &W) -> Result<(), net::Error>;
 }
 
 pub enum Error {
     Eof,
-    IoError(io::Error),
+    IoError(std::io::Error),
 }
 
 pub struct Connection {
-    reader: BufReader<TcpStream>,
-    writer: BufWriter<TcpStream>,
+    reader: BufReader<OwnedReadHalf>,
+    writer: BufWriter<OwnedWriteHalf>,
 }
 
-impl Connection {
-    pub fn new(stream: TcpStream) -> io::Result<Connection> {
-        Ok(Connection {
-            reader: BufReader::new(stream.try_clone()?),
-            writer: BufWriter::new(stream),
-        })
+impl<'a> Connection {
+    pub fn new(stream: TcpStream) -> Connection {
+        let (read_half, write_half) = stream.into_split();
+        Connection {
+            reader: BufReader::new(read_half),
+            writer: BufWriter::new(write_half),
+        }
     }
 
     /// Read a frame from the connection, blocking until enough data has arrived
     /// to fill the frame.
     ///
     /// Returns `None` if EOF is reached.
-    pub fn read_frame<T: Frame<T>>(&mut self) -> Result<T, net::Error> {
+    pub async fn read_frame<T: Frame<T>>(&mut self) -> Result<T, net::Error> {
         loop {
             // Get a cursor to seek over the buffered bytes.
             // let b = Bytes::from(self.reader.buffer());
@@ -51,7 +56,7 @@ impl Connection {
             }
 
             // Pull more bytes in from the source if possible.
-            match self.reader.fill_buf() {
+            match self.reader.fill_buf().await {
                 Ok(buf) => {
                     if buf.is_empty() {
                         return Err(net::Error::Eof);
@@ -63,13 +68,16 @@ impl Connection {
     }
 
     /// Write a frame to the connection.
-    pub fn write_frame<T: Frame<T>>(&mut self, frame: &T) -> Result<(), net::Error> {
+    pub async fn write_frame<T: Frame<T>>(&mut self, frame: &T) -> Result<(), net::Error> {
         // implementation here
-        let write_cursor = Cursor::new(&self.writer);
+        // let write_cursor = Cursor::new(&self.writer);
 
-        // let mut w = self.writer.by_ref();
-        // w.w
+        // let b = BytesMut::new();
 
-        Ok(())
+        // // let mut w = self.writer.by_ref();
+        // // w.w
+
+        // Ok(())
+        unimplemented!()
     }
 }

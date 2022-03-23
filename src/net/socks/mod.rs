@@ -3,6 +3,8 @@ use std::io::{self, Cursor, BufWriter, Write, BufRead};
 use std::net::TcpStream;
 use typestate::typestate;
 
+use tokio::io::AsyncWriteExt;
+
 use crate::net::{self, Frame};
 
 pub mod server;
@@ -70,6 +72,8 @@ mod socks5_protocol {
     use super::*;
     use crate::net::Connection;
 
+    use async_trait::async_trait;
+
     #[automaton]
     pub struct Socks5Protocol;
 
@@ -84,8 +88,9 @@ mod socks5_protocol {
     #[state] pub struct ClientHandshake {
         pub conn: Connection
     }
+    #[async_trait]
     pub trait ClientHandshake {
-        fn greeting(self) -> ClientHandshakeResult;
+        async fn greeting(self) -> ClientHandshakeResult;
     }
     pub enum ClientHandshakeResult {
         ServerHandshake, Error
@@ -95,8 +100,9 @@ mod socks5_protocol {
         pub conn: Connection,
         pub greeting: Greeting,
     }
+    #[async_trait]
     pub trait ServerHandshake {
-        fn choice(self) -> ServerHandshakeResult;
+        async fn choice(self) -> ServerHandshakeResult;
     }
     pub enum ServerHandshakeResult {
         ClientAuthentication, ClientCommand, Error
@@ -106,8 +112,9 @@ mod socks5_protocol {
         pub conn: Connection,
         pub choice: Choice,
     }
+    #[async_trait]
     pub trait ClientAuthentication {
-        fn auth_request(self) -> ClientAuthenticationResult;
+        async fn auth_request(self) -> ClientAuthenticationResult;
     }
     pub enum ClientAuthenticationResult {
         ServerAuthentication, Error
@@ -117,8 +124,9 @@ mod socks5_protocol {
         pub conn: Connection,
         pub auth_request: UserPassAuthRequest,
     }
+    #[async_trait]
     pub trait ServerAuthentication {
-        fn auth_response(self) -> ServerAuthenticationResult;
+        async fn auth_response(self) -> ServerAuthenticationResult;
     }
     pub enum ServerAuthenticationResult {
         ClientCommand, Error
@@ -128,8 +136,9 @@ mod socks5_protocol {
         pub conn: Connection,
         pub auth_response: Option<UserPassAuthResponse>,
     }
+    #[async_trait]
     pub trait ClientCommand {
-        fn connect_request(self) -> ClientCommandResult;
+        async fn connect_request(self) -> ClientCommandResult;
     }
     pub enum ClientCommandResult {
         ServerCommand, Error
@@ -139,8 +148,9 @@ mod socks5_protocol {
         pub conn: Connection,
         pub request: ConnectRequest,
     }
+    #[async_trait]
     pub trait ServerCommand {
-        fn connect_response(self) -> ServerCommandResult;
+        async fn connect_response(self) -> ServerCommandResult;
     }
     pub enum ServerCommandResult {
         Success, Error
@@ -186,7 +196,7 @@ impl Frame<Greeting> for Greeting {
         })
     }
 
-    fn write<W: Write>(&self, dst: &W) -> Result<(), net::Error> {
+    fn write<W: AsyncWriteExt>(&self, dst: &W) -> Result<(), net::Error> {
         todo!()
     }
 }

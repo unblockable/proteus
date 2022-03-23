@@ -1,5 +1,7 @@
 use super::socks5_protocol::*;
 
+use async_trait::async_trait;
+
 use crate::net::{self, socks, Connection};
 
 fn to_error_state(message: String) -> Socks5Protocol<Error> {
@@ -24,9 +26,10 @@ impl InitializationState for Socks5Protocol<Initialization> {
     }
 }
 
+#[async_trait]
 impl ClientHandshakeState for Socks5Protocol<ClientHandshake> {
-    fn greeting(mut self) -> ClientHandshakeResult {
-        match self.state.conn.read_frame::<socks::Greeting>() {
+    async fn greeting(mut self) -> ClientHandshakeResult {
+        match self.state.conn.read_frame::<socks::Greeting>().await {
             Ok(greeting) => {
                 let next = Socks5Protocol::<ServerHandshake> {
                     state: ServerHandshake {
@@ -88,22 +91,22 @@ impl ClientHandshakeState for Socks5Protocol<ClientHandshake> {
 //     }
 // }
 
-impl SuccessState for Socks5Protocol<Success> {
-    fn take(self) -> Connection {
-        self.state.conn
-    }
-}
+// impl SuccessState for Socks5Protocol<Success> {
+//     fn take(self) -> Connection {
+//         self.state.conn
+//     }
+// }
 
-impl ErrorState for Socks5Protocol<Error> {
-    fn take(self) -> String {
-        self.state.message
-    }
-}
+// impl ErrorState for Socks5Protocol<Error> {
+//     fn take(self) -> String {
+//         self.state.message
+//     }
+// }
 
-pub fn run_protocol(conn: Connection) -> Result<(), String> {
+pub async fn run_protocol(conn: Connection) -> Result<(), String> {
     let proto = Socks5Protocol::new(conn).start();
 
-    let proto = match proto.greeting() {
+    let proto = match proto.greeting().await {
         ClientHandshakeResult::ServerHandshake(s) => s,
         ClientHandshakeResult::Error(e) => return Err(e.state.message),
     };
