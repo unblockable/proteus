@@ -1,7 +1,7 @@
-use std::io::{self, Cursor};
+use std::io;
 use typestate::typestate;
 
-use bytes::{Bytes, Buf, BytesMut, BufMut};
+use bytes::{Buf, BytesMut, BufMut};
 
 use crate::net::Frame;
 
@@ -170,21 +170,15 @@ mod socks5_protocol {
     }
 }
 
-fn get_u8(src: &mut Cursor<&[u8]>) -> Option<u8> {
-    if !src.has_remaining() {
-        return None;
-    }
-    Some(src.get_u8())
-}
-
 impl Frame<Greeting> for Greeting {
-    fn deserialize(src: &mut Cursor<&[u8]>) -> Option<Greeting> {
-        let version = get_u8(src)?;
-        let num_auth_methods = get_u8(src)?;
+    fn deserialize(buf: &mut BytesMut) -> Option<Greeting> {
+        let version = buf.has_remaining().then(|| buf.get_u8())?;
+        let num_auth_methods = buf.has_remaining().then(|| buf.get_u8())?;
 
         let mut supported_auth_methods = Vec::new();
         for _ in 0..num_auth_methods {
-            supported_auth_methods.push(get_u8(src)?);
+            let method = buf.has_remaining().then(|| buf.get_u8())?;
+            supported_auth_methods.push(method);
         }
 
         Some(Greeting {
@@ -194,7 +188,7 @@ impl Frame<Greeting> for Greeting {
         })
     }
 
-    fn serialize(&self) -> Bytes {
+    fn serialize(&self) -> BytesMut {
         let mut buf = BytesMut::with_capacity(10);
 
         buf.put_u8(self.version);
@@ -203,6 +197,6 @@ impl Frame<Greeting> for Greeting {
             buf.put_u8(*method);
         }
 
-        Bytes::from(buf)
+        buf
     }
 }
