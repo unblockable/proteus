@@ -1,4 +1,3 @@
-// use std::io::{self, BufRead, Cursor, Write};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::io::{BufReader, BufWriter, AsyncBufReadExt, AsyncWriteExt};
@@ -6,11 +5,13 @@ use tokio::io::{BufReader, BufWriter, AsyncBufReadExt, AsyncWriteExt};
 use bytes::BytesMut;
 
 use crate::net;
+
 pub mod socks;
 
 pub trait Frame<T> {
     /// Returns a parsed frame or `None` if it was incomplete.
     fn deserialize(src: &mut BytesMut) -> Option<T>;
+    /// Returns the bytes representation of the frame.
     fn serialize(&self) -> BytesMut;
 }
 
