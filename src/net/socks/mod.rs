@@ -1,17 +1,32 @@
 use bytes::{Buf, BufMut, BytesMut};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::{fmt, net::{IpAddr, Ipv4Addr, Ipv6Addr}};
 use typestate::typestate;
 
-use crate::net::Frame;
+use crate::net::{self, Frame};
 
 pub mod server;
 
 #[typestate]
 mod socks5_protocol {
     use super::*;
+    use crate::net::socks;
     use crate::net::Connection;
 
     use async_trait::async_trait;
+
+    pub const SOCKS_NULL: u8 = 0x00;
+    pub const SOCKS_VERSION_5: u8 = 0x05;
+    pub const SOCKS_AUTH_NONE: u8 = 0x00;
+    pub const SOCKS_AUTH_USERPASS: u8 = 0x02;
+    pub const SOCKS_AUTH_UNSUPPORTED: u8 = 0xff;
+    pub const SOCKS_AUTH_USERPASS_VERSION: u8 = 0x01;
+    pub const SOCKS_AUTH_STATUS_SUCCESS: u8 = 0x00;
+    pub const SOCKS_AUTH_STATUS_FAILURE: u8 = 0x01;
+    pub const SOCKS_COMMAND_CONNECT: u8 = 0x01;
+    pub const SOCKS_STATUS_REQ_GRANTED: u8 = 0x00;
+    pub const SOCKS_STATUS_GEN_FAILURE: u8 = 0x01;
+    pub const SOCKS_STATUS_PROTO_ERR: u8 = 0x07;
+    pub const SOCKS_STATUS_ADDR_ERR: u8 = 0x08;
 
     #[automaton]
     pub struct Socks5Protocol;
@@ -56,7 +71,6 @@ mod socks5_protocol {
     #[state]
     pub struct ClientAuthentication {
         pub conn: Connection,
-        pub choice: Choice,
     }
     #[async_trait]
     pub trait ClientAuthentication {
@@ -84,7 +98,6 @@ mod socks5_protocol {
     #[state]
     pub struct ClientCommand {
         pub conn: Connection,
-        pub auth_response: Option<UserPassAuthResponse>,
     }
     #[async_trait]
     pub trait ClientCommand {
@@ -112,26 +125,73 @@ mod socks5_protocol {
     #[state]
     pub struct Success {
         pub conn: Connection,
-        pub response: ConnectResponse,
+        pub dest: Connection,
     }
     pub trait Success {
-        fn take(self) -> Connection;
+        fn finish(self) -> (Connection, Connection);
     }
 
     #[state]
     pub struct Error {
-        pub message: String,
+        pub error: socks::Error,
     }
     pub trait Error {
-        fn take(self) -> String;
+        fn finish(self) -> socks::Error;
     }
-}
 
-#[derive(Debug, PartialEq)]
-pub enum Socks5Address {
-    IpAddr(IpAddr),
-    Name(String),
-    Unknown,
+    impl From<Initialization> for Socks5Protocol<Initialization> {
+        fn from(state: Initialization) -> Self {
+            Socks5Protocol::<Initialization> { state: state }
+        }
+    }
+    
+    impl From<ClientHandshake> for Socks5Protocol<ClientHandshake> {
+        fn from(state: ClientHandshake) -> Self {
+            Socks5Protocol::<ClientHandshake> { state: state }
+        }
+    }
+    
+    impl From<ServerHandshake> for Socks5Protocol<ServerHandshake> {
+        fn from(state: ServerHandshake) -> Self {
+            Socks5Protocol::<ServerHandshake> { state: state }
+        }
+    }
+
+    impl From<ClientAuthentication> for Socks5Protocol<ClientAuthentication> {
+        fn from(state: ClientAuthentication) -> Self {
+            Socks5Protocol::<ClientAuthentication> { state: state }
+        }
+    }
+
+    impl From<ServerAuthentication> for Socks5Protocol<ServerAuthentication> {
+        fn from(state: ServerAuthentication) -> Self {
+            Socks5Protocol::<ServerAuthentication> { state: state }
+        }
+    }
+
+    impl From<ClientCommand> for Socks5Protocol<ClientCommand> {
+        fn from(state: ClientCommand) -> Self {
+            Socks5Protocol::<ClientCommand> { state: state }
+        }
+    }
+
+    impl From<ServerCommand> for Socks5Protocol<ServerCommand> {
+        fn from(state: ServerCommand) -> Self {
+            Socks5Protocol::<ServerCommand> { state: state }
+        }
+    }
+
+    impl From<Success> for Socks5Protocol<Success> {
+        fn from(state: Success) -> Self {
+            Socks5Protocol::<Success> { state: state }
+        }
+    }
+    
+    impl From<Error> for Socks5Protocol<Error> {
+        fn from(state: Error) -> Self {
+            Socks5Protocol::<Error> { state: state }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -178,6 +238,36 @@ pub struct ConnectResponse {
     bind_port: u16,
 }
 
+pub enum Error {
+    Version,
+    Reserved,
+    AuthMethod,
+    Auth(String),
+    ConnectMethod,
+    Connect(String),
+    Network(net::Error),
+}
+
+impl From<net::Error> for Error {
+    fn from(e: net::Error) -> Self {
+        Error::Network(e)
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Version => write!(f, "Socks version mismatch"),
+            Error::Reserved => write!(f, "Socks non-zero reserved field"),
+            Error::AuthMethod => write!(f, "No supported authentication methods"),
+            Error::Auth(s) => write!(f, "Chosen authentication method failed: {}", s),
+            Error::ConnectMethod => write!(f, "No supported connect methods"),
+            Error::Connect(s) => write!(f, "Chosen connect method failed: {}", s),
+            Error::Network(e) => write!(f, "Network error: {}", e),
+        }
+    }
+}
+
 fn get_bytes_vec(buf: &mut BytesMut, num_bytes: u8) -> Option<Vec<u8>> {
     let mut bytes_vec = Vec::new();
     for _ in 0..num_bytes {
@@ -185,6 +275,13 @@ fn get_bytes_vec(buf: &mut BytesMut, num_bytes: u8) -> Option<Vec<u8>> {
         bytes_vec.push(b);
     }
     Some(bytes_vec)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Socks5Address {
+    IpAddr(IpAddr),
+    Name(String),
+    Unknown,
 }
 
 impl Socks5Address {

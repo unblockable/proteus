@@ -1,3 +1,4 @@
+use std::fmt;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::io::{BufReader, BufWriter, AsyncBufReadExt, AsyncWriteExt};
@@ -18,6 +19,15 @@ pub trait Frame<T> {
 pub enum Error {
     Eof,
     IoError(std::io::Error),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Eof => write!(f, "Reached EOF during network I/O operation"),
+            Error::IoError(e) => write!(f, "I/O error during network operation: {}", e),
+        }
+    }
 }
 
 pub struct Connection {
