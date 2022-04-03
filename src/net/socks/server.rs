@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::net::SocketAddr;
+use std::io;
 use tokio::net::TcpStream;
 
 use crate::net::{
@@ -215,7 +216,13 @@ impl ClientCommandState for Socks5Protocol<ClientCommand> {
     }
 }
 
-async fn connect_to_host(addr: Socks5Address, port: u16) -> Result<Connection, (socks::Error, u8)> {
+async fn do_connect(addr: SocketAddr) -> io::Result<(TcpStream, SocketAddr)> {
+    let stream = TcpStream::connect(addr).await?;
+    let local_addr = stream.local_addr()?;
+    Ok((stream, local_addr))
+}
+
+async fn connect_to_host(addr: Socks5Address, port: u16) -> Result<(TcpStream, SocketAddr), (socks::Error, u8)> {
     let dest_addr = match addr {
         Socks5Address::IpAddr(a) => SocketAddr::new(a, port),
         _ => {
@@ -226,10 +233,10 @@ async fn connect_to_host(addr: Socks5Address, port: u16) -> Result<Connection, (
         }
     };
 
-    match TcpStream::connect(dest_addr).await {
-        Ok(stream) => Ok(Connection::new(stream)),
+    match do_connect(dest_addr).await {
+        Ok((stream, local_addr)) => Ok((stream, local_addr)),
         Err(e) => {
-            // TODO: we could check the network error to be more precise here.
+            // TODO: check the network error and be more precise here.
             Err((
                 socks::Error::Network(net::Error::IoError(e)),
                 SOCKS_STATUS_GEN_FAILURE,
@@ -273,19 +280,19 @@ impl ServerCommandState for Socks5Protocol<ServerCommand> {
 
         // TODO: we should follow the bind addr configured in the env, if any.
         match connect_to_host(self.state.request.dest_addr, self.state.request.dest_port).await {
-            Ok(dest) => {
+            Ok((stream, local_addr)) => {
                 let response = socks::ConnectResponse {
                     version: SOCKS_VERSION_5,
                     status: SOCKS_STATUS_REQ_GRANTED,
                     reserved: SOCKS_NULL,
-                    bind_addr: Socks5Address::Unknown, // XXX
-                    bind_port: 0,                      // XXX
+                    bind_addr: Socks5Address::IpAddr(local_addr.ip()),
+                    bind_port: local_addr.port(),
                 };
 
                 match self.state.conn.write_frame(&response).await {
                     Ok(_) => {
                         let conn = self.state.conn;
-                        let next = Success { conn, dest };
+                        let next = Success { conn, dest: Connection::new(stream) };
                         ServerCommandResult::Success(next.into())
                     }
                     Err(net_err) => {

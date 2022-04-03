@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, BytesMut};
-use std::{fmt, net::{IpAddr, Ipv4Addr, Ipv6Addr}};
+use std::{fmt, net::{IpAddr, Ipv4Addr, Ipv6Addr}, io::Cursor};
 use typestate::typestate;
 
 use crate::net::{self, Frame};
@@ -268,7 +268,7 @@ impl fmt::Display for Error {
     }
 }
 
-fn get_bytes_vec(buf: &mut BytesMut, num_bytes: u8) -> Option<Vec<u8>> {
+fn get_bytes_vec(buf: &mut Cursor<&BytesMut>, num_bytes: u8) -> Option<Vec<u8>> {
     let mut bytes_vec = Vec::new();
     for _ in 0..num_bytes {
         let b = buf.has_remaining().then(|| buf.get_u8())?;
@@ -295,7 +295,7 @@ impl Socks5Address {
         Socks5Address::IpAddr(addr)
     }
 
-    fn from_bytes(src_buf: &mut BytesMut) -> Option<Socks5Address> {
+    fn from_bytes(src_buf: &mut Cursor<&BytesMut>) -> Option<Socks5Address> {
         let addr_type = src_buf.has_remaining().then(|| src_buf.get_u8())?;
 
         match addr_type {
@@ -366,7 +366,7 @@ impl Socks5Address {
 }
 
 impl Frame<Greeting> for Greeting {
-    fn deserialize(buf: &mut BytesMut) -> Option<Greeting> {
+    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Greeting> {
         let version = buf.has_remaining().then(|| buf.get_u8())?;
         let num_auth_methods = buf.has_remaining().then(|| buf.get_u8())?;
         Some(Greeting {
@@ -390,7 +390,7 @@ impl Frame<Greeting> for Greeting {
 }
 
 impl Frame<Choice> for Choice {
-    fn deserialize(buf: &mut BytesMut) -> Option<Choice> {
+    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Choice> {
         Some(Choice {
             version: buf.has_remaining().then(|| buf.get_u8())?,
             auth_method: buf.has_remaining().then(|| buf.get_u8())?,
@@ -406,7 +406,7 @@ impl Frame<Choice> for Choice {
 }
 
 impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
-    fn deserialize(buf: &mut BytesMut) -> Option<UserPassAuthRequest> {
+    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<UserPassAuthRequest> {
         let version = buf.has_remaining().then(|| buf.get_u8())?;
 
         let username_len = buf.has_remaining().then(|| buf.get_u8())?;
@@ -437,7 +437,7 @@ impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
 }
 
 impl Frame<UserPassAuthResponse> for UserPassAuthResponse {
-    fn deserialize(buf: &mut BytesMut) -> Option<UserPassAuthResponse> {
+    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<UserPassAuthResponse> {
         Some(UserPassAuthResponse {
             version: buf.has_remaining().then(|| buf.get_u8())?,
             status: buf.has_remaining().then(|| buf.get_u8())?,
@@ -453,7 +453,7 @@ impl Frame<UserPassAuthResponse> for UserPassAuthResponse {
 }
 
 impl Frame<ConnectRequest> for ConnectRequest {
-    fn deserialize(buf: &mut BytesMut) -> Option<ConnectRequest> {
+    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ConnectRequest> {
         Some(ConnectRequest {
             version: buf.has_remaining().then(|| buf.get_u8())?,
             command: buf.has_remaining().then(|| buf.get_u8())?,
@@ -475,7 +475,7 @@ impl Frame<ConnectRequest> for ConnectRequest {
 }
 
 impl Frame<ConnectResponse> for ConnectResponse {
-    fn deserialize(buf: &mut BytesMut) -> Option<ConnectResponse> {
+    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ConnectResponse> {
         Some(ConnectResponse {
             version: buf.has_remaining().then(|| buf.get_u8())?,
             status: buf.has_remaining().then(|| buf.get_u8())?,
@@ -509,7 +509,7 @@ mod tests {
         };
         assert_eq!(
             frame,
-            Greeting::deserialize(&mut frame.serialize()).unwrap()
+            Greeting::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
         );
     }
 
@@ -519,7 +519,7 @@ mod tests {
             version: 5,
             auth_method: 0,
         };
-        assert_eq!(frame, Choice::deserialize(&mut frame.serialize()).unwrap());
+        assert_eq!(frame, Choice::deserialize(&mut Cursor::new(&frame.serialize())).unwrap());
     }
 
     #[test]
@@ -531,7 +531,7 @@ mod tests {
         };
         assert_eq!(
             frame,
-            UserPassAuthRequest::deserialize(&mut frame.serialize()).unwrap()
+            UserPassAuthRequest::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
         );
     }
 
@@ -543,7 +543,7 @@ mod tests {
         };
         assert_eq!(
             frame,
-            UserPassAuthResponse::deserialize(&mut frame.serialize()).unwrap()
+            UserPassAuthResponse::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
         );
     }
 
@@ -565,7 +565,7 @@ mod tests {
             };
             assert_eq!(
                 frame,
-                ConnectRequest::deserialize(&mut frame.serialize()).unwrap()
+                ConnectRequest::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
             );
         }
     }
@@ -588,7 +588,7 @@ mod tests {
             };
             assert_eq!(
                 frame,
-                ConnectResponse::deserialize(&mut frame.serialize()).unwrap()
+                ConnectResponse::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
             );
         }
     }

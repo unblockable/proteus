@@ -1,9 +1,9 @@
 use std::fmt;
+use std::io::Cursor;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::io::{BufReader, BufWriter, AsyncBufReadExt, AsyncWriteExt};
-
-use bytes::BytesMut;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use bytes::{BytesMut, Buf};
 
 use crate::net;
 
@@ -11,7 +11,7 @@ pub mod socks;
 
 pub trait Frame<T> {
     /// Returns a parsed frame or `None` if it was incomplete.
-    fn deserialize(src: &mut BytesMut) -> Option<T>;
+    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<T>;
     /// Returns the bytes representation of the frame.
     fn serialize(&self) -> BytesMut;
 }
@@ -31,16 +31,17 @@ impl fmt::Display for Error {
 }
 
 pub struct Connection {
-    reader: BufReader<OwnedReadHalf>,
-    writer: BufWriter<OwnedWriteHalf>,
+    read_half: OwnedReadHalf,
+    write_half: OwnedWriteHalf,
+    buffer: BytesMut,
 }
 
 impl Connection {
     pub fn new(stream: TcpStream) -> Connection {
         let (read_half, write_half) = stream.into_split();
+        let buffer = BytesMut::new();
         Connection {
-            reader: BufReader::new(read_half),
-            writer: BufWriter::new(write_half),
+            read_half, write_half, buffer
         }
     }
 
@@ -49,21 +50,20 @@ impl Connection {
     pub async fn read_frame<T: Frame<T>>(&mut self) -> Result<T, net::Error> {
         loop {
             // Get a cursor to seek over the buffered bytes.
-            let mut bytes = BytesMut::from(self.reader.buffer());
+            let mut read_cursor = Cursor::new(&self.buffer);
 
             // Try to parse the frame from the buffer.
-            if let Some(frame) = T::deserialize(&mut bytes) {
+            if let Some(frame) = T::deserialize(&mut read_cursor) {
                 // Mark the bytes as consumed.
-                let amt = bytes.len();
-                self.reader.consume(amt);
-
+                let num_consumed = read_cursor.position() as usize;
+                self.buffer.advance(num_consumed);
                 return Ok(frame);
             }
 
             // Pull more bytes in from the source if possible.
-            match self.reader.fill_buf().await {
-                Ok(buf) => {
-                    if buf.is_empty() {
+            match self.read_half.read_buf(&mut self.buffer).await {
+                Ok(n_bytes) => {
+                    if n_bytes == 0 {
                         return Err(net::Error::Eof);
                     }
                 }
@@ -76,11 +76,7 @@ impl Connection {
     pub async fn write_frame<T: Frame<T>>(&mut self, frame: &T) -> Result<(), net::Error> {
         let bytes = frame.serialize();
 
-        if let Err(e) = self.writer.write_all(&bytes).await {
-            return Err(net::Error::IoError(e));
-        }
-
-        if let Err(e) = self.writer.flush().await {
+        if let Err(e) = self.write_half.write_all(&bytes).await {
             return Err(net::Error::IoError(e));
         }
 
