@@ -268,15 +268,6 @@ impl fmt::Display for Error {
     }
 }
 
-fn get_bytes_vec(buf: &mut Cursor<&BytesMut>, num_bytes: u8) -> Option<Vec<u8>> {
-    let mut bytes_vec = Vec::new();
-    for _ in 0..num_bytes {
-        let b = buf.has_remaining().then(|| buf.get_u8())?;
-        bytes_vec.push(b);
-    }
-    Some(bytes_vec)
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Socks5Address {
     IpAddr(IpAddr),
@@ -307,7 +298,7 @@ impl Socks5Address {
             )))),
             0x03 => {
                 let name_len = src_buf.has_remaining().then(|| src_buf.get_u8())?;
-                let name_bytes = get_bytes_vec(src_buf, name_len)?;
+                let name_bytes = net::get_bytes_vec(src_buf, name_len as usize)?;
                 Some(Socks5Address::Name(
                     String::from_utf8_lossy(&name_bytes).to_string(),
                 ))
@@ -372,7 +363,7 @@ impl Frame<Greeting> for Greeting {
         Some(Greeting {
             version,
             num_auth_methods,
-            supported_auth_methods: get_bytes_vec(buf, num_auth_methods)?,
+            supported_auth_methods: net::get_bytes_vec(buf, num_auth_methods as usize)?,
         })
     }
 
@@ -410,10 +401,10 @@ impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
         let version = buf.has_remaining().then(|| buf.get_u8())?;
 
         let username_len = buf.has_remaining().then(|| buf.get_u8())?;
-        let username_bytes = get_bytes_vec(buf, username_len)?;
+        let username_bytes = net::get_bytes_vec(buf, username_len as usize)?;
 
         let password_len = buf.has_remaining().then(|| buf.get_u8())?;
-        let password_bytes = get_bytes_vec(buf, password_len)?;
+        let password_bytes = net::get_bytes_vec(buf, password_len as usize)?;
 
         Some(UserPassAuthRequest {
             version,
