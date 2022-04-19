@@ -7,6 +7,7 @@ use bytes::{BytesMut, Buf};
 
 use crate::net;
 
+// pub mod or; // TODO uncomment when ExtOr protocol is implemented
 pub mod socks;
 
 pub trait Frame<T> {
