@@ -7,8 +7,9 @@ use bytes::{BytesMut, Buf};
 
 use crate::net;
 
-// pub mod or; // TODO uncomment when ExtOr protocol is implemented
+// pub mod or; // TODO uncomment when ExtOr protocol is fully implemented
 pub mod socks;
+pub mod upgen;
 
 pub trait Frame<T> {
     /// Returns a parsed frame or `None` if it was incomplete.
