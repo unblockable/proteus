@@ -5,7 +5,7 @@ use log;
 use std::{io, process};
 use tokio::net::TcpListener;
 
-use crate::net::socks;
+use crate::net::proto::socks;
 use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig};
 use crate::pt::control;

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::net::{
-    or::{self, ext_or_protocol::*},
+    or::{self, ext_or_automaton::*},
     Connection,
 };
 

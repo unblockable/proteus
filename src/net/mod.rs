@@ -5,18 +5,10 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use bytes::{BytesMut, Buf};
 
-use crate::net;
+use crate::net::{self, frame::{Frame, FrameFmt}};
 
-// pub mod or; // TODO uncomment when ExtOr protocol is fully implemented
-pub mod socks;
-pub mod upgen;
-
-pub trait Frame<T> {
-    /// Returns a parsed frame or `None` if it was incomplete.
-    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<T>;
-    /// Returns the bytes representation of the frame.
-    fn serialize(&self) -> BytesMut;
-}
+pub mod frame;
+pub mod proto;
 
 fn get_bytes_vec(buf: &mut Cursor<&BytesMut>, num_bytes: usize) -> Option<Vec<u8>> {
     let mut bytes_vec = Vec::new();
@@ -86,6 +78,43 @@ impl Connection {
     /// Write a frame to the connection.
     pub async fn write_frame<T: Frame<T>>(&mut self, frame: &T) -> Result<(), net::Error> {
         let bytes = frame.serialize();
+
+        if let Err(e) = self.write_half.write_all(&bytes).await {
+            return Err(net::Error::IoError(e));
+        }
+
+        Ok(())
+    }
+
+    // TODO copied from read_frame - is there a way to generalize to avoid duplicate code?
+    pub async fn read_frame_fmt(&mut self, frame_fmt: &FrameFmt) -> Result<BytesMut, net::Error> {
+        loop {
+            // Get a cursor to seek over the buffered bytes.
+            let mut read_cursor = Cursor::new(&self.buffer);
+
+            // Try to parse the frame from the buffer.
+            if let Some(frame) = frame_fmt.deserialize(&mut read_cursor) {
+                // Mark the bytes as consumed.
+                let num_consumed = read_cursor.position() as usize;
+                self.buffer.advance(num_consumed);
+                return Ok(frame);
+            }
+
+            // Pull more bytes in from the source if possible.
+            match self.read_half.read_buf(&mut self.buffer).await {
+                Ok(n_bytes) => {
+                    if n_bytes == 0 {
+                        return Err(net::Error::Eof);
+                    }
+                }
+                Err(e) => return Err(net::Error::IoError(e)),
+            };
+        }
+    }
+
+    // TODO copied from write_frame - is there a way to generalize to avoid duplicate code?
+    pub async fn write_frame_fmt(&mut self, frame_fmt: &FrameFmt) -> Result<(), net::Error> {
+        let bytes = frame_fmt.serialize();
 
         if let Err(e) = self.write_half.write_all(&bytes).await {
             return Err(net::Error::IoError(e));

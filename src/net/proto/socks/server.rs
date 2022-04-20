@@ -5,7 +5,7 @@ use tokio::net::TcpStream;
 
 use crate::net::{
     self,
-    socks::{self, socks5_protocol::*, Socks5Address},
+    proto::socks::{self, socks5_automaton::*, Socks5Address},
     Connection,
 };
 

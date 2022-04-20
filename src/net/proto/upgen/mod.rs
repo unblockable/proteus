@@ -1,20 +1,15 @@
-use bytes::{Buf, BufMut, BytesMut};
-use std::{
-    fmt,
-    io::{Cursor},
-};
+use std::fmt;
 use typestate::typestate;
 
-use crate::net::{self, Frame, upgen::generator::FrameFormatSpec};
+use crate::net;
 
 pub mod client;
 pub mod generator;
 pub mod server;
 
 #[typestate]
-mod upgen_protocol {
-    use super::*;
-    use crate::net::upgen;
+mod one_round_automaton {
+    use crate::net::proto::upgen;
     use crate::net::Connection;
 
     use async_trait::async_trait;
@@ -148,41 +143,6 @@ impl fmt::Display for Error {
             Error::ServerHandshake(s) => write!(f, "Server handshake failed: {}", s),
             Error::Network(e) => write!(f, "Network error: {}", e),
         }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Handshake {
-    spec: FrameFormatSpec,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Data {
-    spec: FrameFormatSpec,
-    payload: BytesMut
-}
-
-impl Frame<Handshake> for Handshake {
-    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Handshake> {
-        // TODO this isn't going to work.
-        // We probably want a new trait called FrameSpec or something
-        // where the derserialize function takes a frame spec in addition
-        // to the buf.
-        todo!()
-    }
-
-    fn serialize(&self) -> BytesMut {
-        todo!()
-    }
-}
-
-impl Frame<Data> for Data {
-    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Data> {
-        todo!()
-    }
-
-    fn serialize(&self) -> BytesMut {
-        todo!()
     }
 }
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::net::{
-    upgen::{self, upgen_protocol::*},
+    proto::upgen::{self, one_round_automaton::*},
     Connection,
 };
 

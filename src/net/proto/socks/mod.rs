@@ -7,9 +7,9 @@ use crate::net::{self, Frame};
 pub mod server;
 
 #[typestate]
-mod socks5_protocol {
+mod socks5_automaton {
     use super::*;
-    use crate::net::socks;
+    use crate::net::proto::socks;
     use crate::net::Connection;
 
     use async_trait::async_trait;
