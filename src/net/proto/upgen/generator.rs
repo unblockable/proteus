@@ -7,7 +7,7 @@ pub enum OvertFrameType {
     Data,
 }
 
-pub struct OvertProtocolSpec {
+pub struct Generator {
     // Currently support a 1-RTT handshake phase and then data phase.
     handshake1: FrameFmt,
     handshake2: FrameFmt,
@@ -15,11 +15,11 @@ pub struct OvertProtocolSpec {
 }
 
 // TODO
-impl OvertProtocolSpec {
-    pub fn new(seed: u64) -> OvertProtocolSpec {
+impl Generator {
+    pub fn new(seed: u64) -> Generator {
         // Use the seed to generate all of our protocol decisions and
         // create/store the various frame types.
-        OvertProtocolSpec {
+        Generator {
             handshake1: FrameFmt::new(),
             handshake2: FrameFmt::new(),
             data: FrameFmt::new(),

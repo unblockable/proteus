@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::net::{
     proto::upgen::{
         self,
-        generator::{OvertFrameType, OvertProtocolSpec},
+        generator::{OvertFrameType, Generator},
         spec::{self, upgen::*},
     },
     Connection,
@@ -18,7 +18,7 @@ impl InitState for UpgenProtocol<Init> {
         Init {
             client_conn,
             server_conn,
-            spec: OvertProtocolSpec::new(seed),
+            spec: Generator::new(seed),
         }
         .into()
     }

@@ -2,7 +2,7 @@ use typestate::typestate;
 
 #[typestate]
 pub mod upgen {
-    use crate::net::proto::upgen::generator::OvertProtocolSpec;
+    use crate::net::proto::upgen::generator::Generator;
     use crate::net::proto::upgen;
     use crate::net::Connection;
 
@@ -15,7 +15,7 @@ pub mod upgen {
     pub struct Init {
         pub client_conn: Connection,
         pub server_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     pub trait Init {
         fn new(client_conn: Connection, server_conn: Connection, seed: u64) -> Init;
@@ -27,7 +27,7 @@ pub mod upgen {
     pub struct ClientHandshake1 {
         pub client_conn: Connection,
         pub server_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     #[async_trait]
     pub trait ClientHandshake1 {
@@ -42,7 +42,7 @@ pub mod upgen {
     pub struct ClientHandshake2 {
         pub client_conn: Connection,
         pub server_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     #[async_trait]
     pub trait ClientHandshake2 {
@@ -57,7 +57,7 @@ pub mod upgen {
     pub struct ServerHandshake1 {
         pub client_conn: Connection,
         pub server_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     #[async_trait]
     pub trait ServerHandshake1 {
@@ -72,7 +72,7 @@ pub mod upgen {
     pub struct ServerHandshake2 {
         pub client_conn: Connection,
         pub server_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     #[async_trait]
     pub trait ServerHandshake2 {
@@ -87,7 +87,7 @@ pub mod upgen {
     pub struct Data {
         pub upgen_conn: Connection,
         pub tor_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     #[async_trait]
     pub trait Data {
@@ -103,7 +103,7 @@ pub mod upgen {
     pub struct Success {
         pub client_conn: Connection,
         pub server_conn: Connection,
-        pub spec: OvertProtocolSpec,
+        pub spec: Generator,
     }
     pub trait Success {
         fn finish(self);
