@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::net::{
-    or::{self, ext_or_protocol::*},
+    proto::or::{self, frames::*, spec::extor::*},
     Connection,
 };
 
@@ -21,7 +21,7 @@ impl ClientHandshakeState for ExtOrProtocol<ClientHandshake> {
     async fn greeting(mut self) -> ClientHandshakeResult {
         log::debug!("Waiting for greeting");
 
-        match self.state.conn.read_frame::<or::Greeting>().await {
+        match self.state.conn.read_frame::<Greeting>().await {
             Ok(greeting) => {
                 let conn = self.state.conn;
                 let next = ServerHandshake { conn, greeting };
@@ -48,7 +48,7 @@ impl ServerHandshakeState for ExtOrProtocol<ServerHandshake> {
         {
             log::debug!("Choosing SAFE_COOKIE authentication");
 
-            let choice = or::Choice {
+            let choice = Choice {
                 auth_type: EXTOR_AUTH_TYPE_SAFE_COOKIE,
             };
 
@@ -67,7 +67,7 @@ impl ServerHandshakeState for ExtOrProtocol<ServerHandshake> {
         } else {
             log::debug!("Authentication methods are unsupported");
 
-            let choice = or::Choice {
+            let choice = Choice {
                 auth_type: EXTOR_AUTH_TYPE_END,
             };
 
@@ -87,7 +87,7 @@ impl ServerHandshakeState for ExtOrProtocol<ServerHandshake> {
 #[async_trait]
 impl ClientAuthNonceState for ExtOrProtocol<ClientAuthNonce> {
     async fn auth_nonce(mut self) -> ClientAuthNonceResult {
-        let client_auth = or::ClientNonce {
+        let client_auth = ClientNonce {
             nonce: [1; 32], // XXX fill with random data
         };
 
@@ -111,7 +111,7 @@ impl ServerAuthNonceHashState for ExtOrProtocol<ServerAuthNonceHash> {
     async fn auth_nonce_hash(mut self) -> ServerAuthNonceHashResult {
         log::debug!("Waiting for server auth nonce and hash");
 
-        match self.state.conn.read_frame::<or::ServerHashNonce>().await {
+        match self.state.conn.read_frame::<ServerHashNonce>().await {
             Ok(server_auth) => {
                 let next = ClientAuthHash {
                     conn: self.state.conn,
@@ -136,15 +136,15 @@ impl ClientAuthHashState for ExtOrProtocol<ClientAuthHash> {
         // self.state.conn;
         // self.state.server_auth; // server nonce and hash
         // self.state.client_auth; // client nonce
-    
+
         // now we need to read CookieString from the EXTOR port file from the config
         // we may need to go back and actually pass that path in when calling run_protocol()
         // and then propagate it to here.
 
         // then the client must compute ServerHash as:
         //   HMAC-SHA256(CookieString,
-        //     "ExtORPort authentication server-to-client hash" | ClientNonce | ServerNonce) 
-    
+        //     "ExtORPort authentication server-to-client hash" | ClientNonce | ServerNonce)
+
         // then validate that the above matches what the server sent
         // in self.state.server_auth
 
@@ -165,7 +165,7 @@ impl ServerAuthStatusState for ExtOrProtocol<ServerAuthStatus> {
     async fn auth_status(mut self) -> ServerAuthStatusResult {
         log::debug!("Waiting for server auth status");
 
-        match self.state.conn.read_frame::<or::ServerStatus>().await {
+        match self.state.conn.read_frame::<ServerStatus>().await {
             Ok(auth_result) => {
                 // Check the auth status.
                 match auth_result.status {
@@ -175,13 +175,13 @@ impl ServerAuthStatusState for ExtOrProtocol<ServerAuthStatus> {
                             conn: self.state.conn,
                         };
                         ServerAuthStatusResult::ClientCommand(next.into())
-                    },
+                    }
                     EXTOR_AUTH_STATUS_FAILURE => {
                         log::debug!("Server auth status failed");
                         let error = or::Error::AuthStatusFailed;
                         let next = Error { error };
                         ServerAuthStatusResult::Error(next.into())
-                    },
+                    }
                     _ => {
                         log::debug!("Received unknown server auth status");
                         let error = or::Error::AuthStatusUnknown;
@@ -189,7 +189,7 @@ impl ServerAuthStatusState for ExtOrProtocol<ServerAuthStatus> {
                         ServerAuthStatusResult::Error(next.into())
                     }
                 }
-            },
+            }
             Err(net_err) => {
                 let error = or::Error::from(net_err);
                 let next = Error { error };
@@ -223,55 +223,5 @@ impl SuccessState for ExtOrProtocol<Success> {
 impl ErrorState for ExtOrProtocol<Error> {
     fn finish(self) -> or::Error {
         self.state.error
-    }
-}
-
-pub async fn run_protocol(conn: Connection) -> Result<Connection, or::Error> {
-    let proto = ExtOrProtocol::new(conn).start();
-
-    let proto = match proto.greeting().await {
-        ClientHandshakeResult::ServerHandshake(s) => s,
-        ClientHandshakeResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.choice().await {
-        ServerHandshakeResult::ClientAuthNonce(s) => s,
-        ServerHandshakeResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.auth_nonce().await {
-        ClientAuthNonceResult::ServerAuthNonceHash(s) => s,
-        ClientAuthNonceResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.auth_nonce_hash().await {
-        ServerAuthNonceHashResult::ClientAuthHash(s) => s,
-        ServerAuthNonceHashResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.auth_hash().await {
-        ClientAuthHashResult::ServerAuthStatus(s) => s,
-        ClientAuthHashResult::Error(e) => return Err(e.finish()),
-    };
-
-    // mut so it can live over the loop below.
-    let proto = match proto.auth_status().await {
-        ServerAuthStatusResult::ClientCommand(s) => s,
-        ServerAuthStatusResult::Error(e) => return Err(e.finish()),
-    };
-
-    // Keep processing commands until done.
-    let mut proto = proto;
-    loop {
-        proto = match proto.command().await {
-            ClientCommandResult::ServerCommand(s) => s,
-            ClientCommandResult::Error(e) => return Err(e.finish()),
-        };
-
-        proto = match proto.reply().await {
-            ServerCommandResult::ClientCommand(s) => s,
-            ServerCommandResult::Success(s) => return Ok(s.finish()),
-            ServerCommandResult::Error(e) => return Err(e.finish()),
-        };
     }
 }

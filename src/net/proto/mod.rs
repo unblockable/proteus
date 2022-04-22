@@ -1,3 +1,3 @@
-// pub mod or; // TODO uncomment when ExtOr protocol is fully implemented
+pub mod or;
 pub mod socks;
 pub mod upgen;
