@@ -5,40 +5,40 @@ use crate::net::{
     Connection,
 };
 
-impl InitializationState for ExtOrProtocol<Initialization> {
-    fn new(conn: Connection) -> ExtOrProtocol<Initialization> {
-        Initialization { conn }.into()
+impl InitState for ExtOrProtocol<Init> {
+    fn new(conn: Connection) -> ExtOrProtocol<Init> {
+        Init { conn }.into()
     }
 
-    fn start(self) -> ExtOrProtocol<ClientHandshake> {
+    fn start_client(self) -> ExtOrProtocol<ClientHandshake1> {
         let conn = self.state.conn;
-        ClientHandshake { conn }.into()
+        ClientHandshake1 { conn }.into()
     }
 }
 
 #[async_trait]
-impl ClientHandshakeState for ExtOrProtocol<ClientHandshake> {
-    async fn greeting(mut self) -> ClientHandshakeResult {
+impl ClientHandshake1State for ExtOrProtocol<ClientHandshake1> {
+    async fn recv_greeting(mut self) -> ClientHandshake1Result {
         log::debug!("Waiting for greeting");
 
         match self.state.conn.read_frame::<Greeting>().await {
             Ok(greeting) => {
                 let conn = self.state.conn;
-                let next = ServerHandshake { conn, greeting };
-                ClientHandshakeResult::ServerHandshake(next.into())
+                let next = ClientHandshake2 { conn, greeting };
+                ClientHandshake1Result::ClientHandshake2(next.into())
             }
             Err(net_err) => {
                 let error = or::Error::from(net_err);
                 let next = Error { error };
-                ClientHandshakeResult::Error(next.into())
+                ClientHandshake1Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ServerHandshakeState for ExtOrProtocol<ServerHandshake> {
-    async fn choice(mut self) -> ServerHandshakeResult {
+impl ClientHandshake2State for ExtOrProtocol<ClientHandshake2> {
+    async fn send_choice(mut self) -> ClientHandshake2Result {
         let types = self.state.greeting.auth_types;
 
         // We only support safe cookie.
@@ -55,13 +55,13 @@ impl ServerHandshakeState for ExtOrProtocol<ServerHandshake> {
             match self.state.conn.write_frame(&choice).await {
                 Ok(_) => {
                     let conn = self.state.conn;
-                    let next = ClientAuthNonce { conn };
-                    ServerHandshakeResult::ClientAuthNonce(next.into())
+                    let next = ClientAuth1 { conn };
+                    ClientHandshake2Result::ClientAuth1(next.into())
                 }
                 Err(net_err) => {
                     let error = or::Error::from(net_err);
                     let next = Error { error };
-                    ServerHandshakeResult::Error(next.into())
+                    ClientHandshake2Result::Error(next.into())
                 }
             }
         } else {
@@ -79,14 +79,14 @@ impl ServerHandshakeState for ExtOrProtocol<ServerHandshake> {
 
             let error = or::Error::AuthMethod;
             let next = Error { error };
-            return ServerHandshakeResult::Error(next.into());
+            return ClientHandshake2Result::Error(next.into());
         }
     }
 }
 
 #[async_trait]
-impl ClientAuthNonceState for ExtOrProtocol<ClientAuthNonce> {
-    async fn auth_nonce(mut self) -> ClientAuthNonceResult {
+impl ClientAuth1State for ExtOrProtocol<ClientAuth1> {
+    async fn send_nonce(mut self) -> ClientAuth1Result {
         let client_auth = ClientNonce {
             nonce: [1; 32], // XXX fill with random data
         };
@@ -94,44 +94,44 @@ impl ClientAuthNonceState for ExtOrProtocol<ClientAuthNonce> {
         match self.state.conn.write_frame(&client_auth).await {
             Ok(_) => {
                 let conn = self.state.conn;
-                let next = ServerAuthNonceHash { conn, client_auth };
-                ClientAuthNonceResult::ServerAuthNonceHash(next.into())
+                let next = ClientAuth2 { conn, client_auth };
+                ClientAuth1Result::ClientAuth2(next.into())
             }
             Err(net_err) => {
                 let error = or::Error::from(net_err);
                 let next = Error { error };
-                ClientAuthNonceResult::Error(next.into())
+                ClientAuth1Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ServerAuthNonceHashState for ExtOrProtocol<ServerAuthNonceHash> {
-    async fn auth_nonce_hash(mut self) -> ServerAuthNonceHashResult {
+impl ClientAuth2State for ExtOrProtocol<ClientAuth2> {
+    async fn recv_nonce_hash(mut self) -> ClientAuth2Result {
         log::debug!("Waiting for server auth nonce and hash");
 
         match self.state.conn.read_frame::<ServerHashNonce>().await {
             Ok(server_auth) => {
-                let next = ClientAuthHash {
+                let next = ClientAuth3 {
                     conn: self.state.conn,
                     client_auth: self.state.client_auth,
                     server_auth,
                 };
-                ServerAuthNonceHashResult::ClientAuthHash(next.into())
+                ClientAuth2Result::ClientAuth3(next.into())
             }
             Err(net_err) => {
                 let error = or::Error::from(net_err);
                 let next = Error { error };
-                ServerAuthNonceHashResult::Error(next.into())
+                ClientAuth2Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ClientAuthHashState for ExtOrProtocol<ClientAuthHash> {
-    async fn auth_hash(mut self) -> ClientAuthHashResult {
+impl ClientAuth3State for ExtOrProtocol<ClientAuth3> {
+    async fn send_hash(mut self) -> ClientAuth3Result {
         // WIP: we have this state:
         // self.state.conn;
         // self.state.server_auth; // server nonce and hash
@@ -154,15 +154,15 @@ impl ClientAuthHashState for ExtOrProtocol<ClientAuthHash> {
         //   HMAC-SHA256(CookieString,
         //     "ExtORPort authentication client-to-server hash" | ClientNonce | ServerNonce)
 
-        // and send to server, then move to next state (ServerAuthStatus)
+        // and send to server, then move to next state (ClientAuth4)
 
         todo!()
     }
 }
 
 #[async_trait]
-impl ServerAuthStatusState for ExtOrProtocol<ServerAuthStatus> {
-    async fn auth_status(mut self) -> ServerAuthStatusResult {
+impl ClientAuth4State for ExtOrProtocol<ClientAuth4> {
+    async fn recv_status(mut self) -> ClientAuth4Result {
         log::debug!("Waiting for server auth status");
 
         match self.state.conn.read_frame::<ServerStatus>().await {
@@ -171,45 +171,45 @@ impl ServerAuthStatusState for ExtOrProtocol<ServerAuthStatus> {
                 match auth_result.status {
                     EXTOR_AUTH_STATUS_SUCCESS => {
                         log::debug!("Server auth status succeeded");
-                        let next = ClientCommand {
+                        let next = ClientCommand1 {
                             conn: self.state.conn,
                         };
-                        ServerAuthStatusResult::ClientCommand(next.into())
+                        ClientAuth4Result::ClientCommand1(next.into())
                     }
                     EXTOR_AUTH_STATUS_FAILURE => {
                         log::debug!("Server auth status failed");
                         let error = or::Error::AuthStatusFailed;
                         let next = Error { error };
-                        ServerAuthStatusResult::Error(next.into())
+                        ClientAuth4Result::Error(next.into())
                     }
                     _ => {
                         log::debug!("Received unknown server auth status");
                         let error = or::Error::AuthStatusUnknown;
                         let next = Error { error };
-                        ServerAuthStatusResult::Error(next.into())
+                        ClientAuth4Result::Error(next.into())
                     }
                 }
             }
             Err(net_err) => {
                 let error = or::Error::from(net_err);
                 let next = Error { error };
-                ServerAuthStatusResult::Error(next.into())
+                ClientAuth4Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ClientCommandState for ExtOrProtocol<ClientCommand> {
-    async fn command(mut self) -> ClientCommandResult {
+impl ClientCommand1State for ExtOrProtocol<ClientCommand1> {
+    async fn send_command(mut self) -> ClientCommand1Result {
         // https://github.com/torproject/torspec/blob/26a2dc7470b1dc41720fd64080ab8386c47df31d/ext-orport-spec.txt#L150
         todo!()
     }
 }
 
 #[async_trait]
-impl ServerCommandState for ExtOrProtocol<ServerCommand> {
-    async fn reply(mut self) -> ServerCommandResult {
+impl ClientCommand2State for ExtOrProtocol<ClientCommand2> {
+    async fn recv_reply(mut self) -> ClientCommand2Result {
         todo!()
     }
 }

@@ -26,119 +26,119 @@ pub mod extor {
     pub struct ExtOrProtocol;
 
     #[state]
-    pub struct Initialization {
+    pub struct Init {
         pub conn: Connection,
     }
-    pub trait Initialization {
-        fn new(conn: Connection) -> Initialization;
-        fn start(self) -> ClientHandshake;
+    pub trait Init {
+        fn new(conn: Connection) -> Init;
+        fn start_client(self) -> ClientHandshake1;
     }
 
     #[state]
-    pub struct ClientHandshake {
+    pub struct ClientHandshake1 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ClientHandshake {
-        async fn greeting(self) -> ClientHandshakeResult;
+    pub trait ClientHandshake1 {
+        async fn recv_greeting(self) -> ClientHandshake1Result;
     }
-    pub enum ClientHandshakeResult {
-        ServerHandshake,
+    pub enum ClientHandshake1Result {
+        ClientHandshake2,
         Error,
     }
 
     #[state]
-    pub struct ServerHandshake {
+    pub struct ClientHandshake2 {
         pub conn: Connection,
         pub greeting: Greeting,
     }
     #[async_trait]
-    pub trait ServerHandshake {
-        async fn choice(self) -> ServerHandshakeResult;
+    pub trait ClientHandshake2 {
+        async fn send_choice(self) -> ClientHandshake2Result;
     }
-    pub enum ServerHandshakeResult {
-        ClientAuthNonce,
+    pub enum ClientHandshake2Result {
+        ClientAuth1,
         Error,
     }
 
     #[state]
-    pub struct ClientAuthNonce {
+    pub struct ClientAuth1 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ClientAuthNonce {
-        async fn auth_nonce(self) -> ClientAuthNonceResult;
+    pub trait ClientAuth1 {
+        async fn send_nonce(self) -> ClientAuth1Result;
     }
-    pub enum ClientAuthNonceResult {
-        ServerAuthNonceHash,
+    pub enum ClientAuth1Result {
+        ClientAuth2,
         Error,
     }
 
     #[state]
-    pub struct ServerAuthNonceHash {
+    pub struct ClientAuth2 {
         pub conn: Connection,
         pub client_auth: ClientNonce,
     }
     #[async_trait]
-    pub trait ServerAuthNonceHash {
-        async fn auth_nonce_hash(self) -> ServerAuthNonceHashResult;
+    pub trait ClientAuth2 {
+        async fn recv_nonce_hash(self) -> ClientAuth2Result;
     }
-    pub enum ServerAuthNonceHashResult {
-        ClientAuthHash,
+    pub enum ClientAuth2Result {
+        ClientAuth3,
         Error,
     }
 
     #[state]
-    pub struct ClientAuthHash {
+    pub struct ClientAuth3 {
         pub conn: Connection,
         pub client_auth: ClientNonce,
         pub server_auth: ServerHashNonce,
     }
     #[async_trait]
-    pub trait ClientAuthHash {
-        async fn auth_hash(self) -> ClientAuthHashResult;
+    pub trait ClientAuth3 {
+        async fn send_hash(self) -> ClientAuth3Result;
     }
-    pub enum ClientAuthHashResult {
-        ServerAuthStatus,
+    pub enum ClientAuth3Result {
+        ClientAuth4,
         Error,
     }
 
     #[state]
-    pub struct ServerAuthStatus {
+    pub struct ClientAuth4 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ServerAuthStatus {
-        async fn auth_status(self) -> ServerAuthStatusResult;
+    pub trait ClientAuth4 {
+        async fn recv_status(self) -> ClientAuth4Result;
     }
-    pub enum ServerAuthStatusResult {
-        ClientCommand,
+    pub enum ClientAuth4Result {
+        ClientCommand1,
         Error,
     }
 
     #[state]
-    pub struct ClientCommand {
+    pub struct ClientCommand1 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ClientCommand {
-        async fn command(self) -> ClientCommandResult;
+    pub trait ClientCommand1 {
+        async fn send_command(self) -> ClientCommand1Result;
     }
-    pub enum ClientCommandResult {
-        ServerCommand,
+    pub enum ClientCommand1Result {
+        ClientCommand2,
         Error,
     }
 
     #[state]
-    pub struct ServerCommand {
+    pub struct ClientCommand2 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ServerCommand {
-        async fn reply(self) -> ServerCommandResult;
+    pub trait ClientCommand2 {
+        async fn recv_reply(self) -> ClientCommand2Result;
     }
-    pub enum ServerCommandResult {
-        ClientCommand,
+    pub enum ClientCommand2Result {
+        ClientCommand1,
         Success,
         Error,
     }
@@ -159,57 +159,57 @@ pub mod extor {
         fn finish(self) -> or::Error;
     }
 
-    impl From<Initialization> for ExtOrProtocol<Initialization> {
-        fn from(state: Initialization) -> Self {
-            ExtOrProtocol::<Initialization> { state: state }
+    impl From<Init> for ExtOrProtocol<Init> {
+        fn from(state: Init) -> Self {
+            ExtOrProtocol::<Init> { state: state }
         }
     }
 
-    impl From<ClientHandshake> for ExtOrProtocol<ClientHandshake> {
-        fn from(state: ClientHandshake) -> Self {
-            ExtOrProtocol::<ClientHandshake> { state: state }
+    impl From<ClientHandshake1> for ExtOrProtocol<ClientHandshake1> {
+        fn from(state: ClientHandshake1) -> Self {
+            ExtOrProtocol::<ClientHandshake1> { state: state }
         }
     }
 
-    impl From<ServerHandshake> for ExtOrProtocol<ServerHandshake> {
-        fn from(state: ServerHandshake) -> Self {
-            ExtOrProtocol::<ServerHandshake> { state: state }
+    impl From<ClientHandshake2> for ExtOrProtocol<ClientHandshake2> {
+        fn from(state: ClientHandshake2) -> Self {
+            ExtOrProtocol::<ClientHandshake2> { state: state }
         }
     }
 
-    impl From<ClientAuthNonce> for ExtOrProtocol<ClientAuthNonce> {
-        fn from(state: ClientAuthNonce) -> Self {
-            ExtOrProtocol::<ClientAuthNonce> { state: state }
+    impl From<ClientAuth1> for ExtOrProtocol<ClientAuth1> {
+        fn from(state: ClientAuth1) -> Self {
+            ExtOrProtocol::<ClientAuth1> { state: state }
         }
     }
 
-    impl From<ServerAuthNonceHash> for ExtOrProtocol<ServerAuthNonceHash> {
-        fn from(state: ServerAuthNonceHash) -> Self {
-            ExtOrProtocol::<ServerAuthNonceHash> { state: state }
+    impl From<ClientAuth2> for ExtOrProtocol<ClientAuth2> {
+        fn from(state: ClientAuth2) -> Self {
+            ExtOrProtocol::<ClientAuth2> { state: state }
         }
     }
 
-    impl From<ClientAuthHash> for ExtOrProtocol<ClientAuthHash> {
-        fn from(state: ClientAuthHash) -> Self {
-            ExtOrProtocol::<ClientAuthHash> { state: state }
+    impl From<ClientAuth3> for ExtOrProtocol<ClientAuth3> {
+        fn from(state: ClientAuth3) -> Self {
+            ExtOrProtocol::<ClientAuth3> { state: state }
         }
     }
 
-    impl From<ServerAuthStatus> for ExtOrProtocol<ServerAuthStatus> {
-        fn from(state: ServerAuthStatus) -> Self {
-            ExtOrProtocol::<ServerAuthStatus> { state: state }
+    impl From<ClientAuth4> for ExtOrProtocol<ClientAuth4> {
+        fn from(state: ClientAuth4) -> Self {
+            ExtOrProtocol::<ClientAuth4> { state: state }
         }
     }
 
-    impl From<ClientCommand> for ExtOrProtocol<ClientCommand> {
-        fn from(state: ClientCommand) -> Self {
-            ExtOrProtocol::<ClientCommand> { state: state }
+    impl From<ClientCommand1> for ExtOrProtocol<ClientCommand1> {
+        fn from(state: ClientCommand1) -> Self {
+            ExtOrProtocol::<ClientCommand1> { state: state }
         }
     }
 
-    impl From<ServerCommand> for ExtOrProtocol<ServerCommand> {
-        fn from(state: ServerCommand) -> Self {
-            ExtOrProtocol::<ServerCommand> { state: state }
+    impl From<ClientCommand2> for ExtOrProtocol<ClientCommand2> {
+        fn from(state: ClientCommand2) -> Self {
+            ExtOrProtocol::<ClientCommand2> { state: state }
         }
     }
 

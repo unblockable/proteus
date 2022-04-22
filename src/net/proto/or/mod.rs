@@ -43,50 +43,50 @@ impl fmt::Display for or::Error {
 }
 
 pub async fn run_extor_client(conn: Connection) -> Result<Connection, or::Error> {
-    let proto = ExtOrProtocol::new(conn).start();
+    let proto = ExtOrProtocol::new(conn).start_client();
 
-    let proto = match proto.greeting().await {
-        ClientHandshakeResult::ServerHandshake(s) => s,
-        ClientHandshakeResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.recv_greeting().await {
+        ClientHandshake1Result::ClientHandshake2(s) => s,
+        ClientHandshake1Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.choice().await {
-        ServerHandshakeResult::ClientAuthNonce(s) => s,
-        ServerHandshakeResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.send_choice().await {
+        ClientHandshake2Result::ClientAuth1(s) => s,
+        ClientHandshake2Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.auth_nonce().await {
-        ClientAuthNonceResult::ServerAuthNonceHash(s) => s,
-        ClientAuthNonceResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.send_nonce().await {
+        ClientAuth1Result::ClientAuth2(s) => s,
+        ClientAuth1Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.auth_nonce_hash().await {
-        ServerAuthNonceHashResult::ClientAuthHash(s) => s,
-        ServerAuthNonceHashResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.recv_nonce_hash().await {
+        ClientAuth2Result::ClientAuth3(s) => s,
+        ClientAuth2Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.auth_hash().await {
-        ClientAuthHashResult::ServerAuthStatus(s) => s,
-        ClientAuthHashResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.send_hash().await {
+        ClientAuth3Result::ClientAuth4(s) => s,
+        ClientAuth3Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.auth_status().await {
-        ServerAuthStatusResult::ClientCommand(s) => s,
-        ServerAuthStatusResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.recv_status().await {
+        ClientAuth4Result::ClientCommand1(s) => s,
+        ClientAuth4Result::Error(e) => return Err(e.finish()),
     };
 
     // Keep processing commands until done.
-    let mut client_cmd = proto;
+    let mut part1 = proto;
     loop {
-        let server_cmd = match client_cmd.command().await {
-            ClientCommandResult::ServerCommand(s) => s,
-            ClientCommandResult::Error(e) => return Err(e.finish()),
+        let part2 = match part1.send_command().await {
+            ClientCommand1Result::ClientCommand2(s) => s,
+            ClientCommand1Result::Error(e) => return Err(e.finish()),
         };
 
-        client_cmd = match server_cmd.reply().await {
-            ServerCommandResult::ClientCommand(s) => s,
-            ServerCommandResult::Success(s) => return Ok(s.finish()),
-            ServerCommandResult::Error(e) => return Err(e.finish()),
+        part1 = match part2.recv_reply().await {
+            ClientCommand2Result::ClientCommand1(s) => s,
+            ClientCommand2Result::Success(s) => return Ok(s.finish()),
+            ClientCommand2Result::Error(e) => return Err(e.finish()),
         };
     }
 }
