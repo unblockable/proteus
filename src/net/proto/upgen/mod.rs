@@ -1,190 +1,17 @@
 use std::fmt;
-use typestate::typestate;
 
-use crate::net;
+use crate::net::{
+    self,
+    proto::upgen::{
+        self,
+        spec::upgen::*,
+    },
+    Connection,
+};
 
-pub mod client;
-pub mod generator;
-pub mod server;
-
-#[typestate]
-mod upgen_protocol {
-    use crate::net::proto::upgen;
-    use crate::net::Connection;
-
-    use async_trait::async_trait;
-
-    #[automaton]
-    pub struct UpgenProtocol;
-
-    #[state]
-    pub struct Init {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    pub trait Init {
-        fn new(client_conn: Connection, server_conn: Connection) -> Init;
-        fn start_client(self) -> ClientHandshake1;
-        fn start_server(self) -> ServerHandshake1;
-    }
-
-    #[state]
-    pub struct ClientHandshake1 {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    #[async_trait]
-    pub trait ClientHandshake1 {
-        async fn send_handshake1(self) -> ClientHandshake1Result;
-    }
-    pub enum ClientHandshake1Result {
-        ClientHandshake2,
-        Error,
-    }
-
-    #[state]
-    pub struct ClientHandshake2 {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    #[async_trait]
-    pub trait ClientHandshake2 {
-        async fn recv_handshake2(self) -> ClientHandshake2Result;
-    }
-    pub enum ClientHandshake2Result {
-        ClientData,
-        Error,
-    }
-
-    #[state]
-    pub struct ClientData {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    #[async_trait]
-    pub trait ClientData {
-        async fn forward_data(self) -> ClientDataResult;
-    }
-    pub enum ClientDataResult {
-        ClientData,
-        Success,
-        Error,
-    }
-
-    #[state]
-    pub struct ServerHandshake1 {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    #[async_trait]
-    pub trait ServerHandshake1 {
-        async fn recv_handshake1(self) -> ServerHandshake1Result;
-    }
-    pub enum ServerHandshake1Result {
-        ServerHandshake2,
-        Error,
-    }
-
-    #[state]
-    pub struct ServerHandshake2 {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    #[async_trait]
-    pub trait ServerHandshake2 {
-        async fn send_handshake2(self) -> ServerHandshake2Result;
-    }
-    pub enum ServerHandshake2Result {
-        ServerData,
-        Error,
-    }
-
-    #[state]
-    pub struct ServerData {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    #[async_trait]
-    pub trait ServerData {
-        async fn forward_data(self) -> ServerDataResult;
-    }
-    pub enum ServerDataResult {
-        ServerData,
-        Success,
-        Error,
-    }
-
-    #[state]
-    pub struct Success {
-        pub client_conn: Connection,
-        pub server_conn: Connection,
-    }
-    pub trait Success {
-        fn finish(self);
-    }
-
-    #[state]
-    pub struct Error {
-        pub error: upgen::Error,
-    }
-    pub trait Error {
-        fn finish(self) -> upgen::Error;
-    }
-
-    impl From<Init> for UpgenProtocol<Init> {
-        fn from(state: Init) -> Self {
-            UpgenProtocol::<Init> { state: state }
-        }
-    }
-
-    impl From<ClientHandshake1> for UpgenProtocol<ClientHandshake1> {
-        fn from(state: ClientHandshake1) -> Self {
-            UpgenProtocol::<ClientHandshake1> { state: state }
-        }
-    }
-
-    impl From<ClientHandshake2> for UpgenProtocol<ClientHandshake2> {
-        fn from(state: ClientHandshake2) -> Self {
-            UpgenProtocol::<ClientHandshake2> { state: state }
-        }
-    }
-
-    impl From<ServerHandshake1> for UpgenProtocol<ServerHandshake1> {
-        fn from(state: ServerHandshake1) -> Self {
-            UpgenProtocol::<ServerHandshake1> { state: state }
-        }
-    }
-
-    impl From<ServerHandshake2> for UpgenProtocol<ServerHandshake2> {
-        fn from(state: ServerHandshake2) -> Self {
-            UpgenProtocol::<ServerHandshake2> { state: state }
-        }
-    }
-
-    impl From<ClientData> for UpgenProtocol<ClientData> {
-        fn from(state: ClientData) -> Self {
-            UpgenProtocol::<ClientData> { state: state }
-        }
-    }
-
-    impl From<ServerData> for UpgenProtocol<ServerData> {
-        fn from(state: ServerData) -> Self {
-            UpgenProtocol::<ServerData> { state: state }
-        }
-    }
-
-    impl From<Success> for UpgenProtocol<Success> {
-        fn from(state: Success) -> Self {
-            UpgenProtocol::<Success> { state: state }
-        }
-    }
-
-    impl From<Error> for UpgenProtocol<Error> {
-        fn from(state: Error) -> Self {
-            UpgenProtocol::<Error> { state: state }
-        }
-    }
-}
+mod generator;
+mod spec;
+mod states;
 
 pub enum Error {
     ClientHandshake(String),
@@ -208,19 +35,52 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn client_handshake() {
+async fn run_data_loop(mut proto: UpgenProtocol<Data>) -> Result<(), upgen::Error> {
+    loop {
+        proto = match proto.forward_data().await {
+            DataResult::Data(s) => s,
+            DataResult::Success(s) => return Ok(s.finish()),
+            DataResult::Error(e) => return Err(e.finish()),
+        };
     }
+}
 
-    #[test]
-    fn server_handshake() {
-    }
+pub async fn run_upgen_client(
+    client_conn: Connection,
+    server_conn: Connection,
+) -> Result<(), upgen::Error> {
+    let seed: u64 = 123456;
+    let proto = UpgenProtocol::new(client_conn, server_conn, seed).start_client();
 
-    #[test]
-    fn data() {
-    }
+    let proto = match proto.send_handshake1().await {
+        ClientHandshake1Result::ClientHandshake2(s) => s,
+        ClientHandshake1Result::Error(e) => return Err(e.finish()),
+    };
+
+    let proto = match proto.recv_handshake2().await {
+        ClientHandshake2Result::Data(s) => s,
+        ClientHandshake2Result::Error(e) => return Err(e.finish()),
+    };
+    
+    run_data_loop(proto).await
+}
+
+pub async fn run_upgen_server(
+    client_conn: Connection,
+    server_conn: Connection,
+) -> Result<(), upgen::Error> {
+    let seed: u64 = 123456;
+    let proto = UpgenProtocol::new(client_conn, server_conn, seed).start_server();
+
+    let proto = match proto.recv_handshake1().await {
+        ServerHandshake1Result::ServerHandshake2(s) => s,
+        ServerHandshake1Result::Error(e) => return Err(e.finish()),
+    };
+
+    let proto = match proto.send_handshake2().await {
+        ServerHandshake2Result::Data(s) => s,
+        ServerHandshake2Result::Error(e) => return Err(e.finish()),
+    };
+
+    run_data_loop(proto).await
 }

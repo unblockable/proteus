@@ -99,7 +99,7 @@ async fn run_client_main_loop(listener: TcpListener) -> io::Result<()> {
         log::debug!("Accepted new stream from peer {}", sock_addr);
         // TODO: handle success
         // TODO: place into separate task
-        if let Err(_) = socks::server::run_protocol(Connection::new(stream)).await {
+        if let Err(_) = socks::run_socks5_server(Connection::new(stream)).await {
             log::debug!("Stream from peer {} failed", sock_addr);
         }
     }

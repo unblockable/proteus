@@ -9,7 +9,7 @@ pub trait Frame<T> {
     fn serialize(&self) -> BytesMut;
 }
 
-// Specifies how to read/write dynamic frames from/to the network.
+// For reading/writing dynamic frames from/to the network.
 pub struct FrameFmt {
     // TODO: json spec for a single frame
 }

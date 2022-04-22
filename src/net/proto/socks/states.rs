@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use std::net::SocketAddr;
 use std::io;
+use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
 use crate::net::{
     self,
-    proto::socks::{self, socks5_protocol::*, Socks5Address},
+    proto::socks::{self, address::Socks5Address, frames::*, spec::socks5::*},
     Connection,
 };
 
@@ -25,7 +25,7 @@ impl ClientHandshakeState for Socks5Protocol<ClientHandshake> {
     async fn greeting(mut self) -> ClientHandshakeResult {
         log::debug!("Waiting for greeting");
 
-        match self.state.conn.read_frame::<socks::Greeting>().await {
+        match self.state.conn.read_frame::<Greeting>().await {
             Ok(greeting) => {
                 log::debug!("Read greeting {:?}", greeting);
                 let conn = self.state.conn;
@@ -58,7 +58,7 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
         if let Some(_) = methods.iter().find(|&&val| val == SOCKS_AUTH_USERPASS) {
             log::debug!("Choosing username/password authentication");
 
-            let choice = socks::Choice {
+            let choice = Choice {
                 version: SOCKS_VERSION_5,
                 auth_method: SOCKS_AUTH_USERPASS,
             };
@@ -78,7 +78,7 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
         } else if let Some(_) = methods.iter().find(|&&val| val == SOCKS_AUTH_NONE) {
             log::debug!("Choosing no authentication");
 
-            let choice = socks::Choice {
+            let choice = Choice {
                 version: SOCKS_VERSION_5,
                 auth_method: SOCKS_AUTH_NONE,
             };
@@ -100,7 +100,7 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
         } else {
             log::debug!("Authentication methods are unsupported");
 
-            let choice = socks::Choice {
+            let choice = Choice {
                 version: SOCKS_VERSION_5,
                 auth_method: SOCKS_AUTH_UNSUPPORTED,
             };
@@ -122,12 +122,7 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
 impl ClientAuthenticationState for Socks5Protocol<ClientAuthentication> {
     async fn auth_request(mut self) -> ClientAuthenticationResult {
         log::debug!("Waiting for auth request");
-        match self
-            .state
-            .conn
-            .read_frame::<socks::UserPassAuthRequest>()
-            .await
-        {
+        match self.state.conn.read_frame::<UserPassAuthRequest>().await {
             Ok(auth_request) => {
                 log::debug!("Read auth request {:?}", auth_request);
                 let conn = self.state.conn;
@@ -159,7 +154,7 @@ impl ServerAuthenticationState for Socks5Protocol<ServerAuthentication> {
         };
 
         if let Some(err_msg) = err_msg_opt {
-            let response = socks::UserPassAuthResponse {
+            let response = UserPassAuthResponse {
                 version: SOCKS_AUTH_USERPASS_VERSION,
                 status: SOCKS_AUTH_STATUS_FAILURE,
             };
@@ -175,7 +170,7 @@ impl ServerAuthenticationState for Socks5Protocol<ServerAuthentication> {
             return ServerAuthenticationResult::Error(next.into());
         }
 
-        let response = socks::UserPassAuthResponse {
+        let response = UserPassAuthResponse {
             version: SOCKS_AUTH_USERPASS_VERSION,
             status: SOCKS_AUTH_STATUS_SUCCESS,
         };
@@ -200,7 +195,7 @@ impl ClientCommandState for Socks5Protocol<ClientCommand> {
     async fn connect_request(mut self) -> ClientCommandResult {
         log::debug!("Waiting for connect request");
 
-        match self.state.conn.read_frame::<socks::ConnectRequest>().await {
+        match self.state.conn.read_frame::<ConnectRequest>().await {
             Ok(request) => {
                 log::debug!("Read connect request {:?}", request);
                 let conn = self.state.conn;
@@ -222,7 +217,10 @@ async fn do_connect(addr: SocketAddr) -> io::Result<(TcpStream, SocketAddr)> {
     Ok((stream, local_addr))
 }
 
-async fn connect_to_host(addr: Socks5Address, port: u16) -> Result<(TcpStream, SocketAddr), (socks::Error, u8)> {
+async fn connect_to_host(
+    addr: Socks5Address,
+    port: u16,
+) -> Result<(TcpStream, SocketAddr), (socks::Error, u8)> {
     let dest_addr = match addr {
         Socks5Address::IpAddr(a) => SocketAddr::new(a, port),
         _ => {
@@ -246,7 +244,7 @@ async fn connect_to_host(addr: Socks5Address, port: u16) -> Result<(TcpStream, S
 }
 
 async fn try_write_connect_err(conn: &mut Connection, status: u8) {
-    let response = socks::ConnectResponse {
+    let response = ConnectResponse {
         version: SOCKS_VERSION_5,
         status,
         reserved: SOCKS_NULL,
@@ -281,7 +279,7 @@ impl ServerCommandState for Socks5Protocol<ServerCommand> {
         // TODO: we should follow the bind addr configured in the env, if any.
         match connect_to_host(self.state.request.dest_addr, self.state.request.dest_port).await {
             Ok((stream, local_addr)) => {
-                let response = socks::ConnectResponse {
+                let response = ConnectResponse {
                     version: SOCKS_VERSION_5,
                     status: SOCKS_STATUS_REQ_GRANTED,
                     reserved: SOCKS_NULL,
@@ -292,7 +290,10 @@ impl ServerCommandState for Socks5Protocol<ServerCommand> {
                 match self.state.conn.write_frame(&response).await {
                     Ok(_) => {
                         let conn = self.state.conn;
-                        let next = Success { conn, dest: Connection::new(stream) };
+                        let next = Success {
+                            conn,
+                            dest: Connection::new(stream),
+                        };
                         ServerCommandResult::Success(next.into())
                     }
                     Err(net_err) => {
@@ -320,41 +321,4 @@ impl ErrorState for Socks5Protocol<Error> {
     fn finish(self) -> socks::Error {
         self.state.error
     }
-}
-
-pub async fn run_protocol(conn: Connection) -> Result<(Connection, Connection), socks::Error> {
-    let proto = Socks5Protocol::new(conn).start();
-
-    let proto = match proto.greeting().await {
-        ClientHandshakeResult::ServerHandshake(s) => s,
-        ClientHandshakeResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.choice().await {
-        ServerHandshakeResult::ClientAuthentication(s) => {
-            let auth = match s.auth_request().await {
-                ClientAuthenticationResult::ServerAuthentication(s) => s,
-                ClientAuthenticationResult::Error(e) => return Err(e.finish()),
-            };
-
-            match auth.auth_response().await {
-                ServerAuthenticationResult::ClientCommand(s) => s,
-                ServerAuthenticationResult::Error(e) => return Err(e.finish()),
-            }
-        }
-        ServerHandshakeResult::ClientCommand(s) => s,
-        ServerHandshakeResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.connect_request().await {
-        ClientCommandResult::ServerCommand(s) => s,
-        ClientCommandResult::Error(e) => return Err(e.finish()),
-    };
-
-    let proto = match proto.connect_response().await {
-        ServerCommandResult::Success(s) => s,
-        ServerCommandResult::Error(e) => return Err(e.finish()),
-    };
-
-    Ok(proto.finish())
 }

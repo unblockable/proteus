@@ -255,19 +255,20 @@ pub async fn run_protocol(conn: Connection) -> Result<Connection, or::Error> {
     };
 
     // mut so it can live over the loop below.
-    let mut client_cmd = match proto.auth_status().await {
+    let proto = match proto.auth_status().await {
         ServerAuthStatusResult::ClientCommand(s) => s,
         ServerAuthStatusResult::Error(e) => return Err(e.finish()),
     };
 
     // Keep processing commands until done.
+    let mut proto = proto;
     loop {
-        let server_cmd = match client_cmd.command().await {
+        proto = match proto.command().await {
             ClientCommandResult::ServerCommand(s) => s,
             ClientCommandResult::Error(e) => return Err(e.finish()),
         };
 
-        client_cmd = match server_cmd.reply().await {
+        proto = match proto.reply().await {
             ServerCommandResult::ClientCommand(s) => s,
             ServerCommandResult::Success(s) => return Ok(s.finish()),
             ServerCommandResult::Error(e) => return Err(e.finish()),
