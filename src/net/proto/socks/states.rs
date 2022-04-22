@@ -9,46 +9,46 @@ use crate::net::{
     Connection,
 };
 
-impl InitializationState for Socks5Protocol<Initialization> {
-    fn new(conn: Connection) -> Socks5Protocol<Initialization> {
-        Initialization { conn }.into()
+impl InitState for Socks5Protocol<Init> {
+    fn new(conn: Connection) -> Socks5Protocol<Init> {
+        Init { conn }.into()
     }
 
-    fn start(self) -> Socks5Protocol<ClientHandshake> {
+    fn start_server(self) -> Socks5Protocol<ServerHandshake1> {
         let conn = self.state.conn;
-        ClientHandshake { conn }.into()
+        ServerHandshake1 { conn }.into()
     }
 }
 
 #[async_trait]
-impl ClientHandshakeState for Socks5Protocol<ClientHandshake> {
-    async fn greeting(mut self) -> ClientHandshakeResult {
+impl ServerHandshake1State for Socks5Protocol<ServerHandshake1> {
+    async fn recv_greeting(mut self) -> ServerHandshake1Result {
         log::debug!("Waiting for greeting");
 
         match self.state.conn.read_frame::<Greeting>().await {
             Ok(greeting) => {
                 log::debug!("Read greeting {:?}", greeting);
                 let conn = self.state.conn;
-                let next = ServerHandshake { conn, greeting };
-                ClientHandshakeResult::ServerHandshake(next.into())
+                let next = ServerHandshake2 { conn, greeting };
+                ServerHandshake1Result::ServerHandshake2(next.into())
             }
             Err(net_err) => {
                 let error = socks::Error::from(net_err);
                 let next = Error { error };
-                ClientHandshakeResult::Error(next.into())
+                ServerHandshake1Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
-    async fn choice(mut self) -> ServerHandshakeResult {
+impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
+    async fn send_choice(mut self) -> ServerHandshake2Result {
         // Must be socks version 5, or we close the connection without a response.
         if self.state.greeting.version != SOCKS_VERSION_5 {
             let error = socks::Error::Version;
             let next = Error { error };
-            return ServerHandshakeResult::Error(next.into());
+            return ServerHandshake2Result::Error(next.into());
         }
 
         // Check the auth methods supported by the client.
@@ -66,13 +66,13 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
             match self.state.conn.write_frame(&choice).await {
                 Ok(_) => {
                     let conn = self.state.conn;
-                    let next = ClientAuthentication { conn };
-                    ServerHandshakeResult::ClientAuthentication(next.into())
+                    let next = ServerAuth1 { conn };
+                    ServerHandshake2Result::ServerAuth1(next.into())
                 }
                 Err(net_err) => {
                     let error = socks::Error::from(net_err);
                     let next = Error { error };
-                    ServerHandshakeResult::Error(next.into())
+                    ServerHandshake2Result::Error(next.into())
                 }
             }
         } else if let Some(_) = methods.iter().find(|&&val| val == SOCKS_AUTH_NONE) {
@@ -87,14 +87,14 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
                 Ok(_) => {
                     log::debug!("Wrote choice");
                     let conn = self.state.conn;
-                    let next = ClientCommand { conn };
-                    ServerHandshakeResult::ClientCommand(next.into())
+                    let next = ServerCommand1 { conn };
+                    ServerHandshake2Result::ServerCommand1(next.into())
                 }
                 Err(net_err) => {
                     log::debug!("Error writing choice");
                     let error = socks::Error::from(net_err);
                     let next = Error { error };
-                    ServerHandshakeResult::Error(next.into())
+                    ServerHandshake2Result::Error(next.into())
                 }
             }
         } else {
@@ -113,34 +113,34 @@ impl ServerHandshakeState for Socks5Protocol<ServerHandshake> {
 
             let error = socks::Error::AuthMethod;
             let next = Error { error };
-            ServerHandshakeResult::Error(next.into())
+            ServerHandshake2Result::Error(next.into())
         }
     }
 }
 
 #[async_trait]
-impl ClientAuthenticationState for Socks5Protocol<ClientAuthentication> {
-    async fn auth_request(mut self) -> ClientAuthenticationResult {
+impl ServerAuth1State for Socks5Protocol<ServerAuth1> {
+    async fn recv_auth_request(mut self) -> ServerAuth1Result {
         log::debug!("Waiting for auth request");
         match self.state.conn.read_frame::<UserPassAuthRequest>().await {
             Ok(auth_request) => {
                 log::debug!("Read auth request {:?}", auth_request);
                 let conn = self.state.conn;
-                let next = ServerAuthentication { conn, auth_request };
-                ClientAuthenticationResult::ServerAuthentication(next.into())
+                let next = ServerAuth2 { conn, auth_request };
+                ServerAuth1Result::ServerAuth2(next.into())
             }
             Err(net_err) => {
                 let error = socks::Error::from(net_err);
                 let next = Error { error };
-                ClientAuthenticationResult::Error(next.into())
+                ServerAuth1Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ServerAuthenticationState for Socks5Protocol<ServerAuthentication> {
-    async fn auth_response(mut self) -> ServerAuthenticationResult {
+impl ServerAuth2State for Socks5Protocol<ServerAuth2> {
+    async fn send_auth_response(mut self) -> ServerAuth2Result {
         let err_msg_opt = {
             if self.state.auth_request.version != SOCKS_AUTH_USERPASS_VERSION {
                 Some(String::from("Invalid username/password auth version"))
@@ -167,7 +167,7 @@ impl ServerAuthenticationState for Socks5Protocol<ServerAuthentication> {
 
             let error = socks::Error::Auth(String::from(err_msg));
             let next = Error { error };
-            return ServerAuthenticationResult::Error(next.into());
+            return ServerAuth2Result::Error(next.into());
         }
 
         let response = UserPassAuthResponse {
@@ -178,34 +178,34 @@ impl ServerAuthenticationState for Socks5Protocol<ServerAuthentication> {
         match self.state.conn.write_frame(&response).await {
             Ok(_) => {
                 let conn = self.state.conn;
-                let next = ClientCommand { conn };
-                ServerAuthenticationResult::ClientCommand(next.into())
+                let next = ServerCommand1 { conn };
+                ServerAuth2Result::ServerCommand1(next.into())
             }
             Err(net_err) => {
                 let error = socks::Error::from(net_err);
                 let next = Error { error };
-                ServerAuthenticationResult::Error(next.into())
+                ServerAuth2Result::Error(next.into())
             }
         }
     }
 }
 
 #[async_trait]
-impl ClientCommandState for Socks5Protocol<ClientCommand> {
-    async fn connect_request(mut self) -> ClientCommandResult {
+impl ServerCommand1State for Socks5Protocol<ServerCommand1> {
+    async fn recv_connect_request(mut self) -> ServerCommand1Result {
         log::debug!("Waiting for connect request");
 
         match self.state.conn.read_frame::<ConnectRequest>().await {
             Ok(request) => {
                 log::debug!("Read connect request {:?}", request);
                 let conn = self.state.conn;
-                let next = ServerCommand { conn, request };
-                ClientCommandResult::ServerCommand(next.into())
+                let next = ServerCommand2 { conn, request };
+                ServerCommand1Result::ServerCommand2(next.into())
             }
             Err(net_err) => {
                 let error = socks::Error::from(net_err);
                 let next = Error { error };
-                ClientCommandResult::Error(next.into())
+                ServerCommand1Result::Error(next.into())
             }
         }
     }
@@ -260,20 +260,20 @@ async fn try_write_connect_err(conn: &mut Connection, status: u8) {
 }
 
 #[async_trait]
-impl ServerCommandState for Socks5Protocol<ServerCommand> {
-    async fn connect_response(mut self) -> ServerCommandResult {
+impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
+    async fn send_connect_response(mut self) -> ServerCommand2Result {
         if self.state.request.version != SOCKS_VERSION_5 {
             try_write_connect_err(&mut self.state.conn, SOCKS_STATUS_PROTO_ERR).await;
             let error = socks::Error::Version;
-            return ServerCommandResult::Error(Error { error }.into());
+            return ServerCommand2Result::Error(Error { error }.into());
         } else if self.state.request.command != SOCKS_COMMAND_CONNECT {
             try_write_connect_err(&mut self.state.conn, SOCKS_STATUS_PROTO_ERR).await;
             let error = socks::Error::ConnectMethod;
-            return ServerCommandResult::Error(Error { error }.into());
+            return ServerCommand2Result::Error(Error { error }.into());
         } else if self.state.request.reserved != SOCKS_NULL {
             try_write_connect_err(&mut self.state.conn, SOCKS_STATUS_PROTO_ERR).await;
             let error = socks::Error::Reserved;
-            return ServerCommandResult::Error(Error { error }.into());
+            return ServerCommand2Result::Error(Error { error }.into());
         }
 
         // TODO: we should follow the bind addr configured in the env, if any.
@@ -294,18 +294,18 @@ impl ServerCommandState for Socks5Protocol<ServerCommand> {
                             conn,
                             dest: Connection::new(stream),
                         };
-                        ServerCommandResult::Success(next.into())
+                        ServerCommand2Result::Success(next.into())
                     }
                     Err(net_err) => {
                         let error = socks::Error::from(net_err);
                         let next = Error { error };
-                        ServerCommandResult::Error(next.into())
+                        ServerCommand2Result::Error(next.into())
                     }
                 }
             }
             Err((error, status)) => {
                 try_write_connect_err(&mut self.state.conn, status).await;
-                return ServerCommandResult::Error(Error { error }.into());
+                return ServerCommand2Result::Error(Error { error }.into());
             }
         }
     }

@@ -30,92 +30,92 @@ pub mod socks5 {
     pub struct Socks5Protocol;
 
     #[state]
-    pub struct Initialization {
+    pub struct Init {
         pub conn: Connection,
     }
-    pub trait Initialization {
-        fn new(conn: Connection) -> Initialization;
-        fn start(self) -> ClientHandshake;
+    pub trait Init {
+        fn new(conn: Connection) -> Init;
+        fn start_server(self) -> ServerHandshake1;
     }
 
     #[state]
-    pub struct ClientHandshake {
+    pub struct ServerHandshake1 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ClientHandshake {
-        async fn greeting(self) -> ClientHandshakeResult;
+    pub trait ServerHandshake1 {
+        async fn recv_greeting(self) -> ServerHandshake1Result;
     }
-    pub enum ClientHandshakeResult {
-        ServerHandshake,
+    pub enum ServerHandshake1Result {
+        ServerHandshake2,
         Error,
     }
 
     #[state]
-    pub struct ServerHandshake {
+    pub struct ServerHandshake2 {
         pub conn: Connection,
         pub greeting: Greeting,
     }
     #[async_trait]
-    pub trait ServerHandshake {
-        async fn choice(self) -> ServerHandshakeResult;
+    pub trait ServerHandshake2 {
+        async fn send_choice(self) -> ServerHandshake2Result;
     }
-    pub enum ServerHandshakeResult {
-        ClientAuthentication,
-        ClientCommand,
+    pub enum ServerHandshake2Result {
+        ServerAuth1,
+        ServerCommand1,
         Error,
     }
 
     #[state]
-    pub struct ClientAuthentication {
+    pub struct ServerAuth1 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ClientAuthentication {
-        async fn auth_request(self) -> ClientAuthenticationResult;
+    pub trait ServerAuth1 {
+        async fn recv_auth_request(self) -> ServerAuth1Result;
     }
-    pub enum ClientAuthenticationResult {
-        ServerAuthentication,
+    pub enum ServerAuth1Result {
+        ServerAuth2,
         Error,
     }
 
     #[state]
-    pub struct ServerAuthentication {
+    pub struct ServerAuth2 {
         pub conn: Connection,
         pub auth_request: UserPassAuthRequest,
     }
     #[async_trait]
-    pub trait ServerAuthentication {
-        async fn auth_response(self) -> ServerAuthenticationResult;
+    pub trait ServerAuth2 {
+        async fn send_auth_response(self) -> ServerAuth2Result;
     }
-    pub enum ServerAuthenticationResult {
-        ClientCommand,
+    pub enum ServerAuth2Result {
+        ServerCommand1,
         Error,
     }
 
     #[state]
-    pub struct ClientCommand {
+    pub struct ServerCommand1 {
         pub conn: Connection,
     }
     #[async_trait]
-    pub trait ClientCommand {
-        async fn connect_request(self) -> ClientCommandResult;
+    pub trait ServerCommand1 {
+        async fn recv_connect_request(self) -> ServerCommand1Result;
     }
-    pub enum ClientCommandResult {
-        ServerCommand,
+    pub enum ServerCommand1Result {
+        ServerCommand2,
         Error,
     }
 
     #[state]
-    pub struct ServerCommand {
+    pub struct ServerCommand2 {
         pub conn: Connection,
         pub request: ConnectRequest,
     }
     #[async_trait]
-    pub trait ServerCommand {
-        async fn connect_response(self) -> ServerCommandResult;
+    pub trait ServerCommand2 {
+        async fn send_connect_response(self) -> ServerCommand2Result;
     }
-    pub enum ServerCommandResult {
+    pub enum ServerCommand2Result {
         Success,
         Error,
     }
@@ -137,45 +137,45 @@ pub mod socks5 {
         fn finish(self) -> socks::Error;
     }
 
-    impl From<Initialization> for Socks5Protocol<Initialization> {
-        fn from(state: Initialization) -> Self {
-            Socks5Protocol::<Initialization> { state: state }
+    impl From<Init> for Socks5Protocol<Init> {
+        fn from(state: Init) -> Self {
+            Socks5Protocol::<Init> { state: state }
         }
     }
 
-    impl From<ClientHandshake> for Socks5Protocol<ClientHandshake> {
-        fn from(state: ClientHandshake) -> Self {
-            Socks5Protocol::<ClientHandshake> { state: state }
+    impl From<ServerHandshake1> for Socks5Protocol<ServerHandshake1> {
+        fn from(state: ServerHandshake1) -> Self {
+            Socks5Protocol::<ServerHandshake1> { state: state }
         }
     }
 
-    impl From<ServerHandshake> for Socks5Protocol<ServerHandshake> {
-        fn from(state: ServerHandshake) -> Self {
-            Socks5Protocol::<ServerHandshake> { state: state }
+    impl From<ServerHandshake2> for Socks5Protocol<ServerHandshake2> {
+        fn from(state: ServerHandshake2) -> Self {
+            Socks5Protocol::<ServerHandshake2> { state: state }
         }
     }
 
-    impl From<ClientAuthentication> for Socks5Protocol<ClientAuthentication> {
-        fn from(state: ClientAuthentication) -> Self {
-            Socks5Protocol::<ClientAuthentication> { state: state }
+    impl From<ServerAuth1> for Socks5Protocol<ServerAuth1> {
+        fn from(state: ServerAuth1) -> Self {
+            Socks5Protocol::<ServerAuth1> { state: state }
         }
     }
 
-    impl From<ServerAuthentication> for Socks5Protocol<ServerAuthentication> {
-        fn from(state: ServerAuthentication) -> Self {
-            Socks5Protocol::<ServerAuthentication> { state: state }
+    impl From<ServerAuth2> for Socks5Protocol<ServerAuth2> {
+        fn from(state: ServerAuth2) -> Self {
+            Socks5Protocol::<ServerAuth2> { state: state }
         }
     }
 
-    impl From<ClientCommand> for Socks5Protocol<ClientCommand> {
-        fn from(state: ClientCommand) -> Self {
-            Socks5Protocol::<ClientCommand> { state: state }
+    impl From<ServerCommand1> for Socks5Protocol<ServerCommand1> {
+        fn from(state: ServerCommand1) -> Self {
+            Socks5Protocol::<ServerCommand1> { state: state }
         }
     }
 
-    impl From<ServerCommand> for Socks5Protocol<ServerCommand> {
-        fn from(state: ServerCommand) -> Self {
-            Socks5Protocol::<ServerCommand> { state: state }
+    impl From<ServerCommand2> for Socks5Protocol<ServerCommand2> {
+        fn from(state: ServerCommand2) -> Self {
+            Socks5Protocol::<ServerCommand2> { state: state }
         }
     }
 

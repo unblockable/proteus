@@ -50,37 +50,37 @@ pub async fn run_socks5_client(_conn: Connection) -> Result<(Connection, Connect
 }
 
 pub async fn run_socks5_server(conn: Connection) -> Result<(Connection, Connection), socks::Error> {
-    let proto = Socks5Protocol::new(conn).start();
+    let proto = Socks5Protocol::new(conn).start_server();
 
-    let proto = match proto.greeting().await {
-        ClientHandshakeResult::ServerHandshake(s) => s,
-        ClientHandshakeResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.recv_greeting().await {
+        ServerHandshake1Result::ServerHandshake2(s) => s,
+        ServerHandshake1Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.choice().await {
-        ServerHandshakeResult::ClientAuthentication(s) => {
-            let auth = match s.auth_request().await {
-                ClientAuthenticationResult::ServerAuthentication(s) => s,
-                ClientAuthenticationResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.send_choice().await {
+        ServerHandshake2Result::ServerAuth1(s) => {
+            let auth = match s.recv_auth_request().await {
+                ServerAuth1Result::ServerAuth2(s) => s,
+                ServerAuth1Result::Error(e) => return Err(e.finish()),
             };
 
-            match auth.auth_response().await {
-                ServerAuthenticationResult::ClientCommand(s) => s,
-                ServerAuthenticationResult::Error(e) => return Err(e.finish()),
+            match auth.send_auth_response().await {
+                ServerAuth2Result::ServerCommand1(s) => s,
+                ServerAuth2Result::Error(e) => return Err(e.finish()),
             }
         }
-        ServerHandshakeResult::ClientCommand(s) => s,
-        ServerHandshakeResult::Error(e) => return Err(e.finish()),
+        ServerHandshake2Result::ServerCommand1(s) => s,
+        ServerHandshake2Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.connect_request().await {
-        ClientCommandResult::ServerCommand(s) => s,
-        ClientCommandResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.recv_connect_request().await {
+        ServerCommand1Result::ServerCommand2(s) => s,
+        ServerCommand1Result::Error(e) => return Err(e.finish()),
     };
 
-    let proto = match proto.connect_response().await {
-        ServerCommandResult::Success(s) => s,
-        ServerCommandResult::Error(e) => return Err(e.finish()),
+    let proto = match proto.send_connect_response().await {
+        ServerCommand2Result::Success(s) => s,
+        ServerCommand2Result::Error(e) => return Err(e.finish()),
     };
 
     Ok(proto.finish())
