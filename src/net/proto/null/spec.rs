@@ -31,7 +31,6 @@ pub mod null {
         async fn forward_data(self) -> DataResult;
     }
     pub enum DataResult {
-        Data,
         Success,
         Error,
     }

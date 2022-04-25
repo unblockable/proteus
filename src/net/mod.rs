@@ -115,6 +115,9 @@ impl Connection {
     }
 
     pub async fn splice_until_eof(&mut self, other: &mut Connection) -> Result<(), net::Error> {
+        // TODO for some reason this does not detect when the curl transfer
+        // finishes, so this never returns until killing either the pt client or
+        // server.
         match tokio::try_join!(
             tokio::io::copy(&mut self.read_half, &mut other.write_half),
             tokio::io::copy(&mut other.read_half, &mut self.write_half),
