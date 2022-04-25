@@ -54,13 +54,26 @@ Set up ptadapter config, `pta.conf`:
     listen = 127.0.0.1:7999
     options-seed = 54321
 
-Run web server, pt server, pt client, and web client in separate terminals:
+Run web server, pt server, and pt client in separate terminals:
 
     python3 -m http.server 8080
-    ptadapter -S pta.conf -vv
-    ptadapter -C pta.conf -vv
-    # not sure about this curl command
-    curl --socks5 127.0.0.1:8000 http://127.0.0.1:8080
+    ptadapter -S pta.conf -vv 2>&1 | grep -v unknown
+    ptadapter -C pta.conf -vv 2>&1 | grep -v unknown
+
+Check the CMETHOD output from the `ptadapter -C ...` command to find the
+socks5 server port. Suppose the socks5 port is 66666, then run curl client:
+
+    curl --socks5 127.0.0.1:66666 http://127.0.0.1:7999
+
+What happens here:
+
+- Curl will connect to the socks5 server running in the pt client at
+  127.0.0.1:66666
+- Curl will ask the pt client (via socks5) to connect to the pt server at
+  127.0.0.1:7999
+- The pt server will forward the data sent by curl directly to the http server
+  at 127.0.0.1:8080 (via the `forward` directive in `pta.conf`)
+- Curl should print out the contents of the dir where you ran the http server
 
 # Docs
 
