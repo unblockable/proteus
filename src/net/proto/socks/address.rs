@@ -4,8 +4,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-use crate::net;
-
 #[derive(Debug, PartialEq)]
 pub enum Socks5Address {
     IpAddr(IpAddr),
@@ -25,31 +23,32 @@ impl Socks5Address {
     }
 
     pub fn from_bytes(src_buf: &mut Cursor<&BytesMut>) -> Option<Socks5Address> {
-        let addr_type = src_buf.has_remaining().then(|| src_buf.get_u8())?;
+        let addr_type = (src_buf.remaining() >= 1).then(|| src_buf.get_u8())?;
 
         match addr_type {
             0x01 => Some(Socks5Address::IpAddr(IpAddr::from(Ipv4Addr::new(
-                src_buf.has_remaining().then(|| src_buf.get_u8())?,
-                src_buf.has_remaining().then(|| src_buf.get_u8())?,
-                src_buf.has_remaining().then(|| src_buf.get_u8())?,
-                src_buf.has_remaining().then(|| src_buf.get_u8())?,
+                (src_buf.remaining() >= 1).then(|| src_buf.get_u8())?,
+                (src_buf.remaining() >= 1).then(|| src_buf.get_u8())?,
+                (src_buf.remaining() >= 1).then(|| src_buf.get_u8())?,
+                (src_buf.remaining() >= 1).then(|| src_buf.get_u8())?,
             )))),
             0x03 => {
-                let name_len = src_buf.has_remaining().then(|| src_buf.get_u8())?;
-                let name_bytes = net::get_bytes_vec(src_buf, name_len as usize)?;
+                let name_len = (src_buf.remaining() >= 1).then(|| src_buf.get_u8() as usize)?;
+                let name_bytes =
+                    (src_buf.remaining() >= name_len).then(|| src_buf.copy_to_bytes(name_len))?;
                 Some(Socks5Address::Name(
                     String::from_utf8_lossy(&name_bytes).to_string(),
                 ))
             }
             0x04 => Some(Socks5Address::IpAddr(IpAddr::from(Ipv6Addr::new(
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
-                src_buf.has_remaining().then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
+                (src_buf.remaining() >= 2).then(|| src_buf.get_u16())?,
             )))),
             _ => Some(Socks5Address::Unknown),
         }

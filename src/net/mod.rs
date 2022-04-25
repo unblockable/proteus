@@ -10,15 +10,6 @@ use crate::net::{self, frame::{Frame, FrameFmt}};
 pub mod frame;
 pub mod proto;
 
-fn get_bytes_vec(buf: &mut Cursor<&BytesMut>, num_bytes: usize) -> Option<Vec<u8>> {
-    let mut bytes_vec = Vec::new();
-    for _ in 0..num_bytes {
-        let b = buf.has_remaining().then(|| buf.get_u8())?;
-        bytes_vec.push(b);
-    }
-    Some(bytes_vec)
-}
-
 pub enum Error {
     Eof,
     IoError(std::io::Error),

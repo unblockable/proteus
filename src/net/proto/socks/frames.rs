@@ -1,13 +1,13 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 
-use crate::net::{self, frame::Frame, proto::socks::address::Socks5Address};
+use crate::net::{frame::Frame, proto::socks::address::Socks5Address};
 
 #[derive(Debug, PartialEq)]
 pub struct Greeting {
     pub version: u8,
     pub num_auth_methods: u8,
-    pub supported_auth_methods: Vec<u8>,
+    pub supported_auth_methods: Bytes,
 }
 
 #[derive(Debug, PartialEq)]
@@ -49,12 +49,13 @@ pub struct ConnectResponse {
 
 impl Frame<Greeting> for Greeting {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Greeting> {
-        let version = buf.has_remaining().then(|| buf.get_u8())?;
-        let num_auth_methods = buf.has_remaining().then(|| buf.get_u8())?;
+        let version = (buf.remaining() >= 1).then(|| buf.get_u8())?;
+        let num_auth_methods = (buf.remaining() >= 1).then(|| buf.get_u8())?;
+        let size = num_auth_methods as usize;
         Some(Greeting {
             version,
             num_auth_methods,
-            supported_auth_methods: net::get_bytes_vec(buf, num_auth_methods as usize)?,
+            supported_auth_methods: (buf.remaining() >= size).then(|| buf.copy_to_bytes(size))?,
         })
     }
 
@@ -74,8 +75,8 @@ impl Frame<Greeting> for Greeting {
 impl Frame<Choice> for Choice {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Choice> {
         Some(Choice {
-            version: buf.has_remaining().then(|| buf.get_u8())?,
-            auth_method: buf.has_remaining().then(|| buf.get_u8())?,
+            version: (buf.remaining() >= 1).then(|| buf.get_u8())?,
+            auth_method: (buf.remaining() >= 1).then(|| buf.get_u8())?,
         })
     }
 
@@ -89,13 +90,15 @@ impl Frame<Choice> for Choice {
 
 impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<UserPassAuthRequest> {
-        let version = buf.has_remaining().then(|| buf.get_u8())?;
+        let version = (buf.remaining() >= 1).then(|| buf.get_u8())?;
 
-        let username_len = buf.has_remaining().then(|| buf.get_u8())?;
-        let username_bytes = net::get_bytes_vec(buf, username_len as usize)?;
+        let username_len = (buf.remaining() >= 1).then(|| buf.get_u8() as usize)?;
+        let username_bytes =
+            (buf.remaining() >= username_len).then(|| buf.copy_to_bytes(username_len))?;
 
-        let password_len = buf.has_remaining().then(|| buf.get_u8())?;
-        let password_bytes = net::get_bytes_vec(buf, password_len as usize)?;
+        let password_len = (buf.remaining() >= 1).then(|| buf.get_u8() as usize)?;
+        let password_bytes =
+            (buf.remaining() >= password_len).then(|| buf.copy_to_bytes(password_len))?;
 
         Some(UserPassAuthRequest {
             version,
@@ -121,8 +124,8 @@ impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
 impl Frame<UserPassAuthResponse> for UserPassAuthResponse {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<UserPassAuthResponse> {
         Some(UserPassAuthResponse {
-            version: buf.has_remaining().then(|| buf.get_u8())?,
-            status: buf.has_remaining().then(|| buf.get_u8())?,
+            version: (buf.remaining() >= 1).then(|| buf.get_u8())?,
+            status: (buf.remaining() >= 1).then(|| buf.get_u8())?,
         })
     }
 
@@ -137,11 +140,11 @@ impl Frame<UserPassAuthResponse> for UserPassAuthResponse {
 impl Frame<ConnectRequest> for ConnectRequest {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ConnectRequest> {
         Some(ConnectRequest {
-            version: buf.has_remaining().then(|| buf.get_u8())?,
-            command: buf.has_remaining().then(|| buf.get_u8())?,
-            reserved: buf.has_remaining().then(|| buf.get_u8())?,
+            version: (buf.remaining() >= 1).then(|| buf.get_u8())?,
+            command: (buf.remaining() >= 1).then(|| buf.get_u8())?,
+            reserved: (buf.remaining() >= 1).then(|| buf.get_u8())?,
             dest_addr: Socks5Address::from_bytes(buf)?,
-            dest_port: buf.has_remaining().then(|| buf.get_u16())?,
+            dest_port: (buf.remaining() >= 2).then(|| buf.get_u16())?,
         })
     }
 
@@ -159,11 +162,11 @@ impl Frame<ConnectRequest> for ConnectRequest {
 impl Frame<ConnectResponse> for ConnectResponse {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ConnectResponse> {
         Some(ConnectResponse {
-            version: buf.has_remaining().then(|| buf.get_u8())?,
-            status: buf.has_remaining().then(|| buf.get_u8())?,
-            reserved: buf.has_remaining().then(|| buf.get_u8())?,
+            version: (buf.remaining() >= 1).then(|| buf.get_u8())?,
+            status: (buf.remaining() >= 1).then(|| buf.get_u8())?,
+            reserved: (buf.remaining() >= 1).then(|| buf.get_u8())?,
             bind_addr: Socks5Address::from_bytes(buf)?,
-            bind_port: buf.has_remaining().then(|| buf.get_u16())?,
+            bind_port: (buf.remaining() >= 2).then(|| buf.get_u16())?,
         })
     }
 
@@ -188,7 +191,7 @@ mod tests {
         let frame = Greeting {
             version: 5,
             num_auth_methods: 1,
-            supported_auth_methods: vec![0; 1],
+            supported_auth_methods: vec![0; 1].into(),
         };
 
         let mut buf = BytesMut::new();
@@ -210,10 +213,7 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.put(frame.serialize());
 
-        assert_eq!(
-            frame,
-            Choice::deserialize(&mut Cursor::new(&buf)).unwrap()
-        );
+        assert_eq!(frame, Choice::deserialize(&mut Cursor::new(&buf)).unwrap());
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
             username: String::from("someuser"),
             password: String::from("somepassword"),
         };
-        
+
         let mut buf = BytesMut::new();
         buf.put(frame.serialize());
 

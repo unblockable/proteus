@@ -49,7 +49,7 @@ impl Frame<Greeting> for Greeting {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Greeting> {
         let mut auth_types = Vec::new();
 
-        while buf.has_remaining() {
+        while buf.remaining() > 0 {
             match buf.get_u8() {
                 EXTOR_AUTH_TYPE_END => return Some(Greeting { auth_types }),
                 t => auth_types.push(t),
@@ -74,7 +74,7 @@ impl Frame<Greeting> for Greeting {
 impl Frame<Choice> for Choice {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Choice> {
         Some(Choice {
-            auth_type: buf.has_remaining().then(|| buf.get_u8())?,
+            auth_type: (buf.remaining() > 0).then(|| buf.get_u8())?,
         })
     }
 
@@ -88,17 +88,13 @@ impl Frame<Choice> for Choice {
 impl Frame<ClientNonce> for ClientNonce {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ClientNonce> {
         let mut nonce: [u8; 32] = [0; 32];
-        for i in 0..32 {
-            nonce[i] = buf.has_remaining().then(|| buf.get_u8())?;
-        }
+        (buf.remaining() >= 32).then(|| buf.copy_to_slice(&mut nonce))?;
         Some(ClientNonce { nonce })
     }
 
     fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(32);
-        for i in 0..32 {
-            buf.put_u8(self.nonce[i]);
-        }
+        buf.put_slice(&self.nonce);
         buf.freeze()
     }
 }
@@ -106,24 +102,16 @@ impl Frame<ClientNonce> for ClientNonce {
 impl Frame<ServerHashNonce> for ServerHashNonce {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ServerHashNonce> {
         let mut hash: [u8; 32] = [0; 32];
-        for i in 0..32 {
-            hash[i] = buf.has_remaining().then(|| buf.get_u8())?;
-        }
+        (buf.remaining() >= 32).then(|| buf.copy_to_slice(&mut hash))?;
         let mut nonce: [u8; 32] = [0; 32];
-        for i in 0..32 {
-            nonce[i] = buf.has_remaining().then(|| buf.get_u8())?;
-        }
+        (buf.remaining() >= 32).then(|| buf.copy_to_slice(&mut nonce))?;
         Some(ServerHashNonce { hash, nonce })
     }
 
     fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(64);
-        for i in 0..32 {
-            buf.put_u8(self.hash[i]);
-        }
-        for i in 0..32 {
-            buf.put_u8(self.nonce[i]);
-        }
+        buf.put_slice(&self.hash);
+        buf.put_slice(&self.nonce);
         buf.freeze()
     }
 }
@@ -131,17 +119,13 @@ impl Frame<ServerHashNonce> for ServerHashNonce {
 impl Frame<ClientHash> for ClientHash {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ClientHash> {
         let mut hash: [u8; 32] = [0; 32];
-        for i in 0..32 {
-            hash[i] = buf.has_remaining().then(|| buf.get_u8())?
-        }
+        (buf.remaining() >= 32).then(|| buf.copy_to_slice(&mut hash))?;
         Some(ClientHash { hash })
     }
 
     fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(32);
-        for i in 0..32 {
-            buf.put_u8(self.hash[i]);
-        }
+        buf.put_slice(&self.hash);
         buf.freeze()
     }
 }
@@ -149,7 +133,7 @@ impl Frame<ClientHash> for ClientHash {
 impl Frame<ServerStatus> for ServerStatus {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<ServerStatus> {
         Some(ServerStatus {
-            status: buf.has_remaining().then(|| buf.get_u8())?,
+            status: (buf.remaining() > 0).then(|| buf.get_u8())?,
         })
     }
 
@@ -162,9 +146,9 @@ impl Frame<ServerStatus> for ServerStatus {
 
 impl Frame<Command> for Command {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Command> {
-        let command = buf.has_remaining().then(|| buf.get_u16())?;
-        let body_len = buf.has_remaining().then(|| buf.get_u16())?;
-        let body_bytes = net::get_bytes_vec(buf, body_len as usize)?;
+        let command = (buf.remaining() >= 2).then(|| buf.get_u16())?;
+        let body_len = (buf.remaining() >= 2).then(|| buf.get_u16() as usize)?;
+        let body_bytes = (buf.remaining() >= body_len).then(|| buf.copy_to_bytes(body_len))?;
 
         Some(Command {
             command,
@@ -184,7 +168,7 @@ impl Frame<Command> for Command {
 impl Frame<Reply> for Reply {
     fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<Reply> {
         Some(Reply {
-            reply: buf.has_remaining().then(|| buf.get_u16())?,
+            reply: (buf.remaining() >= 2).then(|| buf.get_u16())?,
         })
     }
 
@@ -204,7 +188,7 @@ mod tests {
         let frame = Greeting {
             auth_types: vec![1],
         };
-        
+
         let mut buf = BytesMut::new();
         buf.put(frame.serialize());
 
@@ -252,10 +236,7 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.put(frame.serialize());
 
-        assert_eq!(
-            frame,
-            Choice::deserialize(&mut Cursor::new(&buf)).unwrap()
-        );
+        assert_eq!(frame, Choice::deserialize(&mut Cursor::new(&buf)).unwrap());
     }
 
     #[test]
@@ -324,10 +305,7 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.put(frame.serialize());
 
-        assert_eq!(
-            frame,
-            Command::deserialize(&mut Cursor::new(&buf)).unwrap()
-        );
+        assert_eq!(frame, Command::deserialize(&mut Cursor::new(&buf)).unwrap());
     }
 
     #[test]
@@ -339,9 +317,6 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.put(frame.serialize());
 
-        assert_eq!(
-            frame,
-            Reply::deserialize(&mut Cursor::new(&buf)).unwrap()
-        );
+        assert_eq!(frame, Reply::deserialize(&mut Cursor::new(&buf)).unwrap());
     }
 }
