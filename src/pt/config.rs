@@ -17,19 +17,19 @@ pub enum Mode {
     Server(ServerConfig),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ForwardProtocol {
     Basic,
     Extended(PathBuf), // holds the auth cookie file location
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SocksAuth {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SocksProxy {
     pub auth: Option<SocksAuth>,
     pub addr: SocketAddr,
@@ -48,12 +48,12 @@ pub struct CommonConfig {
     pub connect_bind_addr: IpAddr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientConfig {
     pub proxy: Option<SocksProxy>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub options: HashMap<String, String>,
     pub listen_bind_addr: SocketAddr,

@@ -3,13 +3,11 @@ mod pt;
 
 use log;
 use std::{io, process};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::net::proto::{null, socks};
 use crate::net::Connection;
-use crate::pt::config::{
-    ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig,
-};
+use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig};
 use crate::pt::control;
 
 #[tokio::main]
@@ -82,46 +80,41 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
         }
     };
 
-    match run_client_main_loop(listener).await {
-        Ok(_) => {
-            log::info!("UPGen client completed.");
-            Ok(())
-        }
-        Err(e) => {
-            log::info!("UPGen client completed with error: {}", e);
-            Err(e)
-        }
+    // Main loop waiting for connections from reverse socks5 clients.
+    loop {
+        let (rvs_stream, _) = listener.accept().await?;
+        let conf = client_conf.clone();
+        // A failure in a connection does not stop the server.
+        tokio::spawn(async move { handle_client_connection(rvs_stream, conf).await });
     }
 }
 
-async fn run_client_main_loop(listener: TcpListener) -> io::Result<()> {
-    // Main loop waiting for connections from socks client.
-    loop {
-        let (stream, sock_addr) = listener.accept().await?;
-        log::debug!("Accepted new stream from peer {}", sock_addr);
-        // TODO: handle success
-        // TODO: place into separate task
-        match socks::run_socks5_server(Connection::new(stream)).await {
-            Ok((client_conn, server_conn)) => {
-                log::debug!("Socks5 with peer {} succeeded", sock_addr);
-                match null::run_null_client(client_conn, server_conn).await {
-                    Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", sock_addr),
-                    Err(e) => log::debug!(
-                        "Stream from peer {} failed during Null protocol: {}",
-                        sock_addr,
-                        e
-                    ),
-                }
-            }
-            Err(e) => {
-                log::debug!(
-                    "Stream from peer {} failed during Socks5 protocol: {}",
-                    sock_addr,
+async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) -> io::Result<()> {
+    let rvs_addr = rvs_stream.peer_addr()?;
+    log::debug!("Accepted new stream from client {}", rvs_addr);
+
+    match socks::run_socks5_server(Connection::new(rvs_stream)).await {
+        Ok((rvs_conn, pt_conn)) => {
+            log::debug!("Socks5 with peer {} succeeded", rvs_addr);
+            match null::run_null_client(rvs_conn, pt_conn).await {
+                Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", rvs_addr),
+                Err(e) => log::debug!(
+                    "Stream from peer {} failed during Null protocol: {}",
+                    rvs_addr,
                     e
-                );
+                ),
             }
         }
+        Err(e) => {
+            log::debug!(
+                "Stream from peer {} failed during Socks5 protocol: {}",
+                rvs_addr,
+                e
+            );
+        }
     }
+
+    Ok(())
 }
 
 async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io::Result<()> {
@@ -141,50 +134,51 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
         }
     };
 
-    match run_server_main_loop(listener, server_conf).await {
-        Ok(_) => {
-            log::info!("UPGen client completed.");
-            Ok(())
-        }
-        Err(e) => {
-            log::info!("UPGen client completed with error: {}", e);
-            Err(e)
-        }
+    // Main loop waiting for connections from upgen proxy clients.
+    loop {
+        let (pt_stream, _) = listener.accept().await?;
+        let conf = server_conf.clone();
+        // A failure in a connection does not stop the server.
+        tokio::spawn(async move { handle_server_connection(pt_stream, conf).await });
     }
 }
 
-async fn run_server_main_loop(listener: TcpListener, server_conf: ServerConfig) -> io::Result<()> {
-    // Main loop waiting for connections from upgen proxy client.
-    loop {
-        let (pt_stream, sock_addr) = listener.accept().await?;
+async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> io::Result<()> {
+    let pt_addr = pt_stream.peer_addr()?;
+    log::debug!("Accepted new stream from pt client {}", pt_addr);
 
-        log::debug!("Accepted new stream from peer {}", sock_addr);
+    let fwd_stream = tokio::net::TcpStream::connect(conf.forward_addr).await?;
+    let fwd_addr = fwd_stream.peer_addr()?;
+    log::debug!("Connected to forward server {}", fwd_addr);
 
-        let tor_stream = tokio::net::TcpStream::connect(server_conf.forward_addr).await?;
+    let pt_conn = Connection::new(pt_stream);
+    let fwd_conn = Connection::new(fwd_stream);
 
-        log::debug!("Connected to Tor at {}", tor_stream.peer_addr()?);
+    // TODO
+    // match conf.forward_proto {
+    //     ForwardProtocol::Basic => {
+    //         // no special handshake required
+    //     },
+    //     ForwardProtocol::Extended(cookie_path) => {
+    //         // or::run_extor_client(fwd_conn).await
+    //         todo!()
+    //     }
+    // }
 
-        let pt_conn = Connection::new(pt_stream);
-        let tor_conn = Connection::new(tor_stream);
+    log::debug!(
+        "Running Null protocol to forward data between {} and {}",
+        pt_addr,
+        fwd_addr
+    );
 
-        match null::run_null_server(pt_conn, tor_conn).await {
-            Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", sock_addr),
-            Err(e) => log::debug!(
-                "Stream from peer {} failed during Null protocol: {}",
-                sock_addr,
-                e
-            ),
-        }
-
-        // TODO
-        // match server_conf.forward_proto {
-        //     ForwardProtocol::Basic => {
-        //         // no special handshake required
-        //     },
-        //     ForwardProtocol::Extended(cookie_path) => {
-        //         // or::run_extor_client(tor_conn).await
-        //         todo!()
-        //     }
-        // }
+    match null::run_null_server(pt_conn, fwd_conn).await {
+        Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", pt_addr),
+        Err(e) => log::debug!(
+            "Stream from peer {} failed during Null protocol: {}",
+            pt_addr,
+            e
+        ),
     }
+
+    Ok(())
 }
