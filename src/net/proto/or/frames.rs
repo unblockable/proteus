@@ -1,4 +1,4 @@
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 
 use crate::net::{self, proto::or::spec::extor::*, Frame};
@@ -59,7 +59,7 @@ impl Frame<Greeting> for Greeting {
         None
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(4);
 
         for method in self.auth_types.iter() {
@@ -67,7 +67,7 @@ impl Frame<Greeting> for Greeting {
         }
         buf.put_u8(EXTOR_AUTH_TYPE_END);
 
-        buf
+        buf.freeze()
     }
 }
 
@@ -78,10 +78,10 @@ impl Frame<Choice> for Choice {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(4);
         buf.put_u8(self.auth_type);
-        buf
+        buf.freeze()
     }
 }
 
@@ -94,12 +94,12 @@ impl Frame<ClientNonce> for ClientNonce {
         Some(ClientNonce { nonce })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(32);
         for i in 0..32 {
             buf.put_u8(self.nonce[i]);
         }
-        buf
+        buf.freeze()
     }
 }
 
@@ -116,7 +116,7 @@ impl Frame<ServerHashNonce> for ServerHashNonce {
         Some(ServerHashNonce { hash, nonce })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(64);
         for i in 0..32 {
             buf.put_u8(self.hash[i]);
@@ -124,7 +124,7 @@ impl Frame<ServerHashNonce> for ServerHashNonce {
         for i in 0..32 {
             buf.put_u8(self.nonce[i]);
         }
-        buf
+        buf.freeze()
     }
 }
 
@@ -137,12 +137,12 @@ impl Frame<ClientHash> for ClientHash {
         Some(ClientHash { hash })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(32);
         for i in 0..32 {
             buf.put_u8(self.hash[i]);
         }
-        buf
+        buf.freeze()
     }
 }
 
@@ -153,10 +153,10 @@ impl Frame<ServerStatus> for ServerStatus {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(4);
         buf.put_u8(self.status);
-        buf
+        buf.freeze()
     }
 }
 
@@ -172,12 +172,12 @@ impl Frame<Command> for Command {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(4);
         buf.put_u16(self.command);
         buf.put_u16(self.body.len() as u16);
         buf.put_slice(self.body.as_bytes());
-        buf
+        buf.freeze()
     }
 }
 
@@ -188,10 +188,10 @@ impl Frame<Reply> for Reply {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(4);
         buf.put_u16(self.reply);
-        buf
+        buf.freeze()
     }
 }
 
@@ -204,9 +204,13 @@ mod tests {
         let frame = Greeting {
             auth_types: vec![1],
         };
+        
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            Greeting::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            Greeting::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -244,9 +248,13 @@ mod tests {
     #[test]
     fn choice() {
         let frame = Choice { auth_type: 1 };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            Choice::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            Choice::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -254,9 +262,13 @@ mod tests {
     fn client_nonce() {
         let nonce: [u8; 32] = [111; 32];
         let frame = ClientNonce { nonce };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            ClientNonce::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            ClientNonce::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -265,9 +277,13 @@ mod tests {
         let hash: [u8; 32] = [222; 32];
         let nonce: [u8; 32] = [111; 32];
         let frame = ServerHashNonce { hash, nonce };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            ServerHashNonce::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            ServerHashNonce::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -275,18 +291,26 @@ mod tests {
     fn client_hash() {
         let hash: [u8; 32] = [222; 32];
         let frame = ClientHash { hash };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            ClientHash::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            ClientHash::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
     #[test]
     fn server_status() {
         let frame = ServerStatus { status: 1 };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            ServerStatus::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            ServerStatus::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -296,9 +320,13 @@ mod tests {
             command: EXTOR_COMMAND_TRANSPORT,
             body: String::from("upgen"),
         };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            Command::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            Command::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -307,9 +335,13 @@ mod tests {
         let frame = Reply {
             reply: EXTOR_REPLY_OK,
         };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            Reply::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            Reply::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 }

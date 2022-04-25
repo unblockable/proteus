@@ -1,12 +1,12 @@
 use std::io::Cursor;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 // Trait for reading/writing static frames from/to the network.
 pub trait Frame<T> {
+    /// Returns the bytes representation of the frame.
+    fn serialize(&self) -> Bytes;
     /// Returns a parsed frame or `None` if it was incomplete.
     fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<T>;
-    /// Returns the bytes representation of the frame.
-    fn serialize(&self) -> BytesMut;
 }
 
 // For reading/writing dynamic frames from/to the network.
@@ -23,7 +23,7 @@ impl FrameFmt {
 
     /// Returns a bytes representation of our frame that is suitable for writing
     /// out to the network.
-    pub fn serialize(&self) -> BytesMut {
+    pub fn serialize(&self) -> Bytes {
         todo!()
     }
 
@@ -35,7 +35,7 @@ impl FrameFmt {
     pub fn deserialize(
         &self,
         src: &mut Cursor<&BytesMut>,
-    ) -> Option<BytesMut> {
+    ) -> Option<Bytes> {
         todo!()
     }
 }

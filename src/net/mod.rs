@@ -3,7 +3,7 @@ use std::io::Cursor;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use bytes::{BytesMut, Buf};
+use bytes::{Bytes, BytesMut, Buf};
 
 use crate::net::{self, frame::{Frame, FrameFmt}};
 
@@ -87,7 +87,7 @@ impl Connection {
     }
 
     // TODO copied from read_frame - is there a way to generalize to avoid duplicate code?
-    pub async fn read_frame_fmt(&mut self, frame_fmt: &FrameFmt) -> Result<BytesMut, net::Error> {
+    pub async fn read_frame_fmt(&mut self, frame_fmt: &FrameFmt) -> Result<Bytes, net::Error> {
         loop {
             // Get a cursor to seek over the buffered bytes.
             let mut read_cursor = Cursor::new(&self.buffer);
@@ -121,5 +121,15 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    pub async fn splice_until_eof(&mut self, other: &mut Connection) -> Result<(), net::Error> {
+        match tokio::try_join!(
+            tokio::io::copy(&mut self.read_half, &mut other.write_half),
+            tokio::io::copy(&mut other.read_half, &mut self.write_half),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(net::Error::IoError(e))
+        }
     }
 }

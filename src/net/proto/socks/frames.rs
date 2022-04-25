@@ -1,4 +1,4 @@
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 
 use crate::net::{self, frame::Frame, proto::socks::address::Socks5Address};
@@ -58,7 +58,7 @@ impl Frame<Greeting> for Greeting {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(8);
 
         buf.put_u8(self.version);
@@ -67,7 +67,7 @@ impl Frame<Greeting> for Greeting {
             buf.put_u8(*method);
         }
 
-        buf
+        buf.freeze()
     }
 }
 
@@ -79,11 +79,11 @@ impl Frame<Choice> for Choice {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(2);
         buf.put_u8(self.version);
         buf.put_u8(self.auth_method);
-        buf
+        buf.freeze()
     }
 }
 
@@ -104,7 +104,7 @@ impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let capacity: usize = 3 + self.username.len() + self.password.len();
         let mut buf = BytesMut::with_capacity(capacity);
 
@@ -114,7 +114,7 @@ impl Frame<UserPassAuthRequest> for UserPassAuthRequest {
         buf.put_u8(self.password.len() as u8);
         buf.put_slice(self.password.as_bytes());
 
-        buf
+        buf.freeze()
     }
 }
 
@@ -126,11 +126,11 @@ impl Frame<UserPassAuthResponse> for UserPassAuthResponse {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(2);
         buf.put_u8(self.version);
         buf.put_u8(self.status);
-        buf
+        buf.freeze()
     }
 }
 
@@ -145,14 +145,14 @@ impl Frame<ConnectRequest> for ConnectRequest {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(5 + self.dest_addr.len());
         buf.put_u8(self.version);
         buf.put_u8(self.command);
         buf.put_u8(self.reserved);
         self.dest_addr.to_bytes(&mut buf);
         buf.put_u16(self.dest_port);
-        buf
+        buf.freeze()
     }
 }
 
@@ -167,14 +167,14 @@ impl Frame<ConnectResponse> for ConnectResponse {
         })
     }
 
-    fn serialize(&self) -> BytesMut {
+    fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(5 + self.bind_addr.len());
         buf.put_u8(self.version);
         buf.put_u8(self.status);
         buf.put_u8(self.reserved);
         self.bind_addr.to_bytes(&mut buf);
         buf.put_u16(self.bind_port);
-        buf
+        buf.freeze()
     }
 }
 
@@ -190,9 +190,13 @@ mod tests {
             num_auth_methods: 1,
             supported_auth_methods: vec![0; 1],
         };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            Greeting::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            Greeting::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -202,9 +206,13 @@ mod tests {
             version: 5,
             auth_method: 0,
         };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            Choice::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            Choice::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -215,9 +223,13 @@ mod tests {
             username: String::from("someuser"),
             password: String::from("somepassword"),
         };
+        
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            UserPassAuthRequest::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            UserPassAuthRequest::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -227,9 +239,13 @@ mod tests {
             version: 1,
             status: 0,
         };
+
+        let mut buf = BytesMut::new();
+        buf.put(frame.serialize());
+
         assert_eq!(
             frame,
-            UserPassAuthResponse::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+            UserPassAuthResponse::deserialize(&mut Cursor::new(&buf)).unwrap()
         );
     }
 
@@ -249,9 +265,13 @@ mod tests {
                 dest_addr: addr,
                 dest_port: 9000,
             };
+
+            let mut buf = BytesMut::new();
+            buf.put(frame.serialize());
+
             assert_eq!(
                 frame,
-                ConnectRequest::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+                ConnectRequest::deserialize(&mut Cursor::new(&buf)).unwrap()
             );
         }
     }
@@ -272,9 +292,13 @@ mod tests {
                 bind_addr: addr,
                 bind_port: 9000,
             };
+
+            let mut buf = BytesMut::new();
+            buf.put(frame.serialize());
+
             assert_eq!(
                 frame,
-                ConnectResponse::deserialize(&mut Cursor::new(&frame.serialize())).unwrap()
+                ConnectResponse::deserialize(&mut Cursor::new(&buf)).unwrap()
             );
         }
     }
