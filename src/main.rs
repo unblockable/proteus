@@ -5,9 +5,11 @@ use log;
 use std::{io, process};
 use tokio::net::TcpListener;
 
-use crate::net::proto::socks;
+use crate::net::proto::{null, socks};
 use crate::net::Connection;
-use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig};
+use crate::pt::config::{
+    ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig,
+};
 use crate::pt::control;
 
 #[tokio::main]
@@ -99,8 +101,25 @@ async fn run_client_main_loop(listener: TcpListener) -> io::Result<()> {
         log::debug!("Accepted new stream from peer {}", sock_addr);
         // TODO: handle success
         // TODO: place into separate task
-        if let Err(_) = socks::run_socks5_server(Connection::new(stream)).await {
-            log::debug!("Stream from peer {} failed", sock_addr);
+        match socks::run_socks5_server(Connection::new(stream)).await {
+            Ok((client_conn, server_conn)) => {
+                log::debug!("Socks5 with peer {} succeeded", sock_addr);
+                match null::run_null_client(client_conn, server_conn).await {
+                    Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", sock_addr),
+                    Err(e) => log::debug!(
+                        "Stream from peer {} failed during Null protocol: {}",
+                        sock_addr,
+                        e
+                    ),
+                }
+            }
+            Err(e) => {
+                log::debug!(
+                    "Stream from peer {} failed during Socks5 protocol: {}",
+                    sock_addr,
+                    e
+                );
+            }
         }
     }
 }
@@ -122,7 +141,7 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
         }
     };
 
-    match run_server_main_loop(listener).await {
+    match run_server_main_loop(listener, server_conf).await {
         Ok(_) => {
             log::info!("UPGen client completed.");
             Ok(())
@@ -134,13 +153,38 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
     }
 }
 
-async fn run_server_main_loop(listener: TcpListener) -> io::Result<()> {
-    // Main loop waiting for connections from socks client.
+async fn run_server_main_loop(listener: TcpListener, server_conf: ServerConfig) -> io::Result<()> {
+    // Main loop waiting for connections from upgen proxy client.
     loop {
-        let (_stream, sock_addr) = listener.accept().await?;
+        let (pt_stream, sock_addr) = listener.accept().await?;
 
         log::debug!("Accepted new stream from peer {}", sock_addr);
 
-        todo!()
+        let tor_stream = tokio::net::TcpStream::connect(server_conf.forward_addr).await?;
+
+        log::debug!("Connected to Tor at {}", tor_stream.peer_addr()?);
+
+        let pt_conn = Connection::new(pt_stream);
+        let tor_conn = Connection::new(tor_stream);
+
+        match null::run_null_server(pt_conn, tor_conn).await {
+            Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", sock_addr),
+            Err(e) => log::debug!(
+                "Stream from peer {} failed during Null protocol: {}",
+                sock_addr,
+                e
+            ),
+        }
+
+        // TODO
+        // match server_conf.forward_proto {
+        //     ForwardProtocol::Basic => {
+        //         // no special handshake required
+        //     },
+        //     ForwardProtocol::Extended(cookie_path) => {
+        //         // or::run_extor_client(tor_conn).await
+        //         todo!()
+        //     }
+        // }
     }
 }
