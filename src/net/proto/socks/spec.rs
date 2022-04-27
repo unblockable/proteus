@@ -3,10 +3,7 @@ use typestate::typestate;
 #[typestate]
 pub mod socks5 {
     use crate::net::{
-        proto::socks::{
-            self,
-            frames::{ConnectRequest, Greeting, UserPassAuthRequest},
-        },
+        proto::socks::{self, formatter::Formatter, frames::*},
         Connection,
     };
 
@@ -32,6 +29,7 @@ pub mod socks5 {
     #[state]
     pub struct Init {
         pub conn: Connection,
+        pub fmt: Formatter,
     }
     pub trait Init {
         fn new(conn: Connection) -> Init;
@@ -41,6 +39,7 @@ pub mod socks5 {
     #[state]
     pub struct ServerHandshake1 {
         pub conn: Connection,
+        pub fmt: Formatter,
     }
     #[async_trait]
     pub trait ServerHandshake1 {
@@ -54,6 +53,7 @@ pub mod socks5 {
     #[state]
     pub struct ServerHandshake2 {
         pub conn: Connection,
+        pub fmt: Formatter,
         pub greeting: Greeting,
     }
     #[async_trait]
@@ -69,6 +69,7 @@ pub mod socks5 {
     #[state]
     pub struct ServerAuth1 {
         pub conn: Connection,
+        pub fmt: Formatter,
     }
     #[async_trait]
     pub trait ServerAuth1 {
@@ -82,6 +83,7 @@ pub mod socks5 {
     #[state]
     pub struct ServerAuth2 {
         pub conn: Connection,
+        pub fmt: Formatter,
         pub auth_request: UserPassAuthRequest,
     }
     #[async_trait]
@@ -96,6 +98,7 @@ pub mod socks5 {
     #[state]
     pub struct ServerCommand1 {
         pub conn: Connection,
+        pub fmt: Formatter,
     }
     #[async_trait]
     pub trait ServerCommand1 {
@@ -109,6 +112,7 @@ pub mod socks5 {
     #[state]
     pub struct ServerCommand2 {
         pub conn: Connection,
+        pub fmt: Formatter,
         pub request: ConnectRequest,
     }
     #[async_trait]

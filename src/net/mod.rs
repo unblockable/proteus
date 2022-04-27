@@ -1,13 +1,12 @@
+use bytes::{Buf, Bytes, BytesMut};
 use std::fmt;
 use std::io::Cursor;
-use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use bytes::{Bytes, BytesMut, Buf};
+use tokio::net::TcpStream;
 
-use crate::net::{self, frame::{Frame, FrameFmt}};
+use crate::net;
 
-pub mod frame;
 pub mod proto;
 
 pub enum Error {
@@ -24,6 +23,26 @@ impl fmt::Display for Error {
     }
 }
 
+/// Trait for formatting a static frame so it can be sent to the network.
+trait Serialize<F> {
+    fn serialize(&self) -> Bytes;
+}
+
+/// Trait for formatting a static frame so it can be received from the network.
+trait Deserialize<F> {
+    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<F>;
+}
+
+/// Trait for a formatter that can serialize one or more protocol frames.
+trait Serializer<F> {
+    fn serialize_frame(&self, src: F) -> Bytes;
+}
+
+/// Trait for a formatter that can deserialize one or more protocol frames.
+trait Deserializer<F> {
+    fn deserialize_frame(&self, src: &mut Cursor<&BytesMut>) -> Option<F>;
+}
+
 pub struct Connection {
     read_half: OwnedReadHalf,
     write_half: OwnedWriteHalf,
@@ -35,19 +54,24 @@ impl Connection {
         let (read_half, write_half) = stream.into_split();
         let buffer = BytesMut::new();
         Connection {
-            read_half, write_half, buffer
+            read_half,
+            write_half,
+            buffer,
         }
     }
 
-    /// Read a frame from the connection, waiting until enough data has arrived
-    /// to fill the frame.
-    pub async fn read_frame<T: Frame<T>>(&mut self) -> Result<T, net::Error> {
+    /// Read a frame of type `F` from the connection using deserializer `D`,
+    /// waiting until enough data has arrived to fill the frame.
+    async fn read_frame<F, D>(&mut self, deserializer: &D) -> Result<F, net::Error>
+    where
+        D: Deserializer<F>,
+    {
         loop {
             // Get a cursor to seek over the buffered bytes.
             let mut read_cursor = Cursor::new(&self.buffer);
 
             // Try to parse the frame from the buffer.
-            if let Some(frame) = T::deserialize(&mut read_cursor) {
+            if let Some(frame) = deserializer.deserialize_frame(&mut read_cursor) {
                 // Mark the bytes as consumed.
                 let num_consumed = read_cursor.position() as usize;
                 self.buffer.advance(num_consumed);
@@ -66,9 +90,12 @@ impl Connection {
         }
     }
 
-    /// Write a frame to the connection.
-    pub async fn write_frame<T: Frame<T>>(&mut self, frame: &T) -> Result<(), net::Error> {
-        let bytes = frame.serialize();
+    /// Write a frame `F` to the connection using serializer `S`.
+    async fn write_frame<F, S>(&mut self, serializer: &S, frame: F) -> Result<(), net::Error>
+    where
+        S: Serializer<F>,
+    {
+        let bytes = serializer.serialize_frame(frame);
 
         if let Err(e) = self.write_half.write_all(&bytes).await {
             return Err(net::Error::IoError(e));
@@ -77,44 +104,7 @@ impl Connection {
         Ok(())
     }
 
-    // TODO copied from read_frame - is there a way to generalize to avoid duplicate code?
-    pub async fn read_frame_fmt(&mut self, frame_fmt: &FrameFmt) -> Result<Bytes, net::Error> {
-        loop {
-            // Get a cursor to seek over the buffered bytes.
-            let mut read_cursor = Cursor::new(&self.buffer);
-
-            // Try to parse the frame from the buffer.
-            if let Some(frame) = frame_fmt.deserialize(&mut read_cursor) {
-                // Mark the bytes as consumed.
-                let num_consumed = read_cursor.position() as usize;
-                self.buffer.advance(num_consumed);
-                return Ok(frame);
-            }
-
-            // Pull more bytes in from the source if possible.
-            match self.read_half.read_buf(&mut self.buffer).await {
-                Ok(n_bytes) => {
-                    if n_bytes == 0 {
-                        return Err(net::Error::Eof);
-                    }
-                }
-                Err(e) => return Err(net::Error::IoError(e)),
-            };
-        }
-    }
-
-    // TODO copied from write_frame - is there a way to generalize to avoid duplicate code?
-    pub async fn write_frame_fmt(&mut self, frame_fmt: &FrameFmt) -> Result<(), net::Error> {
-        let bytes = frame_fmt.serialize();
-
-        if let Err(e) = self.write_half.write_all(&bytes).await {
-            return Err(net::Error::IoError(e));
-        }
-
-        Ok(())
-    }
-
-    pub async fn splice_until_eof(&mut self, other: &mut Connection) -> Result<(), net::Error> {
+    async fn splice_until_eof(&mut self, other: &mut Connection) -> Result<(), net::Error> {
         // TODO for some reason this does not detect when the curl transfer
         // finishes, so this never returns until killing either the pt client or
         // server.
@@ -123,7 +113,7 @@ impl Connection {
             tokio::io::copy(&mut other.read_half, &mut self.write_half),
         ) {
             Ok(_) => Ok(()),
-            Err(e) => Err(net::Error::IoError(e))
+            Err(e) => Err(net::Error::IoError(e)),
         }
     }
 }

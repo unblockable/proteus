@@ -2,17 +2,15 @@ use std::fmt;
 
 use crate::net::{
     self,
-    proto::socks::{
-        self,
-        spec::socks5::*,
-    },
+    proto::socks::{self, spec::socks5::*},
     Connection,
 };
 
 mod address;
+mod formatter;
 mod frames;
-mod states;
 mod spec;
+mod states;
 
 pub enum Error {
     Version,
@@ -45,7 +43,9 @@ impl fmt::Display for socks::Error {
 }
 
 #[allow(dead_code)]
-pub async fn run_socks5_client(_conn: Connection) -> Result<(Connection, Connection), socks::Error> {
+pub async fn run_socks5_client(
+    _conn: Connection,
+) -> Result<(Connection, Connection), socks::Error> {
     unimplemented!()
 }
 

@@ -1,7 +1,7 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 
-use crate::net::{self, proto::or::spec::extor::*, Frame};
+use crate::net::{proto::or::spec::extor::*, Frame};
 
 #[derive(Debug, PartialEq)]
 pub struct Greeting {
