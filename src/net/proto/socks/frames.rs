@@ -142,7 +142,7 @@ impl Serialize<ConnectRequest> for ConnectRequest {
         buf.put_u8(self.version);
         buf.put_u8(self.command);
         buf.put_u8(self.reserved);
-        self.dest_addr.to_bytes(&mut buf);
+        buf.put(self.dest_addr.serialize());
         buf.put_u16(self.dest_port);
         buf.freeze()
     }
@@ -154,7 +154,7 @@ impl Deserialize<ConnectRequest> for ConnectRequest {
             version: (buf.remaining() >= 1).then(|| buf.get_u8())?,
             command: (buf.remaining() >= 1).then(|| buf.get_u8())?,
             reserved: (buf.remaining() >= 1).then(|| buf.get_u8())?,
-            dest_addr: Socks5Address::from_bytes(buf)?,
+            dest_addr: Socks5Address::deserialize(buf)?,
             dest_port: (buf.remaining() >= 2).then(|| buf.get_u16())?,
         })
     }
@@ -175,7 +175,7 @@ impl Serialize<ConnectResponse> for ConnectResponse {
         buf.put_u8(self.version);
         buf.put_u8(self.status);
         buf.put_u8(self.reserved);
-        self.bind_addr.to_bytes(&mut buf);
+        buf.put(self.bind_addr.serialize());
         buf.put_u16(self.bind_port);
         buf.freeze()
     }
@@ -187,7 +187,7 @@ impl Deserialize<ConnectResponse> for ConnectResponse {
             version: (buf.remaining() >= 1).then(|| buf.get_u8())?,
             status: (buf.remaining() >= 1).then(|| buf.get_u8())?,
             reserved: (buf.remaining() >= 1).then(|| buf.get_u8())?,
-            bind_addr: Socks5Address::from_bytes(buf)?,
+            bind_addr: Socks5Address::deserialize(buf)?,
             bind_port: (buf.remaining() >= 2).then(|| buf.get_u16())?,
         })
     }
