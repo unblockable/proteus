@@ -1,31 +1,19 @@
-use crate::net::frame::FrameFmt;
-
-
+use crate::net::proto::upgen::protocols::*;
 
 pub struct Generator {
-    // Currently support a 1-RTT handshake phase and then data phase.
-    handshake1: OvertFrameSpec,
-    handshake2: OvertFrameSpec,
-    data: OvertFrameSpec,
+    seed: u64
 }
 
-// TODO
 impl Generator {
     pub fn new(seed: u64) -> Generator {
-        // Use the seed to generate all of our protocol decisions and
-        // create/store the various frame types.
+        // Use the seed to generate an overt protocol which specifies the format
+        // of all frames that are transferred over the network.
         Generator {
-            handshake1: OvertFrameSpec::new(),
-            handshake2: OvertFrameSpec::new(),
-            data: OvertFrameSpec::new(),
+            seed
         }
     }
 
-    pub fn get_overt_frame_spec(&self, frame_type: OvertFrameType) -> &OvertFrameSpec {
-        match frame_type {
-            OvertFrameType::Handshake1 => &self.handshake1,
-            OvertFrameType::Handshake2 => &self.handshake2,
-            OvertFrameType::Data => &self.data,
-        }
+    pub fn generate_overt_protocol(&self) -> OvertProtocol {
+        todo!()
     }
 }

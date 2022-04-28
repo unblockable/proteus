@@ -9,7 +9,13 @@ use crate::net::{
     Connection,
 };
 
+use self::generator::Generator;
+
+mod formatter;
+mod frames;
 mod generator;
+mod message;
+mod protocols;
 mod spec;
 mod states;
 
@@ -48,9 +54,10 @@ async fn run_data_loop(mut proto: UpgenProtocol<Data>) -> Result<(), upgen::Erro
 pub async fn run_upgen_client(
     client_conn: Connection,
     server_conn: Connection,
+    seed: u64,
 ) -> Result<(), upgen::Error> {
-    let seed: u64 = 123456;
-    let proto = UpgenProtocol::new(client_conn, server_conn, seed).start_client();
+    let overt_proto = Generator::new(seed).generate_overt_protocol();
+    let proto = UpgenProtocol::new(client_conn, server_conn, overt_proto).start_client();
 
     let proto = match proto.send_handshake1().await {
         ClientHandshake1Result::ClientHandshake2(s) => s,
@@ -68,9 +75,10 @@ pub async fn run_upgen_client(
 pub async fn run_upgen_server(
     client_conn: Connection,
     server_conn: Connection,
+    seed: u64,
 ) -> Result<(), upgen::Error> {
-    let seed: u64 = 123456;
-    let proto = UpgenProtocol::new(client_conn, server_conn, seed).start_server();
+    let overt_proto = Generator::new(seed).generate_overt_protocol();
+    let proto = UpgenProtocol::new(client_conn, server_conn, overt_proto).start_server();
 
     let proto = match proto.recv_handshake1().await {
         ServerHandshake1Result::ServerHandshake2(s) => s,
