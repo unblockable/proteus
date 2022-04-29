@@ -1,10 +1,10 @@
+use bytes::Buf;
 use bytes::Bytes;
 
 use bytes::BytesMut;
 use crate::net::{Serializer, Deserializer};
 
-use super::frames::OvertFrameSpec;
-use super::message::OvertMessage;
+use super::frames::{CovertPayload, OvertFrameSpec};
 
 pub struct Formatter {
     frame_spec: OvertFrameSpec
@@ -22,14 +22,17 @@ impl Formatter {
     }
 }
 
-impl Serializer<OvertMessage> for Formatter {
-    fn serialize_frame(&self, src: OvertMessage) -> Bytes {
-        todo!()
+impl Serializer<CovertPayload> for Formatter {
+    fn serialize_frame(&self, src: CovertPayload) -> Bytes {
+        // Write as many frames as needed write all of the payload.
+        src.data
     }
 }
 
-impl Deserializer<OvertMessage> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<OvertMessage> {
-        todo!()
+impl Deserializer<CovertPayload> for Formatter {
+    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
+        // Read as many frames as are available and return payload.
+        let data = src.copy_to_bytes(src.remaining());
+        Some(CovertPayload { data })
     }
 }

@@ -101,15 +101,14 @@ pub mod upgen {
         async fn forward_data(self) -> DataResult;
     }
     pub enum DataResult {
-        Data,
         Success,
         Error,
     }
 
     #[state]
     pub struct Success {
-        pub upgen_conn: Connection,
-        pub other_conn: Connection,
+        // pub num_bytes_obfuscated: usize,
+        // pub num_bytes_deobfuscated: usize,
     }
     pub trait Success {
         fn finish(self);
@@ -121,6 +120,12 @@ pub mod upgen {
     }
     pub trait Error {
         fn finish(self) -> upgen::Error;
+    }
+
+    impl From<Success> for UpgenProtocol<Success> {
+        fn from(state: Success) -> Self {
+            UpgenProtocol::<Success> { state: state }
+        }
     }
 
     impl From<upgen::Error> for UpgenProtocol<Error> {
@@ -238,23 +243,6 @@ pub mod upgen {
     impl From<UpgenProtocol<ServerHandshake2>> for UpgenProtocol<Data> {
         fn from(prev: UpgenProtocol<ServerHandshake2>) -> Self {
             UpgenProtocol::<Data> {
-                state: prev.state.into()
-            }
-        }
-    }
-
-    impl From<Data> for Success {
-        fn from(prev: Data) -> Self {
-            Success {
-                upgen_conn: prev.upgen_conn,
-                other_conn: prev.other_conn,
-            }
-        }
-    }
-
-    impl From<UpgenProtocol<Data>> for UpgenProtocol<Success> {
-        fn from(prev: UpgenProtocol<Data>) -> Self {
-            UpgenProtocol::<Success> {
                 state: prev.state.into()
             }
         }

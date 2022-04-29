@@ -1,16 +1,17 @@
 use async_trait::async_trait;
+use bytes::{Bytes, Buf};
 
 use crate::net::{
+    self,
     proto::upgen::{
         self,
         formatter::Formatter,
+        frames::CovertPayload,
         protocols::*,
         spec::{self, upgen::*},
     },
-    Connection,
+    Connection, NetSink, NetSource,
 };
-
-use super::message::OvertMessage;
 
 impl InitState for UpgenProtocol<Init> {
     fn new(
@@ -48,8 +49,8 @@ impl ClientHandshake1State for UpgenProtocol<ClientHandshake1> {
         // Tell the serializer the frame spec it should follow.
         self.state.fmt.set_frame_spec(frame_spec);
 
-        // We don't send any payload yet.
-        let msg = OvertMessage { payload: None };
+        // We don't send any payload yet, but we want a handshake message.
+        let msg = CovertPayload { data: Bytes::new() };
 
         match self
             .state
@@ -110,8 +111,8 @@ impl ServerHandshake2State for UpgenProtocol<ServerHandshake2> {
         // Tell the deserializer the frame spec it should expect.
         self.state.fmt.set_frame_spec(frame_spec);
 
-        // We don't send any payload yet.
-        let msg = OvertMessage { payload: None };
+        // We don't send any payload yet, but we want a handshake message.
+        let msg = CovertPayload { data: Bytes::new() };
 
         match self
             .state
@@ -125,8 +126,86 @@ impl ServerHandshake2State for UpgenProtocol<ServerHandshake2> {
     }
 }
 
-impl UpgenProtocol<Data> {
-    async fn helper(&self) {}
+/// Reads a covert data stream from `source`, obfuscates it, and writes the
+/// upgen protocol frames to `sink`. 
+/// 
+/// Returns a tuple of the total number of bytes read from the source and
+/// written to the sink as `(read, written)`.
+/// 
+/// Upon return, the `source` and `sink` references will be dropped and shutdown
+/// will be called on the `sink` indicating no more data will be written to it.
+async fn obfuscate(
+    mut source: NetSource,
+    mut sink: NetSink,
+    fmt: &Formatter,
+) -> Result<(usize, usize), upgen::Error> {
+    let mut total_num_read: usize = 0;
+    let mut total_num_written: usize = 0;
+
+    loop {
+        // Read the raw covert data stream.
+        let bytes = match source.read_bytes().await {
+            Ok(b) => b,
+            Err(net_err) => match net_err {
+                net::Error::Eof => break,
+                _ => return Err(upgen::Error::from(net_err)),
+            },
+        };
+
+        total_num_read += bytes.len();
+
+        // If we have data, write the overt frames using the upgen formatter.
+        if bytes.has_remaining() {
+            let payload = CovertPayload { data: bytes };
+
+            match sink.write_frame(fmt, payload).await {
+                Ok(num_written) => total_num_written += num_written,
+                Err(e) => return Err(upgen::Error::from(e)),
+            }
+        }
+    }
+
+    Ok((total_num_read, total_num_written))
+}
+
+/// Reads upgen protocol frames from `source`, deobfuscates them, and writes
+/// covert data to `sink`. 
+/// 
+/// Returns a tuple of the total number of bytes read from the source and
+/// written to the sink as `(read, written)`.
+/// 
+/// Upon return, the `source` and `sink` references will be dropped and shutdown
+/// will be called on the `sink` indicating no more data will be written to it.
+async fn deobfuscate(
+    mut source: NetSource,
+    mut sink: NetSink,
+    fmt: &Formatter,
+) -> Result<(usize, usize), upgen::Error> {
+    let mut total_num_read: usize = 0;
+    let mut total_num_written: usize = 0;
+
+    loop {
+        // Read overt frames using the upgen formatter.
+        let payload = match source.read_frame(fmt).await {
+            Ok(frame) => frame,
+            Err(net_err) => match net_err {
+                net::Error::Eof => break,
+                _ => return Err(upgen::Error::from(net_err)),
+            },
+        };
+
+        total_num_read += payload.data.len();
+
+        // If we got a covert payload, write the raw data.
+        if payload.data.has_remaining() {
+            match sink.write_bytes(&payload.data).await {
+                Ok(num_written) => total_num_written += num_written,
+                Err(e) => return Err(upgen::Error::from(e)),
+            }
+        }
+    }
+
+    Ok((total_num_read, total_num_written))
 }
 
 #[async_trait]
@@ -140,11 +219,25 @@ impl DataState for UpgenProtocol<Data> {
             OvertProtocol::OneRtt(p) => p.get_frame_spec(onertt::ProtocolPhase::Data),
         };
 
-        // Tell the deserializer the frame spec it should expect.
+        // Tell the formatter the frame specs to use during the data phase.
         self.state.fmt.set_frame_spec(frame_spec);
 
-        self.helper();
-        todo!()
+        // Get the source and sink ends so we can forward data concurrently.
+        let (upgen_source, upgen_sink) = self.state.upgen_conn.into_split();
+        let (other_source, other_sink) = self.state.other_conn.into_split();
+
+        // TODO: docs for try_join! shows how to do these concurrently AND in parallel,
+        // but that requires that we can send the objects across threads.
+        // let handle1 = tokio::spawn(obfuscate(other_source, upgen_sink));
+        // let handle2 = tokio::spawn(deobfuscate(upgen_source, other_sink));
+
+        match tokio::try_join!(
+            obfuscate(other_source, upgen_sink, &self.state.fmt),
+            deobfuscate(upgen_source, other_sink, &self.state.fmt),
+        ) {
+            Ok(_) => DataResult::Success(Success {}.into()),
+            Err(e) => DataResult::Error(e.into()),
+        }
     }
 }
 

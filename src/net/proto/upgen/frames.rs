@@ -1,8 +1,15 @@
 use bytes::Bytes;
 
+/// Covert application data that we are attempting to transfer across our
+/// pluggable transport. The formatter will obfuscate this by wrapping it in
+/// frames with various header fields, encrypting/decrypting, etc.
+pub struct CovertPayload {
+    pub data: Bytes
+}
+
 #[derive(Clone)]
 pub struct Width {
-    bytes: u8
+    pub num_bytes: u8
 }
 
 #[derive(Clone)]
