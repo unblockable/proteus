@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use tokio::io::AsyncWriteExt;
 
 use crate::net::{
     proto::null::{
@@ -41,13 +42,45 @@ impl InitState for NullProtocol<Init> {
 impl DataState for NullProtocol<Data> {
     async fn forward_data(mut self) -> DataResult {
         // read from tor -> write to pt; read from pt -> write to tor
-        match self.state.tor_conn.splice_until_eof(&mut self.state.pt_conn).await {
-            Ok(()) => {
+
+        // Try to turn the connections back into streams.
+        let (mut pt_stream, pt_bytes) = match self.state.pt_conn.into_stream() {
+            Ok(s) => s,
+            Err(_) => {
+                let next = Error { error: null::Error::Copy };
+                return DataResult::Error(next.into());
+            }
+        };
+        let (mut tor_stream, tor_bytes) = match self.state.tor_conn.into_stream() {
+            Ok(s) => s,
+            Err(_) => {
+                let next = Error { error: null::Error::Copy };
+                return DataResult::Error(next.into());
+            }
+        };
+
+        // Now write the leftover bytes.
+        if pt_bytes.len() > 0 {
+            if tor_stream.write_all(&pt_bytes).await.is_err() {
+                let next = Error { error: null::Error::Copy };
+                return DataResult::Error(next.into());
+            }
+        }
+        if tor_bytes.len() > 0 {
+            if pt_stream.write_all(&tor_bytes).await.is_err() {
+                let next = Error { error: null::Error::Copy };
+                return DataResult::Error(next.into());
+            }
+        }
+
+        // Let tokio handle the remaining copying.
+        match tokio::io::copy_bidirectional(&mut pt_stream, &mut tor_stream).await {
+            Ok(_) => {
                 let next = Success {};
                 DataResult::Success(next.into())
             }
-            Err(net_err) => {
-                let error = null::Error::from(net_err);
+            Err(_) => {
+                let error = null::Error::Copy;
                 let next = Error { error };
                 DataResult::Error(next.into())
             }

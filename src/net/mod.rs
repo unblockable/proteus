@@ -12,6 +12,7 @@ pub mod proto;
 pub enum Error {
     Eof,
     IoError(std::io::Error),
+    Reunite
 }
 
 impl fmt::Display for Error {
@@ -19,6 +20,7 @@ impl fmt::Display for Error {
         match self {
             Error::Eof => write!(f, "Reached EOF during network I/O operation"),
             Error::IoError(e) => write!(f, "I/O error during network operation: {}", e),
+            Error::Reunite => write!(f, "Error reuniting read and write stream halves"),
         }
     }
 }
@@ -43,23 +45,6 @@ trait Deserializer<F> {
     fn deserialize_frame(&self, src: &mut Cursor<&BytesMut>) -> Option<F>;
 }
 
-// #[async_trait]
-// trait NetReader {
-//     /// Read a frame of type `F` from a network source using deserializer `D`,
-//     /// waiting until enough data has arrived to fill the frame.
-//     async fn read_frame<F, D>(&mut self, deserializer: &D) -> Result<F, net::Error>
-//     where
-//         D: Deserializer<F> + Sync;
-// }
-
-// #[async_trait]
-// trait NetWriter {
-//     /// Write a frame `F` to the network sink using serializer `S`.
-//     async fn write_frame<F, S>(&mut self, serializer: &S, frame: F) -> Result<(), net::Error>
-//     where
-//         S: Serializer<F>;
-// }
-
 pub struct Connection {
     source: NetSource,
     sink: NetSink,
@@ -73,17 +58,12 @@ impl Connection {
             sink: NetSink::new(write_half),
         }
     }
-    
-    async fn splice_until_eof(&mut self, other: &mut Connection) -> Result<(), net::Error> {
-        // TODO for some reason this does not detect when the curl transfer
-        // finishes, so this never returns until killing either the pt client or
-        // server.
-        match tokio::try_join!(
-            tokio::io::copy(&mut self.source.read_half, &mut other.sink.write_half),
-            tokio::io::copy(&mut other.source.read_half, &mut self.sink.write_half),
-        ) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(net::Error::IoError(e)),
+
+    /// Reconstructs the TCP Stream, returning any unhandled bytes in our read buffer.
+    fn into_stream(mut self) -> Result<(TcpStream, Bytes), net::Error> {
+        match self.source.read_half.reunite(self.sink.write_half) {
+            Ok(s) => Ok((s, self.source.buffer.split().freeze())),
+            Err(_) => Err(net::Error::Reunite)
         }
     }
 
