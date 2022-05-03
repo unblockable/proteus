@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use bytes::{Bytes, Buf};
+use bytes::{Buf, Bytes};
 
 use crate::net::{
     self,
@@ -127,11 +127,11 @@ impl ServerHandshake2State for UpgenProtocol<ServerHandshake2> {
 }
 
 /// Reads a covert data stream from `source`, obfuscates it, and writes the
-/// upgen protocol frames to `sink`. 
-/// 
+/// upgen protocol frames to `sink`.
+///
 /// Returns a tuple of the total number of bytes read from the source and
 /// written to the sink as `(read, written)`.
-/// 
+///
 /// Upon return, the `source` and `sink` references will be dropped and shutdown
 /// will be called on the `sink` indicating no more data will be written to it.
 async fn obfuscate(
@@ -153,27 +153,37 @@ async fn obfuscate(
         };
 
         total_num_read += bytes.len();
+        log::trace!("obfuscate: read {} app bytes", bytes.len());
 
         // If we have data, write the overt frames using the upgen formatter.
         if bytes.has_remaining() {
             let payload = CovertPayload { data: bytes };
 
-            match sink.write_frame(fmt, payload).await {
-                Ok(num_written) => total_num_written += num_written,
+            let num_written = match sink.write_frame(fmt, payload).await {
+                Ok(num) => num,
                 Err(e) => return Err(upgen::Error::from(e)),
-            }
+            };
+
+            total_num_written += num_written;
+            log::trace!("obfuscate: wrote {} covert bytes", num_written);
         }
+
     }
 
+    log::info!(
+        "obfuscate: done! read {} total bytes, wrote {} total bytes",
+        total_num_read,
+        total_num_written
+    );
     Ok((total_num_read, total_num_written))
 }
 
 /// Reads upgen protocol frames from `source`, deobfuscates them, and writes
-/// covert data to `sink`. 
-/// 
+/// covert data to `sink`.
+///
 /// Returns a tuple of the total number of bytes read from the source and
 /// written to the sink as `(read, written)`.
-/// 
+///
 /// Upon return, the `source` and `sink` references will be dropped and shutdown
 /// will be called on the `sink` indicating no more data will be written to it.
 async fn deobfuscate(
@@ -195,16 +205,25 @@ async fn deobfuscate(
         };
 
         total_num_read += payload.data.len();
+        log::trace!("deobfuscate: read {} covert bytes", payload.data.len());
 
         // If we got a covert payload, write the raw data.
         if payload.data.has_remaining() {
-            match sink.write_bytes(&payload.data).await {
-                Ok(num_written) => total_num_written += num_written,
+            let num_written = match sink.write_bytes(&payload.data).await {
+                Ok(num) => num,
                 Err(e) => return Err(upgen::Error::from(e)),
-            }
+            };
+
+            total_num_written += num_written;
+            log::trace!("deobfuscate: wrote {} app bytes", num_written);
         }
     }
 
+    log::info!(
+        "deobfuscate: done! read {} total bytes, wrote {} total bytes",
+        total_num_read,
+        total_num_written
+    );
     Ok((total_num_read, total_num_written))
 }
 

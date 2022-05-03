@@ -1,5 +1,4 @@
-use bytes::{Buf, Bytes, BytesMut, BufMut};
-use std::borrow::Borrow;
+use bytes::{Buf, Bytes, BytesMut};
 use std::fmt;
 use std::io::Cursor;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -114,7 +113,7 @@ struct NetSource {
 
 impl NetSource {
     fn new(source: OwnedReadHalf) -> NetSource {
-        NetSource { read_half: source, buffer: BytesMut::new() }
+        NetSource { read_half: source, buffer: BytesMut::with_capacity(32768) }
     }
 
     /// Read a frame of type `F` from a network source using deserializer `D`,

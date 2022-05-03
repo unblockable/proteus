@@ -1,8 +1,7 @@
 use bytes::Bytes;
 
 use crate::net::proto::upgen::protocols::*;
-
-use super::frames::{FrameField, OvertFrameSpec, Width};
+use crate::net::proto::upgen::frames::{FieldKind, FrameField, OvertFrameSpec};
 
 pub struct Generator {
     seed: u64,
@@ -17,9 +16,9 @@ impl Generator {
 
     fn create_frame_spec(&self) -> OvertFrameSpec {
         let mut frame_spec = OvertFrameSpec::new();
-        frame_spec.push_field(FrameField::FixedValue(Bytes::from("UPGen v1")));
-        frame_spec.push_field(FrameField::VariableLength(Width { num_bytes: 2 }));
-        frame_spec.push_field(FrameField::VariablePayload(Width { num_bytes: 16 }));
+        frame_spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from("UPGen v1"))));
+        frame_spec.push_field(FrameField::new(FieldKind::Length(2)));
+        frame_spec.push_field(FrameField::new(FieldKind::Payload));
         frame_spec
     }
 

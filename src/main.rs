@@ -5,7 +5,7 @@ use log;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::net::proto::{null, socks};
+use crate::net::proto::{null, socks, upgen};
 use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig};
 use crate::pt::control;
@@ -96,10 +96,17 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
     match socks::run_socks5_server(Connection::new(rvs_stream)).await {
         Ok((rvs_conn, pt_conn)) => {
             log::debug!("Socks5 with peer {} succeeded", rvs_addr);
-            match null::run_null_client(rvs_conn, pt_conn).await {
-                Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", rvs_addr),
+
+            log::debug!(
+                "Running UPGen client protocol to forward data from {}",
+                rvs_addr,
+            );
+
+            // match null::run_null_client(rvs_conn, pt_conn).await {
+            match upgen::run_upgen_client(pt_conn, rvs_conn, 123).await {
+                Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", rvs_addr),
                 Err(e) => log::debug!(
-                    "Stream from peer {} failed during Null protocol: {}",
+                    "Stream from peer {} failed during UPGen protocol: {}",
                     rvs_addr,
                     e
                 ),
@@ -166,15 +173,16 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     // }
 
     log::debug!(
-        "Running Null protocol to forward data between {} and {}",
+        "Running UPGen server protocol to forward data between {} and {}",
         pt_addr,
         fwd_addr
     );
 
-    match null::run_null_server(pt_conn, fwd_conn).await {
-        Ok(_) => log::debug!("Stream from peer {} succeeded Null protocol", pt_addr),
+    // match null::run_null_server(pt_conn, fwd_conn).await {
+    match upgen::run_upgen_server(pt_conn, fwd_conn, 123).await {
+        Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", pt_addr),
         Err(e) => log::debug!(
-            "Stream from peer {} failed during Null protocol: {}",
+            "Stream from peer {} failed during UPGen protocol: {}",
             pt_addr,
             e
         ),
