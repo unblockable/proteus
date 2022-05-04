@@ -1,3 +1,4 @@
+pub mod null;
 pub mod prototype;
 
 use std::fmt;
@@ -6,8 +7,9 @@ use bytes::Bytes;
 
 use crate::net::proto::upgen::crypto;
 
+#[derive(Debug)]
 enum Error {
-    CryptFailure
+    CryptFailure,
 }
 
 impl fmt::Display for Error {
@@ -18,14 +20,13 @@ impl fmt::Display for Error {
     }
 }
 
-trait Encrypt {
+pub trait Encrypt {
     fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error>;
 }
 
-trait Decrypt {
+pub trait Decrypt {
     fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error>;
 }
 
-pub enum CryptoProtocol {
-    Prototype(prototype::CryptoModule),
-}
+// Super-trait that defines everything needed for a crypto protocol.
+pub trait CryptoProtocol: Encrypt + Decrypt {}

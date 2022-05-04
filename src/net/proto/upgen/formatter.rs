@@ -6,13 +6,15 @@ use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
 
-use crate::net::proto::upgen::frames::{CovertPayload, FieldKind, FrameField, OvertFrameSpec};
+use crate::net::proto::upgen::{
+    crypto::{null, CryptoProtocol},
+    frames::{CovertPayload, FieldKind, FrameField, OvertFrameSpec},
+};
 use crate::net::{Deserializer, Serializer};
 
 pub struct Formatter {
     frame_spec: OvertFrameSpec,
-
-    // encryption_module: 
+    crypt_spec: Box<dyn CryptoProtocol + Send + Sync>,
 }
 
 impl Formatter {
@@ -20,11 +22,15 @@ impl Formatter {
     ///   1. variable-value length field (fixed at 2 bytes)
     ///   2. variable-value payload field
     pub fn new() -> Formatter {
-        let mut default = OvertFrameSpec::new();
-        default.push_field(FrameField::new(FieldKind::Length(2)));
-        default.push_field(FrameField::new(FieldKind::Payload));
+        let mut default_spec = OvertFrameSpec::new();
+        default_spec.push_field(FrameField::new(FieldKind::Length(2)));
+        default_spec.push_field(FrameField::new(FieldKind::Payload));
+
+        let default_crypto = Box::new(null::CryptoModule::new());
+
         Formatter {
-            frame_spec: default,
+            frame_spec: default_spec,
+            crypt_spec: default_crypto,
         }
     }
 
@@ -34,7 +40,7 @@ impl Formatter {
         self.frame_spec = frame_spec;
     }
 
-    fn serialize_single_frame(&self, payload: &mut Cursor<Bytes>) -> Bytes {
+    fn serialize_single_frame(&mut self, payload: &mut Cursor<Bytes>) -> Bytes {
         // Write a frame with as much payload as we can.
         log::trace!("Trying to serialize covert frame");
 
@@ -111,7 +117,12 @@ impl Formatter {
                             payload_len,
                             payload.remaining()
                         );
-                        buf.put_slice(&payload.copy_to_bytes(payload_len));
+
+                        let plaintext = payload.copy_to_bytes(payload_len);
+                        // FIXME don't unwrap this, instead bubble the error.
+                        let ciphertext = self.crypt_spec.encrypt(&plaintext).unwrap();
+
+                        buf.put_slice(&ciphertext);
                     }
                 }
             }
@@ -121,7 +132,7 @@ impl Formatter {
         buf.freeze()
     }
 
-    fn deserialize_single_frame(&self, src: &mut Cursor<&BytesMut>) -> Option<Bytes> {
+    fn deserialize_single_frame(&mut self, src: &mut Cursor<&BytesMut>) -> Option<Bytes> {
         // Read a single frame and return any payload.
         // Return None if we don't yet have enough data to extract any payload.
         log::trace!("Trying to deserialize covert frame");
@@ -183,11 +194,13 @@ impl Formatter {
                 FieldKind::Payload => {
                     let len = payload_len;
                     if len > 0 {
-                        let data = (src.remaining() >= len).then(|| {
+                        let ciphertext = (src.remaining() >= len).then(|| {
                             log::trace!("Copying {} bytes from payload field", len);
                             src.copy_to_bytes(len)
                         })?;
-                        payload = Some(data);
+                        // FIXME don't unwrap this, instead bubble the error.
+                        let plaintext = self.crypt_spec.encrypt(&ciphertext).unwrap();
+                        payload = Some(plaintext);
                     }
                 }
             }
@@ -202,7 +215,7 @@ impl Formatter {
 }
 
 impl Serializer<CovertPayload> for Formatter {
-    fn serialize_frame(&self, src: CovertPayload) -> Bytes {
+    fn serialize_frame(&mut self, src: CovertPayload) -> Bytes {
         // Write as many frames as needed until we write all of the payload.
         let mut payload_cursor = Cursor::new(src.data);
 
@@ -221,7 +234,7 @@ impl Serializer<CovertPayload> for Formatter {
 }
 
 impl Deserializer<CovertPayload> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
         // Read as many frames as are available and return combined payload.
         let mut payload = match self.deserialize_single_frame(src) {
             Some(b) => b,
@@ -236,8 +249,8 @@ impl Deserializer<CovertPayload> for Formatter {
                 None => {
                     // Handle the partial frame next time.
                     src.set_position(frame_start_pos);
-                    break
-                },
+                    break;
+                }
             };
             let mut chain = payload.chain(data);
             payload = chain.copy_to_bytes(chain.remaining());
@@ -254,9 +267,7 @@ mod tests {
     use super::*;
 
     fn get_alpha() -> Bytes {
-        Bytes::from_static(
-            b"abcdefghijklmnopqrstuvwxyz",
-        )
+        Bytes::from_static(b"abcdefghijklmnopqrstuvwxyz")
     }
 
     fn get_payload(len: usize) -> Bytes {
@@ -289,7 +300,7 @@ mod tests {
         fmt
     }
 
-    fn assert_serialize_deserialize_eq(bytes: Bytes, fmt: Formatter) {
+    fn assert_serialize_deserialize_eq(bytes: Bytes, mut fmt: Formatter) {
         let mut bytes1 = BytesMut::with_capacity(bytes.len());
         bytes1.put_slice(&bytes);
         let msg1 = CovertPayload {

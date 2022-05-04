@@ -37,12 +37,12 @@ trait Deserialize<F> {
 
 /// Trait for a formatter that can serialize one or more protocol frames.
 trait Serializer<F> {
-    fn serialize_frame(&self, src: F) -> Bytes;
+    fn serialize_frame(&mut self, src: F) -> Bytes;
 }
 
 /// Trait for a formatter that can deserialize one or more protocol frames.
 trait Deserializer<F> {
-    fn deserialize_frame(&self, src: &mut Cursor<&BytesMut>) -> Option<F>;
+    fn deserialize_frame(&mut self, src: &mut Cursor<&BytesMut>) -> Option<F>;
 }
 
 pub struct Connection {
@@ -71,14 +71,14 @@ impl Connection {
         (self.source, self.sink)
     }
 
-    async fn read_frame<F, D>(&mut self, deserializer: &D) -> Result<F, net::Error>
+    async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> Result<F, net::Error>
     where
         D: Deserializer<F>,
     {
         self.source.read_frame(deserializer).await
     }
 
-    async fn write_frame<F, S>(&mut self, serializer: &S, frame: F) -> Result<usize, net::Error>
+    async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> Result<usize, net::Error>
     where
         S: Serializer<F>,
     {
@@ -98,7 +98,7 @@ impl NetSource {
 
     /// Read a frame of type `F` from a network source using deserializer `D`,
     /// waiting until enough data has arrived to fill the frame.
-    async fn read_frame<F, D>(&mut self, deserializer: &D) -> Result<F, net::Error>
+    async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> Result<F, net::Error>
     where
         D: Deserializer<F>,
     {
@@ -149,7 +149,7 @@ impl NetSink {
 
     /// Write a frame `F` to the network sink using serializer `S`.
     /// Returns the number of bytes written to the network.
-    async fn write_frame<F, S>(&mut self, serializer: &S, frame: F) -> Result<usize, net::Error>
+    async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> Result<usize, net::Error>
     where
         S: Serializer<F>,
     {

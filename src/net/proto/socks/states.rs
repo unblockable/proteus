@@ -37,7 +37,7 @@ impl ServerHandshake1State for Socks5Protocol<ServerHandshake1> {
         match self
             .state
             .conn
-            .read_frame::<Greeting, Formatter>(&self.state.fmt)
+            .read_frame::<Greeting, Formatter>(&mut self.state.fmt)
             .await
         {
             Ok(greeting) => {
@@ -83,7 +83,7 @@ impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
             match self
                 .state
                 .conn
-                .write_frame::<Choice, Formatter>(&self.state.fmt, choice)
+                .write_frame::<Choice, Formatter>(&mut self.state.fmt, choice)
                 .await
             {
                 Ok(_) => {
@@ -110,7 +110,7 @@ impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
             match self
                 .state
                 .conn
-                .write_frame::<Choice, Formatter>(&self.state.fmt, choice)
+                .write_frame::<Choice, Formatter>(&mut self.state.fmt, choice)
                 .await
             {
                 Ok(_) => {
@@ -140,7 +140,7 @@ impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
             match self
                 .state
                 .conn
-                .write_frame::<Choice, Formatter>(&self.state.fmt, choice)
+                .write_frame::<Choice, Formatter>(&mut self.state.fmt, choice)
                 .await
             {
                 Ok(_) => log::debug!("Success writing choice failure message"),
@@ -162,7 +162,7 @@ impl ServerAuth1State for Socks5Protocol<ServerAuth1> {
         match self
             .state
             .conn
-            .read_frame::<UserPassAuthRequest, Formatter>(&self.state.fmt)
+            .read_frame::<UserPassAuthRequest, Formatter>(&mut self.state.fmt)
             .await
         {
             Ok(auth_request) => {
@@ -208,7 +208,7 @@ impl ServerAuth2State for Socks5Protocol<ServerAuth2> {
             match self
                 .state
                 .conn
-                .write_frame::<UserPassAuthResponse, Formatter>(&self.state.fmt, response)
+                .write_frame::<UserPassAuthResponse, Formatter>(&mut self.state.fmt, response)
                 .await
             {
                 Ok(_) => log::debug!("Success writing auth failure message"),
@@ -228,7 +228,7 @@ impl ServerAuth2State for Socks5Protocol<ServerAuth2> {
         match self
             .state
             .conn
-            .write_frame::<UserPassAuthResponse, Formatter>(&self.state.fmt, response)
+            .write_frame::<UserPassAuthResponse, Formatter>(&mut self.state.fmt, response)
             .await
         {
             Ok(_) => {
@@ -255,7 +255,7 @@ impl ServerCommand1State for Socks5Protocol<ServerCommand1> {
         match self
             .state
             .conn
-            .read_frame::<ConnectRequest, Formatter>(&self.state.fmt)
+            .read_frame::<ConnectRequest, Formatter>(&mut self.state.fmt)
             .await
         {
             Ok(request) => {
@@ -308,7 +308,7 @@ async fn connect_to_host(
     }
 }
 
-async fn try_write_connect_err(conn: &mut Connection, fmt: &Formatter, status: u8) {
+async fn try_write_connect_err(conn: &mut Connection, fmt: &mut Formatter, status: u8) {
     let response = ConnectResponse {
         version: SOCKS_VERSION_5,
         status,
@@ -333,7 +333,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
         if self.state.request.version != SOCKS_VERSION_5 {
             try_write_connect_err(
                 &mut self.state.conn,
-                &self.state.fmt,
+                &mut self.state.fmt,
                 SOCKS_STATUS_PROTO_ERR,
             )
             .await;
@@ -342,7 +342,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
         } else if self.state.request.command != SOCKS_COMMAND_CONNECT {
             try_write_connect_err(
                 &mut self.state.conn,
-                &self.state.fmt,
+                &mut self.state.fmt,
                 SOCKS_STATUS_PROTO_ERR,
             )
             .await;
@@ -351,7 +351,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
         } else if self.state.request.reserved != SOCKS_NULL {
             try_write_connect_err(
                 &mut self.state.conn,
-                &self.state.fmt,
+                &mut self.state.fmt,
                 SOCKS_STATUS_PROTO_ERR,
             )
             .await;
@@ -373,7 +373,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
                 match self
                     .state
                     .conn
-                    .write_frame::<ConnectResponse, Formatter>(&self.state.fmt, response)
+                    .write_frame::<ConnectResponse, Formatter>(&mut self.state.fmt, response)
                     .await
                 {
                     Ok(_) => {
@@ -392,7 +392,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
                 }
             }
             Err((error, status)) => {
-                try_write_connect_err(&mut self.state.conn, &self.state.fmt, status).await;
+                try_write_connect_err(&mut self.state.conn, &mut self.state.fmt, status).await;
                 return ServerCommand2Result::Error(Error { error }.into());
             }
         }

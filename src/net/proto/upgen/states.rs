@@ -55,7 +55,7 @@ impl ClientHandshake1State for UpgenProtocol<ClientHandshake1> {
         match self
             .state
             .upgen_conn
-            .write_frame(&self.state.fmt, msg)
+            .write_frame(&mut self.state.fmt, msg)
             .await
         {
             Ok(_) => ClientHandshake1Result::ClientHandshake2(self.into()),
@@ -75,7 +75,7 @@ impl ClientHandshake2State for UpgenProtocol<ClientHandshake2> {
         // Tell the deserializer the frame spec it should expect.
         self.state.fmt.set_frame_spec(frame_spec);
 
-        match self.state.upgen_conn.read_frame(&self.state.fmt).await {
+        match self.state.upgen_conn.read_frame(&mut self.state.fmt).await {
             Ok(_) => ClientHandshake2Result::Data(self.into()),
             Err(net_err) => ClientHandshake2Result::Error(upgen::Error::from(net_err).into()),
         }
@@ -93,7 +93,7 @@ impl ServerHandshake1State for UpgenProtocol<ServerHandshake1> {
         // Tell the deserializer the frame spec it should expect.
         self.state.fmt.set_frame_spec(frame_spec);
 
-        match self.state.upgen_conn.read_frame(&self.state.fmt).await {
+        match self.state.upgen_conn.read_frame(&mut self.state.fmt).await {
             Ok(_) => ServerHandshake1Result::ServerHandshake2(self.into()),
             Err(net_err) => ServerHandshake1Result::Error(upgen::Error::from(net_err).into()),
         }
@@ -117,7 +117,7 @@ impl ServerHandshake2State for UpgenProtocol<ServerHandshake2> {
         match self
             .state
             .upgen_conn
-            .write_frame(&self.state.fmt, msg)
+            .write_frame(&mut self.state.fmt, msg)
             .await
         {
             Ok(_) => ServerHandshake2Result::Data(self.into()),
@@ -137,7 +137,7 @@ impl ServerHandshake2State for UpgenProtocol<ServerHandshake2> {
 async fn obfuscate(
     mut source: NetSource,
     mut sink: NetSink,
-    fmt: &Formatter,
+    fmt: &mut Formatter,
 ) -> Result<(usize, usize), upgen::Error> {
     let mut total_num_read: usize = 0;
     let mut total_num_written: usize = 0;
@@ -189,7 +189,7 @@ async fn obfuscate(
 async fn deobfuscate(
     mut source: NetSource,
     mut sink: NetSink,
-    fmt: &Formatter,
+    fmt: &mut Formatter,
 ) -> Result<(usize, usize), upgen::Error> {
     let mut total_num_read: usize = 0;
     let mut total_num_written: usize = 0;
@@ -250,9 +250,14 @@ impl DataState for UpgenProtocol<Data> {
         // let handle1 = tokio::spawn(obfuscate(other_source, upgen_sink));
         // let handle2 = tokio::spawn(deobfuscate(upgen_source, other_sink));
 
+        // FIXME obfs and deobfs need to use the same formatter that share state,
+        // so we'll need to use Arc here. 
+        // I think we want Arc<Mutex<>> here
+        // let mut fmt2 = self.state.fmt.clone();
+
         match tokio::try_join!(
-            obfuscate(other_source, upgen_sink, &self.state.fmt),
-            deobfuscate(upgen_source, other_sink, &self.state.fmt),
+            obfuscate(other_source, upgen_sink, &mut self.state.fmt),
+            deobfuscate(upgen_source, other_sink, &mut self.state.fmt),
         ) {
             Ok(_) => DataResult::Success(Success {}.into()),
             Err(e) => DataResult::Error(e.into()),

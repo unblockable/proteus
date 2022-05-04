@@ -14,38 +14,38 @@ impl Formatter {
 }
 
 impl Serializer<Greeting> for Formatter {
-    fn serialize_frame(&self, src: Greeting) -> Bytes {
+    fn serialize_frame(&mut self, src: Greeting) -> Bytes {
         src.serialize()
     }
 }
 
 impl Deserializer<Greeting> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<Greeting> {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<Greeting> {
         Greeting::deserialize(src)
     }
 }
 
 impl Serializer<Choice> for Formatter {
-    fn serialize_frame(&self, src: Choice) -> Bytes {
+    fn serialize_frame(&mut self, src: Choice) -> Bytes {
         src.serialize()
     }
 }
 
 impl Deserializer<Choice> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<Choice> {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<Choice> {
         Choice::deserialize(src)
     }
 }
 
 impl Serializer<UserPassAuthRequest> for Formatter {
-    fn serialize_frame(&self, src: UserPassAuthRequest) -> Bytes {
+    fn serialize_frame(&mut self, src: UserPassAuthRequest) -> Bytes {
         src.serialize()
     }
 }
 
 impl Deserializer<UserPassAuthRequest> for Formatter {
     fn deserialize_frame(
-        &self,
+        &mut self,
         src: &mut std::io::Cursor<&BytesMut>,
     ) -> Option<UserPassAuthRequest> {
         UserPassAuthRequest::deserialize(src)
@@ -53,14 +53,14 @@ impl Deserializer<UserPassAuthRequest> for Formatter {
 }
 
 impl Serializer<UserPassAuthResponse> for Formatter {
-    fn serialize_frame(&self, src: UserPassAuthResponse) -> Bytes {
+    fn serialize_frame(&mut self, src: UserPassAuthResponse) -> Bytes {
         src.serialize()
     }
 }
 
 impl Deserializer<UserPassAuthResponse> for Formatter {
     fn deserialize_frame(
-        &self,
+        &mut self,
         src: &mut std::io::Cursor<&BytesMut>,
     ) -> Option<UserPassAuthResponse> {
         UserPassAuthResponse::deserialize(src)
@@ -68,25 +68,25 @@ impl Deserializer<UserPassAuthResponse> for Formatter {
 }
 
 impl Serializer<ConnectRequest> for Formatter {
-    fn serialize_frame(&self, src: ConnectRequest) -> Bytes {
+    fn serialize_frame(&mut self, src: ConnectRequest) -> Bytes {
         src.serialize()
     }
 }
 
 impl Deserializer<ConnectRequest> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<ConnectRequest> {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<ConnectRequest> {
         ConnectRequest::deserialize(src)
     }
 }
 
 impl Serializer<ConnectResponse> for Formatter {
-    fn serialize_frame(&self, src: ConnectResponse) -> Bytes {
+    fn serialize_frame(&mut self, src: ConnectResponse) -> Bytes {
         src.serialize()
     }
 }
 
 impl Deserializer<ConnectResponse> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<ConnectResponse> {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<ConnectResponse> {
         ConnectResponse::deserialize(src)
     }
 }
