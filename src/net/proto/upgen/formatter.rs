@@ -1,4 +1,5 @@
 use std::cmp;
+use std::io::Cursor;
 
 use bytes::Buf;
 use bytes::BufMut;
@@ -32,11 +33,9 @@ impl Formatter {
     pub fn set_frame_spec(&mut self, frame_spec: OvertFrameSpec) {
         self.frame_spec = frame_spec;
     }
-}
 
-impl Serializer<CovertPayload> for Formatter {
-    fn serialize_frame(&self, src: CovertPayload) -> Bytes {
-        // Write as many frames as needed until we write all of the payload.
+    fn serialize_single_frame(&self, payload: &mut Cursor<Bytes>) -> Bytes {
+        // Write a frame with as much payload as we can.
         log::trace!("Trying to serialize covert frame");
 
         let fields = self.frame_spec.get_fields();
@@ -55,10 +54,10 @@ impl Serializer<CovertPayload> for Formatter {
                     num_bytes,
                     max_len
                 );
-                payload_len = cmp::min(max_len as usize, src.data.len());
+                payload_len = cmp::min(max_len as usize, payload.remaining());
                 log::trace!(
                     "We have {} available payload bytes, so we can write {} of it",
-                    src.data.len(),
+                    payload.remaining(),
                     payload_len
                 );
                 break;
@@ -67,7 +66,7 @@ impl Serializer<CovertPayload> for Formatter {
 
         let fixed_len = self.frame_spec.get_fixed_len();
         let total_len = fixed_len + payload_len;
-        let mut buf = BytesMut::with_capacity(total_len * 2);
+        let mut buf = BytesMut::with_capacity(total_len);
 
         log::trace!(
             "Computed lengths: fixed={}, payload={}, total={}",
@@ -110,27 +109,22 @@ impl Serializer<CovertPayload> for Formatter {
                         log::trace!(
                             "Writing {} payload bytes out of {} available bytes",
                             payload_len,
-                            src.data.len()
+                            payload.remaining()
                         );
-                        buf.put_slice(&src.data[0..payload_len]);
+                        buf.put_slice(&payload.copy_to_bytes(payload_len));
                     }
                 }
             }
         }
 
-        log::trace!(
-            "Done serializing. We lost {} bytes",
-            src.data.len() - payload_len
-        );
+        log::trace!("Done serializing a frame.");
         buf.freeze()
     }
-}
 
-impl Deserializer<CovertPayload> for Formatter {
-    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
-        // Read as many frames as are available and return payload.
+    fn deserialize_single_frame(&self, src: &mut Cursor<&BytesMut>) -> Option<Bytes> {
+        // Read a single frame and return any payload.
         // Return None if we don't yet have enough data to extract any payload.
-        log::trace!("Trying to Deserialize covert frame");
+        log::trace!("Trying to deserialize covert frame");
 
         let fields = self.frame_spec.get_fields();
         let fixed_len = self.frame_spec.get_fixed_len();
@@ -199,10 +193,146 @@ impl Deserializer<CovertPayload> for Formatter {
             }
         }
 
-        log::trace!("Done deserializing. We lost {} bytes.", src.remaining());
+        log::trace!("Done deserializing a frame.",);
         match payload {
-            None => Some(CovertPayload { data: Bytes::new() }),
-            Some(data) => Some(CovertPayload { data }),
+            None => Some(Bytes::new()),
+            Some(data) => Some(data),
         }
     }
+}
+
+impl Serializer<CovertPayload> for Formatter {
+    fn serialize_frame(&self, src: CovertPayload) -> Bytes {
+        // Write as many frames as needed until we write all of the payload.
+        let mut payload_cursor = Cursor::new(src.data);
+
+        // Always serialize at least one frame even if there is no payload.
+        let mut overt_bytes = self.serialize_single_frame(&mut payload_cursor);
+
+        while payload_cursor.has_remaining() {
+            let frame = self.serialize_single_frame(&mut payload_cursor);
+            let mut chain = overt_bytes.chain(frame);
+            overt_bytes = chain.copy_to_bytes(chain.remaining());
+        }
+
+        // Return the bytes to be written to the network.
+        overt_bytes
+    }
+}
+
+impl Deserializer<CovertPayload> for Formatter {
+    fn deserialize_frame(&self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
+        // Read as many frames as are available and return combined payload.
+        let mut payload = match self.deserialize_single_frame(src) {
+            Some(b) => b,
+            None => return None,
+        };
+
+        while src.has_remaining() {
+            // Ensure we don't discard bytes from partial frames.
+            let frame_start_pos = src.position();
+            let data = match self.deserialize_single_frame(src) {
+                Some(b) => b,
+                None => {
+                    // Handle the partial frame next time.
+                    src.set_position(frame_start_pos);
+                    break
+                },
+            };
+            let mut chain = payload.chain(data);
+            payload = chain.copy_to_bytes(chain.remaining());
+        }
+
+        Some(CovertPayload { data: payload })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    fn get_alpha() -> Bytes {
+        Bytes::from_static(
+            b"abcdefghijklmnopqrstuvwxyz",
+        )
+    }
+
+    fn get_payload(len: usize) -> Bytes {
+        let mut buf = BytesMut::with_capacity(len);
+        buf.put_bytes(b'x', len);
+        buf.freeze()
+    }
+
+    fn get_simple_formatter() -> Formatter {
+        let mut fmt = Formatter::new();
+        let mut spec = OvertFrameSpec::new();
+        spec.push_field(FrameField::new(FieldKind::Length(1)));
+        spec.push_field(FrameField::new(FieldKind::Payload));
+        fmt.set_frame_spec(spec);
+        fmt
+    }
+
+    fn get_complex_formatter() -> Formatter {
+        let mut fmt = Formatter::new();
+        let mut spec = OvertFrameSpec::new();
+        spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from(
+            "Test Greeting v1.1.1.1",
+        ))));
+        spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from_static(&[20]))));
+        spec.push_field(FrameField::new(FieldKind::Fixed(get_alpha())));
+        spec.push_field(FrameField::new(FieldKind::Random(64)));
+        spec.push_field(FrameField::new(FieldKind::Length(1)));
+        spec.push_field(FrameField::new(FieldKind::Payload));
+        fmt.set_frame_spec(spec);
+        fmt
+    }
+
+    fn assert_serialize_deserialize_eq(bytes: Bytes, fmt: Formatter) {
+        let mut bytes1 = BytesMut::with_capacity(bytes.len());
+        bytes1.put_slice(&bytes);
+        let msg1 = CovertPayload {
+            data: bytes1.freeze(),
+        };
+        let bytes_serialized = fmt.serialize_frame(msg1);
+
+        let mut bytes2 = BytesMut::with_capacity(bytes_serialized.len());
+        bytes2.put_slice(&bytes_serialized);
+        let msg2 = fmt.deserialize_frame(&mut Cursor::new(&bytes2)).unwrap();
+        let bytes_deserialized = msg2.data;
+
+        assert_eq!(bytes.len(), bytes_deserialized.len());
+        assert_eq!(bytes, bytes_deserialized);
+    }
+
+    #[test]
+    fn small_payload_simple_formatter() {
+        assert_serialize_deserialize_eq(get_payload(10), get_simple_formatter());
+        assert_serialize_deserialize_eq(get_alpha(), get_simple_formatter());
+    }
+
+    #[test]
+    fn small_payload_complex_formatter() {
+        assert_serialize_deserialize_eq(get_payload(20), get_complex_formatter());
+        assert_serialize_deserialize_eq(get_alpha(), get_simple_formatter());
+    }
+
+    // #[test]
+    // fn multiple_frames() {
+    //     let mut fmt = Formatter::new();
+    //     let mut spec = OvertFrameSpec::new();
+    //     spec.push_field(FrameField::new(FieldKind::Length(1)));
+    //     spec.push_field(FrameField::new(FieldKind::Payload));
+    //     fmt.set_frame_spec(spec);
+    //     // Payload fits in one frame
+    //     assert_serialize_deserialize_eq(get_payload(255), get_simple_formatter());
+    //     // Payload needs two frames
+    //     assert_serialize_deserialize_eq(get_payload(256), get_simple_formatter());
+    // }
+
+    // #[test]
+    // fn large_payload_complex_formatter() {
+    //     assert_serialize_deserialize_eq(get_payload(100000), get_complex_formatter());
+    // }
 }
