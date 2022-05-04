@@ -10,6 +10,7 @@ use crate::net::{Deserializer, Serializer};
 
 pub struct Formatter {
     frame_spec: OvertFrameSpec,
+    // encryption_module: 
 }
 
 impl Formatter {

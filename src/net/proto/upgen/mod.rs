@@ -11,6 +11,7 @@ use crate::net::{
 
 use self::generator::Generator;
 
+mod crypto;
 mod formatter;
 mod frames;
 mod generator;
