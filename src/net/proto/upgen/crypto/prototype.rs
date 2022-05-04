@@ -1,4 +1,4 @@
-use crate::net::proto::upgen::crypto::Encrypt;
+use crate::net::proto::upgen::crypto::{self, Decrypt, Encrypt};
 
 use bytes::Bytes;
 
@@ -8,20 +8,22 @@ pub struct CryptoModule {
 }
 
 impl CryptoModule {
-
+    fn new() {
+        
+    }
 }
 
 impl Encrypt for CryptoModule {
-    fn encrypt(&mut self, payload: &Bytes) -> Option<Bytes> {
+    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
         todo!()
     }
 }
 
-
-
-
-
-
+impl Decrypt for CryptoModule {
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+        todo!()
+    }
+}
 
 /*
 pub enum ProtocolPhase {

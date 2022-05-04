@@ -10,6 +10,7 @@ use crate::net::{Deserializer, Serializer};
 
 pub struct Formatter {
     frame_spec: OvertFrameSpec,
+
     // encryption_module: 
 }
 
@@ -101,6 +102,9 @@ impl Serializer<CovertPayload> for Formatter {
                         _ => buf.put_u128(u128::try_from(payload_len).unwrap_or(u128::MAX)),
                     }
                 }
+                FieldKind::EncryptionMaterial(em_kind) => {
+                    todo!()
+                }
                 FieldKind::Payload => {
                     if payload_len > 0 {
                         log::trace!(
@@ -178,6 +182,9 @@ impl Deserializer<CovertPayload> for Formatter {
                         payload_len,
                         len
                     );
+                }
+                FieldKind::EncryptionMaterial(em_kind) => {
+                    todo!()
                 }
                 FieldKind::Payload => {
                     let len = payload_len;

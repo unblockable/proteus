@@ -7,6 +7,7 @@ pub struct CovertPayload {
     pub data: Bytes,
 }
 
+#[derive(Clone)]
 pub enum EncryptionMaterialKind {
     Handshake,
     MAC
@@ -20,9 +21,6 @@ pub enum FieldKind {
     Length(u8), // Fixed size, variable value
     // The random enum holds the length of the random bytes.
     Random(u8), // Fixed size, variable value
-    // The encrypted enum holds the length of the encrypted header field.
-    // Will be filled with randomness, for now.
-    Encrypted(u8), // Fixed size, variable value
     // Payload bytes are supplied by the caller that needs to be transported.
     EncryptionMaterial(EncryptionMaterialKind),
     Payload, //  Variable size, variable value
@@ -45,7 +43,7 @@ impl FrameField {
             FieldKind::Fixed(b) => b.len(),
             FieldKind::Length(l) => usize::from(*l),
             FieldKind::Random(l) => usize::from(*l),
-            FieldKind::Encrypted(l) => usize::from(*l),
+            FieldKind::EncryptionMaterial(k) => 0, // FIXME This is probably fixed length
             FieldKind::Payload => 0,
         }
     }
