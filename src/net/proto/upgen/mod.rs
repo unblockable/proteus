@@ -2,10 +2,7 @@ use std::fmt;
 
 use crate::net::{
     self,
-    proto::upgen::{
-        self,
-        spec::upgen::*,
-    },
+    proto::upgen::{self, spec::upgen::*},
     Connection,
 };
 

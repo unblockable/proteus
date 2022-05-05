@@ -212,7 +212,7 @@ pub fn parse_server_options() -> Result<HashMap<String, String>, ParseEnvError> 
 
     match map.is_empty() {
         true => Err(ParseEnvError::ValueNotApplicable),
-        false => Ok(map)
+        false => Ok(map),
     }
 }
 
@@ -474,7 +474,10 @@ mod tests {
         assert_eq!(parse_server_options(), Err(ParseEnvError::VariableMissing));
 
         env::set_var(key.clone(), "scramblesuit:key=banana");
-        assert_eq!(parse_server_options(), Err(ParseEnvError::ValueNotApplicable));
+        assert_eq!(
+            parse_server_options(),
+            Err(ParseEnvError::ValueNotApplicable)
+        );
 
         env::set_var(
             key.clone(),
@@ -532,9 +535,10 @@ mod tests {
         }
     }
 
-    fn _test_sock_addr<F>(key: ServerKey, f: F) where 
-        F: Fn() -> Result<SocketAddr, ParseEnvError> {
-
+    fn _test_sock_addr<F>(key: ServerKey, f: F)
+    where
+        F: Fn() -> Result<SocketAddr, ParseEnvError>,
+    {
         let key = key.to_string();
         env::remove_var(key.clone());
         assert_eq!(f(), Err(ParseEnvError::VariableMissing));
@@ -548,10 +552,7 @@ mod tests {
 
         for val in ["string:string", "9000:127.0.0.1", "127.0.0.1:", ":9000"] {
             env::set_var(key.clone(), val);
-            assert_eq!(
-                f(),
-                Err(ParseEnvError::VariableUnparsable)
-            );
+            assert_eq!(f(), Err(ParseEnvError::VariableUnparsable));
         }
     }
 
@@ -562,7 +563,10 @@ mod tests {
 
     #[test]
     fn server_orport_extended() {
-        _test_sock_addr(ServerKey::TOR_PT_EXTENDED_SERVER_PORT, &parse_server_or_port_ext);
+        _test_sock_addr(
+            ServerKey::TOR_PT_EXTENDED_SERVER_PORT,
+            &parse_server_or_port_ext,
+        );
     }
 
     #[test]
@@ -570,7 +574,10 @@ mod tests {
         let key = ServerKey::TOR_PT_AUTH_COOKIE_FILE.to_string();
 
         env::remove_var(key.clone());
-        assert_eq!(parse_server_auth_cookie_file(), Err(ParseEnvError::VariableMissing));
+        assert_eq!(
+            parse_server_auth_cookie_file(),
+            Err(ParseEnvError::VariableMissing)
+        );
 
         for val in ["/var/lib/tor/extended_orport_auth_cookie"] {
             env::set_var(key.clone(), val);
@@ -579,7 +586,10 @@ mod tests {
 
         for val in ["", "tor/auth_cookie_file", "tmp"] {
             env::set_var(key.clone(), val);
-            assert_eq!(parse_server_auth_cookie_file(), Err(ParseEnvError::ValuePathIsNotAbsolute));
+            assert_eq!(
+                parse_server_auth_cookie_file(),
+                Err(ParseEnvError::ValuePathIsNotAbsolute)
+            );
         }
     }
 }

@@ -12,7 +12,7 @@ pub mod proto;
 pub enum Error {
     Eof,
     IoError(std::io::Error),
-    Reunite
+    Reunite,
 }
 
 impl fmt::Display for Error {
@@ -63,7 +63,7 @@ impl Connection {
     fn into_stream(mut self) -> Result<(TcpStream, Bytes), net::Error> {
         match self.source.read_half.reunite(self.sink.write_half) {
             Ok(s) => Ok((s, self.source.buffer.split().freeze())),
-            Err(_) => Err(net::Error::Reunite)
+            Err(_) => Err(net::Error::Reunite),
         }
     }
 
@@ -93,7 +93,10 @@ struct NetSource {
 
 impl NetSource {
     fn new(source: OwnedReadHalf) -> NetSource {
-        NetSource { read_half: source, buffer: BytesMut::with_capacity(32768) }
+        NetSource {
+            read_half: source,
+            buffer: BytesMut::with_capacity(32768),
+        }
     }
 
     /// Read a frame of type `F` from a network source using deserializer `D`,
@@ -105,7 +108,7 @@ impl NetSource {
         loop {
             // Get a cursor to seek over the buffered bytes.
             let mut read_cursor = Cursor::new(&self.buffer);
-    
+
             // Try to parse the frame from the buffer.
             if let Some(frame) = deserializer.deserialize_frame(&mut read_cursor) {
                 // Mark the bytes as consumed.
@@ -113,7 +116,7 @@ impl NetSource {
                 self.buffer.advance(num_consumed);
                 return Ok(frame);
             }
-    
+
             // Pull more bytes in from the source.
             self.read_inner().await?;
         }
@@ -127,12 +130,10 @@ impl NetSource {
     /// Pull more bytes in from the source into our internal buffer.
     async fn read_inner(&mut self) -> Result<usize, net::Error> {
         match self.read_half.read_buf(&mut self.buffer).await {
-            Ok(n_bytes) => {
-                match n_bytes {
-                    0 => Err(net::Error::Eof),
-                    _ => Ok(n_bytes)
-                }
-            }
+            Ok(n_bytes) => match n_bytes {
+                0 => Err(net::Error::Eof),
+                _ => Ok(n_bytes),
+            },
             Err(e) => return Err(net::Error::IoError(e)),
         }
     }
@@ -161,7 +162,7 @@ impl NetSink {
         let num_bytes = bytes.len();
         match self.write_half.write_all(&bytes).await {
             Ok(_) => Ok(num_bytes),
-            Err(e) => Err(net::Error::IoError(e))
+            Err(e) => Err(net::Error::IoError(e)),
         }
     }
 }

@@ -169,7 +169,6 @@ async fn obfuscate(
             total_num_written += num_written;
             log::trace!("obfuscate: wrote {} covert bytes", num_written);
         }
-
     }
 
     log::info!(
@@ -253,7 +252,7 @@ impl DataState for UpgenProtocol<Data> {
         // let handle2 = tokio::spawn(deobfuscate(upgen_source, other_sink));
 
         // FIXME obfs and deobfs need to use the same formatter that share state,
-        // so we'll need to use Arc here. 
+        // so we'll need to use Arc here.
         // I think we want Arc<Mutex<Formatter>> here
         // let mut fmt2 = self.state.fmt.clone();
 

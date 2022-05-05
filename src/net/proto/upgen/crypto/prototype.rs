@@ -8,9 +8,7 @@ pub struct CryptoModule {
 }
 
 impl CryptoModule {
-    fn new() {
-        
-    }
+    fn new() {}
 }
 
 impl Encrypt for CryptoModule {

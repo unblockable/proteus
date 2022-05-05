@@ -183,7 +183,7 @@ mod tests {
     use std::env;
 
     use crate::pt::config::Config;
-    use crate::pt::env::{CommonKey, ClientKey, ServerKey};
+    use crate::pt::env::{ClientKey, CommonKey, ServerKey};
 
     fn remove_all_pt_keys() {
         for (k, _) in env::vars() {
@@ -211,9 +211,15 @@ mod tests {
 
         env::set_var(CommonKey::TOR_PT_EXIT_ON_STDIN_CLOSE.to_string(), "1");
         assert!(Config::from_env().is_ok());
-        env::set_var(CommonKey::TOR_PT_OUTBOUND_BIND_ADDRESS_V4.to_string(), "192.168.1.1");
+        env::set_var(
+            CommonKey::TOR_PT_OUTBOUND_BIND_ADDRESS_V4.to_string(),
+            "192.168.1.1",
+        );
         assert!(Config::from_env().is_ok());
-        env::set_var(ClientKey::TOR_PT_PROXY.to_string(), "socks5://username:password@192.168.1.1:8000");
+        env::set_var(
+            ClientKey::TOR_PT_PROXY.to_string(),
+            "socks5://username:password@192.168.1.1:8000",
+        );
         assert!(Config::from_env().is_ok());
     }
 
@@ -227,9 +233,15 @@ mod tests {
         assert!(Config::from_env().is_err());
         env::set_var(ServerKey::TOR_PT_SERVER_TRANSPORTS.to_string(), "upgen");
         assert!(Config::from_env().is_err());
-        env::set_var(ServerKey::TOR_PT_SERVER_TRANSPORT_OPTIONS.to_string(), "upgen:seed=12345");
+        env::set_var(
+            ServerKey::TOR_PT_SERVER_TRANSPORT_OPTIONS.to_string(),
+            "upgen:seed=12345",
+        );
         assert!(Config::from_env().is_err());
-        env::set_var(ServerKey::TOR_PT_SERVER_BINDADDR.to_string(), "upgen-192.168.100.1:8080");
+        env::set_var(
+            ServerKey::TOR_PT_SERVER_BINDADDR.to_string(),
+            "upgen-192.168.100.1:8080",
+        );
         assert!(Config::from_env().is_err());
         env::set_var(ServerKey::TOR_PT_ORPORT.to_string(), "127.0.0.1:9000");
         assert!(Config::from_env().is_ok());
@@ -242,14 +254,23 @@ mod tests {
         // Use extended port instead of normal port.
         env::remove_var(ServerKey::TOR_PT_ORPORT.to_string());
         assert!(Config::from_env().is_err());
-        env::set_var(ServerKey::TOR_PT_EXTENDED_SERVER_PORT.to_string(), "127.0.0.1:9001");
+        env::set_var(
+            ServerKey::TOR_PT_EXTENDED_SERVER_PORT.to_string(),
+            "127.0.0.1:9001",
+        );
         assert!(Config::from_env().is_err());
-        env::set_var(ServerKey::TOR_PT_AUTH_COOKIE_FILE.to_string(), "/tmp/tor_auth_cookie");
+        env::set_var(
+            ServerKey::TOR_PT_AUTH_COOKIE_FILE.to_string(),
+            "/tmp/tor_auth_cookie",
+        );
         assert!(Config::from_env().is_ok());
 
         env::set_var(CommonKey::TOR_PT_EXIT_ON_STDIN_CLOSE.to_string(), "1");
         assert!(Config::from_env().is_ok());
-        env::set_var(CommonKey::TOR_PT_OUTBOUND_BIND_ADDRESS_V4.to_string(), "192.168.1.1");
+        env::set_var(
+            CommonKey::TOR_PT_OUTBOUND_BIND_ADDRESS_V4.to_string(),
+            "192.168.1.1",
+        );
         assert!(Config::from_env().is_ok());
     }
 }

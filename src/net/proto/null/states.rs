@@ -10,10 +10,7 @@ use crate::net::{
 };
 
 impl InitState for NullProtocol<Init> {
-    fn new(
-        client_conn: Connection,
-        server_conn: Connection,
-    ) -> NullProtocol<Init> {
+    fn new(client_conn: Connection, server_conn: Connection) -> NullProtocol<Init> {
         Init {
             client_conn,
             server_conn,
@@ -47,14 +44,18 @@ impl DataState for NullProtocol<Data> {
         let (mut pt_stream, pt_bytes) = match self.state.pt_conn.into_stream() {
             Ok(s) => s,
             Err(_) => {
-                let next = Error { error: null::Error::Copy };
+                let next = Error {
+                    error: null::Error::Copy,
+                };
                 return DataResult::Error(next.into());
             }
         };
         let (mut tor_stream, tor_bytes) = match self.state.tor_conn.into_stream() {
             Ok(s) => s,
             Err(_) => {
-                let next = Error { error: null::Error::Copy };
+                let next = Error {
+                    error: null::Error::Copy,
+                };
                 return DataResult::Error(next.into());
             }
         };
@@ -62,13 +63,17 @@ impl DataState for NullProtocol<Data> {
         // Now write the leftover bytes.
         if pt_bytes.len() > 0 {
             if tor_stream.write_all(&pt_bytes).await.is_err() {
-                let next = Error { error: null::Error::Copy };
+                let next = Error {
+                    error: null::Error::Copy,
+                };
                 return DataResult::Error(next.into());
             }
         }
         if tor_bytes.len() > 0 {
             if pt_stream.write_all(&tor_bytes).await.is_err() {
-                let next = Error { error: null::Error::Copy };
+                let next = Error {
+                    error: null::Error::Copy,
+                };
                 return DataResult::Error(next.into());
             }
         }

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
-use crate::net::proto::upgen::protocols::*;
 use crate::net::proto::upgen::frames::{FieldKind, FrameField, OvertFrameSpec};
+use crate::net::proto::upgen::protocols::*;
 
 pub struct Generator {
     seed: u64,

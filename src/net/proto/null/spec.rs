@@ -36,8 +36,7 @@ pub mod null {
     }
 
     #[state]
-    pub struct Success {
-    }
+    pub struct Success {}
     pub trait Success {
         fn finish(self);
     }

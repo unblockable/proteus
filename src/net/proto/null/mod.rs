@@ -24,7 +24,7 @@ impl fmt::Display for null::Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Network(e) => write!(f, "Network error: {}", e),
-            Error::Copy => write!(f, "Error copying data between streams", ),
+            Error::Copy => write!(f, "Error copying data between streams",),
         }
     }
 }

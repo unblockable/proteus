@@ -1,6 +1,6 @@
 use crate::net::proto::upgen::crypto::{self, CryptoProtocol, Decrypt, Encrypt};
 
-use bytes::{Bytes};
+use bytes::Bytes;
 
 pub struct CryptoModule {
     // Not sure what's gonna go in here yet.

@@ -108,7 +108,7 @@ pub mod upgen {
     #[state]
     pub struct Success {
         // pub num_bytes_obfuscated: usize,
-        // pub num_bytes_deobfuscated: usize,
+    // pub num_bytes_deobfuscated: usize,
     }
     pub trait Success {
         fn finish(self);
@@ -130,7 +130,9 @@ pub mod upgen {
 
     impl From<upgen::Error> for UpgenProtocol<Error> {
         fn from(error: upgen::Error) -> Self {
-            UpgenProtocol::<Error> { state: Error { error } }
+            UpgenProtocol::<Error> {
+                state: Error { error },
+            }
         }
     }
 
@@ -148,7 +150,7 @@ pub mod upgen {
     impl From<UpgenProtocol<Init>> for UpgenProtocol<ClientHandshake1> {
         fn from(prev: UpgenProtocol<Init>) -> Self {
             UpgenProtocol::<ClientHandshake1> {
-                state: prev.state.into()
+                state: prev.state.into(),
             }
         }
     }
@@ -167,7 +169,7 @@ pub mod upgen {
     impl From<UpgenProtocol<ClientHandshake1>> for UpgenProtocol<ClientHandshake2> {
         fn from(prev: UpgenProtocol<ClientHandshake1>) -> Self {
             UpgenProtocol::<ClientHandshake2> {
-                state: prev.state.into()
+                state: prev.state.into(),
             }
         }
     }
@@ -186,7 +188,7 @@ pub mod upgen {
     impl From<UpgenProtocol<ClientHandshake2>> for UpgenProtocol<Data> {
         fn from(prev: UpgenProtocol<ClientHandshake2>) -> Self {
             UpgenProtocol::<Data> {
-                state: prev.state.into()
+                state: prev.state.into(),
             }
         }
     }
@@ -205,7 +207,7 @@ pub mod upgen {
     impl From<UpgenProtocol<Init>> for UpgenProtocol<ServerHandshake1> {
         fn from(prev: UpgenProtocol<Init>) -> Self {
             UpgenProtocol::<ServerHandshake1> {
-                state: prev.state.into()
+                state: prev.state.into(),
             }
         }
     }
@@ -224,7 +226,7 @@ pub mod upgen {
     impl From<UpgenProtocol<ServerHandshake1>> for UpgenProtocol<ServerHandshake2> {
         fn from(prev: UpgenProtocol<ServerHandshake1>) -> Self {
             UpgenProtocol::<ServerHandshake2> {
-                state: prev.state.into()
+                state: prev.state.into(),
             }
         }
     }
@@ -243,7 +245,7 @@ pub mod upgen {
     impl From<UpgenProtocol<ServerHandshake2>> for UpgenProtocol<Data> {
         fn from(prev: UpgenProtocol<ServerHandshake2>) -> Self {
             UpgenProtocol::<Data> {
-                state: prev.state.into()
+                state: prev.state.into(),
             }
         }
     }

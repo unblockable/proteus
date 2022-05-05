@@ -74,7 +74,10 @@ impl Serializer<ConnectRequest> for Formatter {
 }
 
 impl Deserializer<ConnectRequest> for Formatter {
-    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<ConnectRequest> {
+    fn deserialize_frame(
+        &mut self,
+        src: &mut std::io::Cursor<&BytesMut>,
+    ) -> Option<ConnectRequest> {
         ConnectRequest::deserialize(src)
     }
 }
@@ -86,7 +89,10 @@ impl Serializer<ConnectResponse> for Formatter {
 }
 
 impl Deserializer<ConnectResponse> for Formatter {
-    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<ConnectResponse> {
+    fn deserialize_frame(
+        &mut self,
+        src: &mut std::io::Cursor<&BytesMut>,
+    ) -> Option<ConnectResponse> {
         ConnectResponse::deserialize(src)
     }
 }

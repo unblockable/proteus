@@ -57,7 +57,10 @@ impl log::Log for Logger {
             if let Some(s) = record.args().as_str() {
                 send_to_parent(Message::Log((record.level(), s)));
             } else {
-                send_to_parent(Message::Log((record.level(), record.args().to_string().as_str())));
+                send_to_parent(Message::Log((
+                    record.level(),
+                    record.args().to_string().as_str(),
+                )));
             }
         }
     }
@@ -66,6 +69,7 @@ impl log::Log for Logger {
 }
 
 pub fn init_logger() {
-    log::set_logger(&LOGGER).expect("control::init_logger should not be called after logger initialized");
+    log::set_logger(&LOGGER)
+        .expect("control::init_logger should not be called after logger initialized");
     log::set_max_level(log::LevelFilter::Trace);
 }

@@ -10,7 +10,7 @@ pub struct CovertPayload {
 #[derive(Clone)]
 pub enum EncryptionMaterialKind {
     Handshake,
-    MAC
+    MAC,
 }
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ pub enum FieldKind {
 
 #[derive(Clone)]
 pub struct FrameField {
-    pub kind: FieldKind
+    pub kind: FieldKind,
 }
 
 impl FrameField {
