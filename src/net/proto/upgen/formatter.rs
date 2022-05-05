@@ -1,5 +1,6 @@
 use std::cmp;
 use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 
 use bytes::Buf;
 use bytes::BufMut;
@@ -11,6 +12,38 @@ use crate::net::proto::upgen::{
     frames::{CovertPayload, FieldKind, FrameField, OvertFrameSpec},
 };
 use crate::net::{Deserializer, Serializer};
+
+/// Wraps a formatter allowing us to share it across threads.
+#[derive(Clone)]
+pub struct SharedFormatter {
+    inner: Arc<Mutex<Formatter>>,
+}
+
+impl SharedFormatter {
+    pub fn new(fmt: Formatter) -> SharedFormatter {
+        SharedFormatter {
+            inner: Arc::new(Mutex::new(fmt)),
+        }
+    }
+}
+
+impl Serializer<CovertPayload> for SharedFormatter {
+    fn serialize_frame(&mut self, src: CovertPayload) -> Bytes {
+        // FIXME: we can create a much smaller critical section by only locking
+        // the parts where we are modifying state rather than the entire
+        // serialize function.
+        self.inner.lock().unwrap().serialize_frame(src)
+    }
+}
+
+impl Deserializer<CovertPayload> for SharedFormatter {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
+        // FIXME: we can create a much smaller critical section by only locking
+        // the parts where we are modifying state rather than the entire
+        // serialize function.
+        self.inner.lock().unwrap().deserialize_frame(src)
+    }
+}
 
 pub struct Formatter {
     frame_spec: OvertFrameSpec,

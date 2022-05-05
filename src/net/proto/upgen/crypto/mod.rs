@@ -8,7 +8,7 @@ use bytes::Bytes;
 use crate::net::proto::upgen::crypto;
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     CryptFailure,
 }
 

@@ -13,6 +13,8 @@ use crate::net::{
     Connection, NetSink, NetSource,
 };
 
+use super::formatter::SharedFormatter;
+
 impl InitState for UpgenProtocol<Init> {
     fn new(
         upgen_conn: Connection,
@@ -137,7 +139,7 @@ impl ServerHandshake2State for UpgenProtocol<ServerHandshake2> {
 async fn obfuscate(
     mut source: NetSource,
     mut sink: NetSink,
-    fmt: &mut Formatter,
+    shared_fmt: &mut SharedFormatter,
 ) -> Result<(usize, usize), upgen::Error> {
     let mut total_num_read: usize = 0;
     let mut total_num_written: usize = 0;
@@ -159,7 +161,7 @@ async fn obfuscate(
         if bytes.has_remaining() {
             let payload = CovertPayload { data: bytes };
 
-            let num_written = match sink.write_frame(fmt, payload).await {
+            let num_written = match sink.write_frame(shared_fmt, payload).await {
                 Ok(num) => num,
                 Err(e) => return Err(upgen::Error::from(e)),
             };
@@ -189,14 +191,14 @@ async fn obfuscate(
 async fn deobfuscate(
     mut source: NetSource,
     mut sink: NetSink,
-    fmt: &mut Formatter,
+    shared_fmt: &mut SharedFormatter,
 ) -> Result<(usize, usize), upgen::Error> {
     let mut total_num_read: usize = 0;
     let mut total_num_written: usize = 0;
 
     loop {
         // Read overt frames using the upgen formatter.
-        let payload = match source.read_frame(fmt).await {
+        let payload = match source.read_frame(shared_fmt).await {
             Ok(frame) => frame,
             Err(net_err) => match net_err {
                 net::Error::Eof => break,
@@ -252,12 +254,16 @@ impl DataState for UpgenProtocol<Data> {
 
         // FIXME obfs and deobfs need to use the same formatter that share state,
         // so we'll need to use Arc here. 
-        // I think we want Arc<Mutex<>> here
+        // I think we want Arc<Mutex<Formatter>> here
         // let mut fmt2 = self.state.fmt.clone();
 
+        // Upgrade to SharedFormatter so we can support concurrency.
+        let mut shared_fmt = SharedFormatter::new(self.state.fmt);
+        let mut shared_fmt2 = shared_fmt.clone();
+
         match tokio::try_join!(
-            obfuscate(other_source, upgen_sink, &mut self.state.fmt),
-            deobfuscate(upgen_source, other_sink, &mut self.state.fmt),
+            obfuscate(other_source, upgen_sink, &mut shared_fmt),
+            deobfuscate(upgen_source, other_sink, &mut shared_fmt2),
         ) {
             Ok(_) => DataResult::Success(Success {}.into()),
             Err(e) => DataResult::Error(e.into()),
