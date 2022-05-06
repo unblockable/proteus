@@ -87,9 +87,9 @@ impl Formatter {
             if let FieldKind::Length(num_bytes) = field.kind {
                 let base: u32 = 2;
                 let num_bits = 8 * u32::from(num_bytes);
-                let max_len = base.pow(num_bits);
+                let max_len = base.pow(num_bits) - 1;
                 log::trace!(
-                    "Found {}-byte length field which can encode payload length up to {} bytes",
+                    "Found {}-byte length field which can encode payload length <= {} bytes",
                     num_bytes,
                     max_len
                 );
@@ -267,7 +267,7 @@ impl Serializer<CovertPayload> for Formatter {
 }
 
 impl Deserializer<CovertPayload> for Formatter {
-    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<CovertPayload> {
+    fn deserialize_frame(&mut self, src: &mut Cursor<&BytesMut>) -> Option<CovertPayload> {
         // Read as many frames as are available and return combined payload.
         let mut payload = match self.deserialize_single_frame(src) {
             Some(b) => b,
@@ -362,21 +362,21 @@ mod tests {
         assert_serialize_deserialize_eq(get_alpha(), get_simple_formatter());
     }
 
-    // #[test]
-    // fn multiple_frames() {
-    //     let mut fmt = Formatter::new();
-    //     let mut spec = OvertFrameSpec::new();
-    //     spec.push_field(FrameField::new(FieldKind::Length(1)));
-    //     spec.push_field(FrameField::new(FieldKind::Payload));
-    //     fmt.set_frame_spec(spec);
-    //     // Payload fits in one frame
-    //     assert_serialize_deserialize_eq(get_payload(255), get_simple_formatter());
-    //     // Payload needs two frames
-    //     assert_serialize_deserialize_eq(get_payload(256), get_simple_formatter());
-    // }
+    #[test]
+    fn multiple_frames() {
+        let mut fmt = Formatter::new();
+        let mut spec = OvertFrameSpec::new();
+        spec.push_field(FrameField::new(FieldKind::Length(1)));
+        spec.push_field(FrameField::new(FieldKind::Payload));
+        fmt.set_frame_spec(spec);
+        // Payload fits in one frame
+        assert_serialize_deserialize_eq(get_payload(255), get_simple_formatter());
+        // Payload needs two frames
+        assert_serialize_deserialize_eq(get_payload(256), get_simple_formatter());
+    }
 
-    // #[test]
-    // fn large_payload_complex_formatter() {
-    //     assert_serialize_deserialize_eq(get_payload(100000), get_complex_formatter());
-    // }
+    #[test]
+    fn large_payload_complex_formatter() {
+        assert_serialize_deserialize_eq(get_payload(100000), get_complex_formatter());
+    }
 }
