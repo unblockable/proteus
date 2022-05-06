@@ -1,21 +1,22 @@
 use crate::net::proto::upgen::crypto::{self, CryptoProtocol};
 
-use std::cmp;
 use std::io::Cursor;
 use std::rc::Rc;
 
-use bytes::{buf, Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 
 use rand::rngs::OsRng;
 use rand::RngCore;
 
 use chacha20poly1305::aead::{Aead, NewAead};
-use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+use chacha20poly1305::ChaCha20Poly1305;
 
 use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::Salsa20;
 
-use x25519_dalek::{x25519, PublicKey, SharedSecret, StaticSecret};
+use x25519_dalek::{x25519, PublicKey, StaticSecret};
+
+const X25519_KEY_NBYTES: usize = 32;
 
 enum CipherKind {
     Sender,
@@ -130,12 +131,39 @@ impl CryptoModule {
         Rc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
     }
 
-    pub fn encrypt(
+    pub fn suggest_ciphertext_nbytes(plaintext_len: usize) -> usize {
+        plaintext_len + 16 // Poly1305 MAC tag is 16 bytes
+    }
+
+    fn determine_plaintext_size(ciphertext_len: usize) -> Option<usize> {
+        // FIXME(rwails)
+        // This doesn't always work right currently.
+        usize::try_from(isize::try_from(ciphertext_len).unwrap() - 16isize).ok()
+    }
+
+    fn handle_key_material_sent(&mut self) -> Option<Bytes> {
+        let mut buf =
+            BytesMut::with_capacity(self.material_len(crypto::CryptoMaterialKind::KeyMaterialSent));
+        buf.extend_from_slice(&self.produce_my_half_handshake());
+        Some(buf.freeze())
+        //Some(Bytes::from_iter(self.produce_my_half_handshake().iter()))
+    }
+}
+
+impl CryptoProtocol for CryptoModule {
+    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
+        todo!()
+    }
+
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+        todo!()
+    }
+
+    fn encrypt_tmp(
         &mut self,
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
     ) -> Result<Bytes, crypto::Error> {
-
         if ciphertext_len < CryptoModule::suggest_ciphertext_nbytes(0) {
             return Err(crypto::Error::CryptFailure);
         }
@@ -157,36 +185,36 @@ impl CryptoModule {
         Ok(Bytes::from(self.encrypt_impl(&plaintext_tmp)))
     }
 
-    pub fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+    fn decrypt_tmp(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
         Ok(Bytes::from(self.decrypt_impl(&ciphertext)))
     }
 
-    pub fn suggest_ciphertext_nbytes(plaintext_len: usize) -> usize {
-        plaintext_len + 16 // Poly1305 MAC tag is 16 bytes
+    fn material_len(&self, material_kind: crypto::CryptoMaterialKind) -> usize {
+        match material_kind {
+            crypto::CryptoMaterialKind::IV => 16,
+            crypto::CryptoMaterialKind::KeyMaterialSent => X25519_KEY_NBYTES,
+            crypto::CryptoMaterialKind::KeyMaterialReceived => X25519_KEY_NBYTES,
+            _ => {
+                unimplemented!();
+            }
+        }
     }
 
-    fn determine_plaintext_size(ciphertext_len: usize) -> Option<usize> {
-        // FIXME(rwails)
-        // This doesn't always work right currently.
-        usize::try_from(isize::try_from(ciphertext_len).unwrap() - 16isize).ok()
+    fn generate_ephemeral_public_key(&mut self) -> Bytes {
+        todo!();
+    }
+    fn receive_ephemeral_public_key(&mut self, key: Bytes) {
+        todo!();
+    }
+
+    fn get_iv(&mut self) -> Bytes {
+        todo!();
+    }
+
+    fn get_encrypted_header(&mut self, nbytes: usize) -> Bytes {
+        todo!();
     }
 }
-
-/*
-impl CryptoProtocol for CryptoModule {
-    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
-        todo!()
-    }
-
-    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
-        todo!()
-    }
-
-    fn len(&self, material: crypto::CryptoMaterialKind) -> usize {
-        todo!()
-    }
-}
-*/
 
 #[cfg(test)]
 mod tests {
@@ -282,12 +310,12 @@ mod tests {
         let mut cursor = Cursor::new(plaintext);
 
         let ciphertext_nbytes = CryptoModule::suggest_ciphertext_nbytes(cursor.remaining());
-        let ciphertext = alice.encrypt(&mut cursor, ciphertext_nbytes).unwrap();
+        let ciphertext = alice.encrypt_tmp(&mut cursor, ciphertext_nbytes).unwrap();
 
         assert_eq!(ciphertext.len(), ciphertext_nbytes);
         assert_eq!(cursor.remaining(), 0);
 
-        let plaintext_prime = bob.decrypt(&ciphertext).unwrap();
+        let plaintext_prime = bob.decrypt_tmp(&ciphertext).unwrap();
         assert_eq!(cursor.into_inner(), plaintext_prime);
     }
 
@@ -303,13 +331,12 @@ mod tests {
         // Let's setup a very small frame limit.
         const FRAME_LIMIT_NBYTES: usize = 17;
 
-        let ciphertext_nbytes =
-            std::cmp::min(
-                CryptoModule::suggest_ciphertext_nbytes(cursor.remaining()),
-                FRAME_LIMIT_NBYTES
-            );
+        let ciphertext_nbytes = std::cmp::min(
+            CryptoModule::suggest_ciphertext_nbytes(cursor.remaining()),
+            FRAME_LIMIT_NBYTES,
+        );
 
-        let ciphertext = alice.encrypt(&mut cursor, ciphertext_nbytes).unwrap();
+        let ciphertext = alice.encrypt_tmp(&mut cursor, ciphertext_nbytes).unwrap();
 
         assert_eq!(ciphertext.len(), ciphertext_nbytes);
 
