@@ -121,11 +121,6 @@ impl Formatter {
                     log::trace!("Writing {} fixed-length bytes", b.len());
                     buf.put_slice(&b)
                 }
-                FieldKind::Random(num_bytes) => {
-                    let count = usize::from(*num_bytes);
-                    log::trace!("Writing {} random bytes", count);
-                    buf.put_bytes(0, count); // XXX make random
-                }
                 FieldKind::Length(num_bytes) => {
                     log::trace!(
                         "Writing payload length {} into a {}-byte length field",
@@ -140,7 +135,7 @@ impl Formatter {
                         _ => buf.put_u128(u128::try_from(payload_len).unwrap_or(u128::MAX)),
                     }
                 }
-                FieldKind::EncryptionMaterial(em_kind) => {
+                FieldKind::CryptoMaterial(material) => {
                     todo!()
                 }
                 FieldKind::Payload => {
@@ -197,13 +192,6 @@ impl Formatter {
                         src.advance(len)
                     })?;
                 }
-                FieldKind::Random(num_bytes) => {
-                    let len = *num_bytes as usize;
-                    (src.remaining() >= len).then(|| {
-                        log::trace!("Ignoring {} bytes from random field", len);
-                        src.advance(len)
-                    })?;
-                }
                 FieldKind::Length(num_bytes) => {
                     let len = *num_bytes as usize;
 
@@ -221,7 +209,7 @@ impl Formatter {
                         len
                     );
                 }
-                FieldKind::EncryptionMaterial(em_kind) => {
+                FieldKind::CryptoMaterial(material) => {
                     todo!()
                 }
                 FieldKind::Payload => {
@@ -326,7 +314,6 @@ mod tests {
         ))));
         spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from_static(&[20]))));
         spec.push_field(FrameField::new(FieldKind::Fixed(get_alpha())));
-        spec.push_field(FrameField::new(FieldKind::Random(64)));
         spec.push_field(FrameField::new(FieldKind::Length(1)));
         spec.push_field(FrameField::new(FieldKind::Payload));
         fmt.set_frame_spec(spec);

@@ -93,9 +93,10 @@ struct NetSource {
 
 impl NetSource {
     fn new(source: OwnedReadHalf) -> NetSource {
+        let cap = 2usize.pow(22u32); // 4 MiB
         NetSource {
             read_half: source,
-            buffer: BytesMut::with_capacity(32768),
+            buffer: BytesMut::with_capacity(cap),
         }
     }
 

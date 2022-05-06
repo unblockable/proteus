@@ -1,5 +1,7 @@
 use bytes::Bytes;
 
+use crate::net::proto::upgen::crypto::CryptoMaterialKind;
+
 /// Covert application data that we are attempting to transfer across our
 /// pluggable transport. The formatter will obfuscate this by wrapping it in
 /// frames with various header fields, encrypting/decrypting, etc.
@@ -8,22 +10,15 @@ pub struct CovertPayload {
 }
 
 #[derive(Clone)]
-pub enum EncryptionMaterialKind {
-    Handshake,
-    MAC,
-}
-
-#[derive(Clone)]
 pub enum FieldKind {
     // The value of the fixed enum is the actual value that will occur in the packet.
     Fixed(Bytes), // Fixed size, fixed value
     // The length enum holds the length of the variable-length fields of the packet in bytes
     Length(u8), // Fixed size, variable value
-    // The random enum holds the length of the random bytes.
-    Random(u8), // Fixed size, variable value
-    // Payload bytes are supplied by the caller that needs to be transported.
-    EncryptionMaterial(EncryptionMaterialKind),
-    Payload, //  Variable size, variable value
+    // Crypto material that is handled by the CryptoModule in use
+    CryptoMaterial(CryptoMaterialKind), // variable size, variable value
+    // Payload bytes that we forward through our tunnel are supplied by the caller.
+    Payload, // Variable size, variable value
 }
 
 #[derive(Clone)]
@@ -42,8 +37,7 @@ impl FrameField {
         match &self.kind {
             FieldKind::Fixed(b) => b.len(),
             FieldKind::Length(l) => usize::from(*l),
-            FieldKind::Random(l) => usize::from(*l),
-            FieldKind::EncryptionMaterial(k) => 0, // FIXME This is probably fixed length
+            FieldKind::CryptoMaterial(k) => 0, // FIXME This is probably fixed length
             FieldKind::Payload => 0,
         }
     }

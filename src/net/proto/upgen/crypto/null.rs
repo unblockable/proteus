@@ -1,4 +1,4 @@
-use crate::net::proto::upgen::crypto::{self, CryptoProtocol, Decrypt, Encrypt};
+use crate::net::proto::upgen::crypto::{self, CryptoProtocol};
 
 use bytes::Bytes;
 
@@ -12,16 +12,16 @@ impl CryptoModule {
     }
 }
 
-impl CryptoProtocol for CryptoModule {}
-
-impl Encrypt for CryptoModule {
+impl CryptoProtocol for CryptoModule {
     fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
         Ok(plaintext.clone())
     }
-}
 
-impl Decrypt for CryptoModule {
     fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
         Ok(ciphertext.clone())
+    }
+
+    fn len(&self, material: crypto::CryptoMaterialKind) -> usize {
+        todo!()
     }
 }

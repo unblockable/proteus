@@ -20,13 +20,17 @@ impl fmt::Display for Error {
     }
 }
 
-pub trait Encrypt {
-    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error>;
-}
-
-pub trait Decrypt {
-    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error>;
+#[derive(Clone)]
+// These are all fixed-length, variable value
+pub enum CryptoMaterialKind {
+    IV,
+    KeyMaterialSent,
+    KeyMaterialReceived,
 }
 
 // Super-trait that defines everything needed for a crypto protocol.
-pub trait CryptoProtocol: Encrypt + Decrypt {}
+pub trait CryptoProtocol {
+    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error>;
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error>;
+    fn len(&self, material: CryptoMaterialKind) -> usize;
+}
