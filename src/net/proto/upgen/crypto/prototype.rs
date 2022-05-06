@@ -1,7 +1,10 @@
 use crate::net::proto::upgen::crypto::{self, CryptoProtocol};
 
-use bytes::Bytes;
+use std::cmp;
+use std::io::Cursor;
 use std::rc::Rc;
+
+use bytes::{buf, Buf, Bytes};
 
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -126,8 +129,50 @@ impl CryptoModule {
         let mut cipher = self.cipher.as_mut().unwrap();
         Rc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
     }
+
+    pub fn encrypt(
+        &mut self,
+        plaintext: &mut Cursor<Bytes>,
+        ciphertext_len: usize,
+    ) -> Result<Bytes, crypto::Error> {
+
+        if ciphertext_len < CryptoModule::suggest_ciphertext_nbytes(0) {
+            return Err(crypto::Error::CryptFailure);
+        }
+
+        let plaintext_nbytes_available = plaintext.remaining();
+
+        // If you want to write more than I have available, we're gonna crash for now.
+        let plaintext_nbytes_required =
+            CryptoModule::determine_plaintext_size(ciphertext_len).unwrap();
+
+        if plaintext_nbytes_available < plaintext_nbytes_required {
+            // FIXME(rwails) Eventually, this shouldn't produce any error.
+            unimplemented!("not enough plaintext available.");
+        }
+
+        // Otherwise, we know we have enough data to fulfill the request.
+        let plaintext_tmp = plaintext.copy_to_bytes(plaintext_nbytes_required);
+
+        Ok(Bytes::from(self.encrypt_impl(&plaintext_tmp)))
+    }
+
+    pub fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+        Ok(Bytes::from(self.decrypt_impl(&ciphertext)))
+    }
+
+    pub fn suggest_ciphertext_nbytes(plaintext_len: usize) -> usize {
+        plaintext_len + 16 // Poly1305 MAC tag is 16 bytes
+    }
+
+    fn determine_plaintext_size(ciphertext_len: usize) -> Option<usize> {
+        // FIXME(rwails)
+        // This doesn't always work right currently.
+        usize::try_from(isize::try_from(ciphertext_len).unwrap() - 16isize).ok()
+    }
 }
 
+/*
 impl CryptoProtocol for CryptoModule {
     fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
         todo!()
@@ -141,6 +186,7 @@ impl CryptoProtocol for CryptoModule {
         todo!()
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -213,5 +259,64 @@ mod tests {
 
         assert_eq!(plaintext, &plaintext_prime1[..]);
         assert_eq!(plaintext, &plaintext_prime2[..]);
+    }
+
+    #[test]
+    fn test_suggested_size() {
+        let (mut alice, _) = get_connected_pair();
+
+        let plaintext = b"hello world";
+        let ciphertext = alice.encrypt_impl(plaintext);
+
+        assert_eq!(
+            ciphertext.len(),
+            CryptoModule::suggest_ciphertext_nbytes(plaintext.len())
+        );
+    }
+
+    #[test]
+    fn test_public_api() {
+        let (mut alice, mut bob) = get_connected_pair();
+
+        let plaintext = Bytes::from("hello world");
+        let mut cursor = Cursor::new(plaintext);
+
+        let ciphertext_nbytes = CryptoModule::suggest_ciphertext_nbytes(cursor.remaining());
+        let ciphertext = alice.encrypt(&mut cursor, ciphertext_nbytes).unwrap();
+
+        assert_eq!(ciphertext.len(), ciphertext_nbytes);
+        assert_eq!(cursor.remaining(), 0);
+
+        let plaintext_prime = bob.decrypt(&ciphertext).unwrap();
+        assert_eq!(cursor.into_inner(), plaintext_prime);
+    }
+
+    #[test]
+    fn test_public_api_partial_write() {
+        let (mut alice, mut bob) = get_connected_pair();
+
+        let plaintext = Bytes::from("hello world");
+        let original_plaintext_nbytes = plaintext.len();
+
+        let mut cursor = Cursor::new(plaintext);
+
+        // Let's setup a very small frame limit.
+        const FRAME_LIMIT_NBYTES: usize = 17;
+
+        let ciphertext_nbytes =
+            std::cmp::min(
+                CryptoModule::suggest_ciphertext_nbytes(cursor.remaining()),
+                FRAME_LIMIT_NBYTES
+            );
+
+        let ciphertext = alice.encrypt(&mut cursor, ciphertext_nbytes).unwrap();
+
+        assert_eq!(ciphertext.len(), ciphertext_nbytes);
+
+        // We should have only been able to write one byte of plaintext.
+        assert_eq!(cursor.remaining(), original_plaintext_nbytes - 1);
+
+        let plaintext_prime = bob.decrypt(&ciphertext).unwrap();
+        assert_eq!(Bytes::from("h"), plaintext_prime);
     }
 }
