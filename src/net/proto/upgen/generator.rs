@@ -49,51 +49,81 @@ impl Generator {
         *choices.choose(&mut self.rng).unwrap()
     }
 
+    fn compute_handshake_type_val(&mut self) -> u8 {
+        let start_val_choices = [(0x00u8, 0.1), (0x01u8, 0.4), (0x0Au8, 0.2), (0x14u8, 0.3)];
+        let start_val = self.choose_weighted(&start_val_choices);
+        
+        let num_encodable_types = self.choose(&[4, 5, 6]);
+        let num_normal = 4;
+        
+        let norm_first = self.rng.gen_bool(0.5);
+        let offset = if num_encodable_types > 4 && norm_first {
+            // Normal messages first, control second
+            // Handshake type is the start val
+            start_val
+        } else {
+            // Control messages first, normal second
+            num_encodable_types - num_normal
+        };
+
+        start_val + offset
+    }
+
     pub fn generate_overt_protocol(&mut self) -> OvertProtocol {
-        let mut unenc_fields_h1 = Vec::new();
-        let mut num_enc_header_bytes: usize = 0;
+        let mut unenc_fields_hs = Vec::new();
+        let mut num_enc_header_bytes_hs: usize = 0;
+
+        let mut unenc_fields_data = Vec::new();
+        let mut num_enc_header_bytes_data: usize = 0;
 
         // Type
+        // Maybe in handshake, maybe in data
         {
+            // FIXME: probs for in hs or data phase not specified in v1 doc, using uniform choices
+            let in_handshake = self.rng.gen_bool(0.5);
+            let in_data = self.rng.gen_bool(0.5);
+            let is_enc = self.rng.gen_bool(0.5);
+            
             let field_size = 1; // encode type in 1 byte
-            if self.rng.gen_bool(0.5) {
+            let hs_val = self.compute_handshake_type_val();
+            let data_val = hs_val + 1;
+
+            if is_enc {
                 // Encrypted, so we don't care about the values.
-                num_enc_header_bytes += field_size;
+                if in_handshake {
+                    num_enc_header_bytes_hs += field_size;
+                }
+                if in_data {
+                    num_enc_header_bytes_data += field_size;
+                }
             } else {
-                // Unencrypted, need to compute values
-                let start_val_choices = [(0x00u8, 0.1), (0x01u8, 0.4), (0x0Au8, 0.2), (0x14u8, 0.3)];
-                let start_val = self.choose_weighted(&start_val_choices);
-
-                let num_encodable_types = self.choose(&[4, 5, 6]);
-                let num_normal = 4;
-
-                let offset = if num_encodable_types > 4 && self.rng.gen_bool(0.5) {
-                    // Normal messages first, control second
-                    // Handshake type is the start val
-                    start_val
-                } else {
-                    // Control messages first, normal second
-                    num_encodable_types - num_normal
-                };
-
-                let val = start_val + offset;
-                let b = Bytes::copy_from_slice(&[val]);
-                let field = FrameField::new(FieldKind::Fixed(b));
-                unenc_fields_h1.push(field);
+                // Unencrypted, use that computed type values
+                if in_handshake {
+                    let b = Bytes::copy_from_slice(&[hs_val]);
+                    let field = FrameField::new(FieldKind::Fixed(b));
+                    unenc_fields_hs.push(field);
+                }
+                if in_data {
+                    let b = Bytes::copy_from_slice(&[data_val]);
+                    let field = FrameField::new(FieldKind::Fixed(b));
+                    unenc_fields_data.push(field);
+                }
             }
         }
 
         // Length
+        // Maybe in handshake, always in data
         // Should cover everything that is NOT fixed length (i.e., total - fixed)
         {
             // Always unencrypted
             let size = self.choose_weighted(&[(2u8, 0.75), (4u8, 0.25)]);
             let field = FrameField::new(FieldKind::Length(size));
-            unenc_fields_h1.push(field);
+            unenc_fields_hs.push(field.clone());
+            unenc_fields_data.push(field);
         }
 
         // Version
-        // Never in data phase
+        // Maybe in handshake, never in data
         {
             if self.rng.gen_bool(0.5) {
                 // Included in handshake
@@ -105,7 +135,7 @@ impl Generator {
 
                 if self.rng.gen_bool(0.5) {
                     // Encrypted
-                    num_enc_header_bytes += field_size;
+                    num_enc_header_bytes_hs += field_size;
                 } else {
                     // Unencrypted
                     let major = self.choose(&[0u8, 1u8, 2u8, 3u8]);
@@ -117,80 +147,114 @@ impl Generator {
                         }
                     };
                     let field = FrameField::new(FieldKind::Fixed(b));
-                    unenc_fields_h1.push(field);
+                    unenc_fields_hs.push(field);
                 }
             }
         }
 
         // Type, length, version come first in random order
-        unenc_fields_h1.shuffle(&mut self.rng);
+        unenc_fields_hs.shuffle(&mut self.rng);
+
+        // FIXME data field only has length and maybe type
+        // but these two should be in the same order as in header
+        unenc_fields_data.shuffle(&mut self.rng);
+
+        // Observable randomness
+        // Gets added here if included and unencrypted.
+        // Add to num_enc_header_bytes if encrypted.
+        {
+            // prototype crypto module has no nonce
+        }
 
         // Reserved bytes
+        // Maybe in handshake, never in data
         // Always unencrypted, init to zeros
-        // Not in data
         {
             if self.rng.gen_bool(0.2) {
+                // Included in handshake
                 let size = self.choose_weighted(&[(1, 0.4), (2, 0.4), (3, 0.1), (4, 0.1)]);
                 let mut buf = BytesMut::with_capacity(size);
                 buf.put_bytes(0, size);
                 let b = buf.freeze();
                 let field = FrameField::new(FieldKind::Fixed(b));
-                unenc_fields_h1.push(field);
+                unenc_fields_hs.push(field);
             }
         }
 
         // Protocol-specific fields
+        // Maybe in handhsake, maybe in data
         // Always encrypted
         {
-            if num_enc_header_bytes > 0 {
-                let size = self.choose_weighted(&[(0, 0.5), (1, 0.25), (2, 0.25)]);
-                if size > 0 {
-                    num_enc_header_bytes += size as usize;
+            let size = self.choose_weighted(&[(0, 0.5), (1, 0.25), (2, 0.25)]);
+
+            if size > 0 {
+                if num_enc_header_bytes_hs > 0 {
+                    num_enc_header_bytes_hs += size as usize;
+                }
+                if num_enc_header_bytes_data > 0 {
+                    num_enc_header_bytes_data += size as usize;
                 }
             }
         }
 
         // OK construct the protocol now
-        let mut unenc_fields_h2 = unenc_fields_h1.clone();
-        let mut data_fields = unenc_fields_h2.clone();
+        let mut unenc_fields_h2 = unenc_fields_hs.clone();
 
-        let handshake1 = {
-            let mut spec = OvertFrameSpec::new();
-            for field in unenc_fields_h1 {
-                spec.push_field(field);
-            }
-            if num_enc_header_bytes > 0 {
-                spec.push_field(create_encrypted_header_field(num_enc_header_bytes));
-            }
-            spec
-        };
+        // TODO eventually we can choose among other crypto modules
+        let crypto = prototype::CryptoModule::new();
 
-        let handshake2 = {
-            // FIXME remove/adjust fields
-            let mut spec = OvertFrameSpec::new();
-            for field in unenc_fields_h2 {
-                spec.push_field(field);
+        let (hs1, hs2) = {
+            let mut h1_spec = OvertFrameSpec::new();
+            let mut h2_spec = OvertFrameSpec::new();
+
+            for field in unenc_fields_hs {
+                h1_spec.push_field(field.clone());
+                h2_spec.push_field(field);
             }
-            if num_enc_header_bytes > 0 {
-                spec.push_field(create_encrypted_header_field(num_enc_header_bytes));
+
+            // Ephemeral key exchange: place at end of unencrypted fields
+            {
+                let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterialSent));
+                h1_spec.push_field(f);
             }
-            spec
+            {
+                let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterialReceived));
+                h2_spec.push_field(f);
+            }
+
+            if num_enc_header_bytes_hs > 0 {
+                let concat = create_encrypted_header_field(num_enc_header_bytes_hs);
+                h1_spec.push_field(concat.clone());
+                h2_spec.push_field(concat);
+
+                let mac = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC));
+                h1_spec.push_field(mac.clone());
+                h2_spec.push_field(mac);
+            }
+
+            (h1_spec, h2_spec)
         };
 
         let data = {
-            // FIXME need to remove handshake-only fields
-            let mut spec = OvertFrameSpec::new();
-            for field in data_fields {
-                spec.push_field(field);
+            let mut data_spec = OvertFrameSpec::new();
+
+            for field in unenc_fields_data {
+                data_spec.push_field(field);
             }
-            if num_enc_header_bytes > 0 {
-                spec.push_field(create_encrypted_header_field(num_enc_header_bytes));
+
+            if num_enc_header_bytes_data > 0 {
+                let concat = create_encrypted_header_field(num_enc_header_bytes_data);
+                data_spec.push_field(concat);
+
+                let mac = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC));
+                data_spec.push_field(mac);
             }
-            spec.push_field(FrameField::new(FieldKind::Payload));
-            spec
+
+            data_spec.push_field(FrameField::new(FieldKind::Payload));
+            data_spec
         };
 
-        let proto_spec = onertt::ProtocolSpec::new(handshake1, handshake2, data);
+        let proto_spec = onertt::ProtocolSpec::new(hs1, hs2, data);
         OvertProtocol::OneRtt(proto_spec)
     }
 }

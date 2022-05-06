@@ -28,6 +28,7 @@ pub enum CryptoMaterialKind {
     KeyMaterialSent,
     KeyMaterialReceived,
     EncryptedHeader(usize), // Holds the size in bytes of the field
+    MAC,
 }
 
 // Super-trait that defines everything needed for a crypto protocol.

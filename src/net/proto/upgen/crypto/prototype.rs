@@ -131,8 +131,12 @@ impl CryptoModule {
         Rc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
     }
 
+    fn get_mac_len() -> usize {
+        16 // Poly1305 MAC tag is 16 bytes
+    }
+
     pub fn suggest_ciphertext_nbytes(plaintext_len: usize) -> usize {
-        plaintext_len + 16 // Poly1305 MAC tag is 16 bytes
+        plaintext_len + CryptoModule::get_mac_len()
     }
 
     fn determine_plaintext_size(ciphertext_len: usize) -> Option<usize> {
@@ -186,6 +190,7 @@ impl CryptoProtocol for CryptoModule {
             crypto::CryptoMaterialKind::IV => 16,
             crypto::CryptoMaterialKind::KeyMaterialSent => X25519_KEY_NBYTES,
             crypto::CryptoMaterialKind::KeyMaterialReceived => X25519_KEY_NBYTES,
+            crypto::CryptoMaterialKind::MAC => CryptoModule::get_mac_len(),
             _ => {
                 unimplemented!();
             }
