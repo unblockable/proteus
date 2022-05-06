@@ -14,26 +14,18 @@ impl CryptoModule {
 }
 
 impl CryptoProtocol for CryptoModule {
-    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
-        Ok(plaintext.clone())
-    }
-
-    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
-        Ok(ciphertext.clone())
-    }
-
     fn material_len(&self, material_kind: crypto::CryptoMaterialKind) -> usize {
         todo!()
     }
 
-    fn encrypt_tmp(
+    fn encrypt(
         &mut self,
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
     ) -> Result<Bytes, crypto::Error> {
         todo!();
     }
-    fn decrypt_tmp(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
         todo!();
     }
     fn generate_ephemeral_public_key(&mut self) -> Bytes {

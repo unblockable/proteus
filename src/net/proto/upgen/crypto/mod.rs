@@ -32,22 +32,15 @@ pub enum CryptoMaterialKind {
 
 // Super-trait that defines everything needed for a crypto protocol.
 pub trait CryptoProtocol {
-    // TODO(rwails) Remove these functions vvvvv
-    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error>;
-    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error>;
-    // TODO(rwails) Remove these functions ^^^^^
-
     fn material_len(&self, material_kind: CryptoMaterialKind) -> usize;
 
-    // TODO(rwails) Promote these functions vvvvv
-    fn encrypt_tmp(
+    fn encrypt(
         &mut self,
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
     ) -> Result<Bytes, crypto::Error>;
 
-    fn decrypt_tmp(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error>;
-    // TODO(rwails) Promote these functions ^^^^^
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error>;
 
     // Use the material_len() function to query the output length, if desired.
     fn generate_ephemeral_public_key(&mut self) -> Bytes;

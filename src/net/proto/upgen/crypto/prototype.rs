@@ -151,15 +151,7 @@ impl CryptoModule {
 }
 
 impl CryptoProtocol for CryptoModule {
-    fn encrypt(&mut self, plaintext: &Bytes) -> Result<Bytes, crypto::Error> {
-        todo!()
-    }
-
-    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
-        todo!()
-    }
-
-    fn encrypt_tmp(
+    fn encrypt(
         &mut self,
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
@@ -185,7 +177,7 @@ impl CryptoProtocol for CryptoModule {
         Ok(Bytes::from(self.encrypt_impl(&plaintext_tmp)))
     }
 
-    fn decrypt_tmp(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
         Ok(Bytes::from(self.decrypt_impl(&ciphertext)))
     }
 
@@ -310,12 +302,12 @@ mod tests {
         let mut cursor = Cursor::new(plaintext);
 
         let ciphertext_nbytes = CryptoModule::suggest_ciphertext_nbytes(cursor.remaining());
-        let ciphertext = alice.encrypt_tmp(&mut cursor, ciphertext_nbytes).unwrap();
+        let ciphertext = alice.encrypt(&mut cursor, ciphertext_nbytes).unwrap();
 
         assert_eq!(ciphertext.len(), ciphertext_nbytes);
         assert_eq!(cursor.remaining(), 0);
 
-        let plaintext_prime = bob.decrypt_tmp(&ciphertext).unwrap();
+        let plaintext_prime = bob.decrypt(&ciphertext).unwrap();
         assert_eq!(cursor.into_inner(), plaintext_prime);
     }
 
@@ -336,7 +328,7 @@ mod tests {
             FRAME_LIMIT_NBYTES,
         );
 
-        let ciphertext = alice.encrypt_tmp(&mut cursor, ciphertext_nbytes).unwrap();
+        let ciphertext = alice.encrypt(&mut cursor, ciphertext_nbytes).unwrap();
 
         assert_eq!(ciphertext.len(), ciphertext_nbytes);
 
