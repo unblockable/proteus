@@ -6,24 +6,69 @@ use std::rc::Rc;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
+use chacha20poly1305::aead::{Aead, NewAead};
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+
 use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::Salsa20;
+
 use x25519_dalek::{x25519, PublicKey, SharedSecret, StaticSecret};
 
-#[derive(Clone)]
+enum CipherKind {
+    Sender,
+    Receiver,
+}
+
 struct Cipher {
-    secret_key: [u8; 32],
-    nonce_gen: Rc<Salsa20>,
+    encryption_nonce_gen: Salsa20,
+    decryption_nonce_gen: Salsa20,
+    encryption_cipher: ChaCha20Poly1305,
+    decryption_cipher: ChaCha20Poly1305,
 }
 
 impl Cipher {
-    pub fn new(secret_key: [u8; 32]) -> Cipher {
-        let nonce = [0x0; 8];
+    pub fn new(secret_key: [u8; 32], cipher_kind: CipherKind) -> Cipher {
+        const NONCE_A: [u8; 8] = [0xAA; 8];
+        const NONCE_B: [u8; 8] = [0xBB; 8];
+
+        let encryption_nonce = match cipher_kind {
+            CipherKind::Sender => NONCE_A,
+            CipherKind::Receiver => NONCE_B,
+        };
+
+        let decryption_nonce = match cipher_kind {
+            CipherKind::Sender => NONCE_B,
+            CipherKind::Receiver => NONCE_A,
+        };
 
         Cipher {
-            secret_key: secret_key,
-            nonce_gen: Rc::new(Salsa20::new(&secret_key.into(), &nonce.into())),
+            encryption_nonce_gen: Salsa20::new(&secret_key.into(), &encryption_nonce.into()),
+            decryption_nonce_gen: Salsa20::new(&secret_key.into(), &decryption_nonce.into()),
+            encryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
+            decryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
         }
+    }
+
+    fn get_nonce(nonce_gen: &mut Salsa20) -> [u8; 12] {
+        let mut buf: [u8; 12] = [0x00; 12];
+        nonce_gen.apply_keystream(&mut buf);
+        buf
+    }
+
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Vec<u8> {
+        let nonce = Cipher::get_nonce(&mut self.encryption_nonce_gen);
+
+        self.encryption_cipher
+            .encrypt(&nonce.into(), plaintext)
+            .expect("encryption failure")
+    }
+
+    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        let nonce = Cipher::get_nonce(&mut self.decryption_nonce_gen);
+
+        self.decryption_cipher
+            .decrypt(&nonce.into(), ciphertext)
+            .expect("decryption failure")
     }
 }
 
@@ -32,6 +77,7 @@ pub struct CryptoModule {
     my_secret_key: StaticSecret,
     my_public_key: Option<PublicKey>,
     our_shared_secret_key: Option<[u8; 32]>,
+    cipher: Option<Rc<Cipher>>,
 }
 
 impl CryptoModule {
@@ -43,19 +89,42 @@ impl CryptoModule {
             my_secret_key: StaticSecret::from(key),
             my_public_key: None,
             our_shared_secret_key: None,
+            cipher: None,
         }
     }
 
-    pub fn produce_my_half_handshake(&mut self) -> [u8; 32] {
+    fn produce_my_half_handshake(&mut self) -> [u8; 32] {
         self.my_public_key = Some(PublicKey::from(&self.my_secret_key));
         self.my_public_key.unwrap().to_bytes()
     }
 
     /*
-     * Produces the shared secret.
+     * Produces the shared secret and instantiates the ciphers.
      */
-    pub fn receive_their_half_handshake(&mut self, their_public_key: [u8; 32]) {
+    fn receive_their_half_handshake(&mut self, their_public_key: [u8; 32]) {
         self.our_shared_secret_key = Some(x25519(self.my_secret_key.to_bytes(), their_public_key));
+
+        let mut my_role = CipherKind::Sender;
+
+        if their_public_key < self.my_public_key.unwrap().to_bytes() {
+            my_role = CipherKind::Receiver;
+        } else {
+        }
+
+        self.cipher = Some(Rc::new(Cipher::new(
+            self.our_shared_secret_key.unwrap(),
+            my_role,
+        )));
+    }
+
+    fn encrypt_impl(&mut self, plaintext: &[u8]) -> Vec<u8> {
+        let mut cipher = self.cipher.as_mut().unwrap();
+        Rc::get_mut(&mut cipher).unwrap().encrypt(plaintext)
+    }
+
+    fn decrypt_impl(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        let mut cipher = self.cipher.as_mut().unwrap();
+        Rc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
     }
 }
 
@@ -91,11 +160,58 @@ mod tests {
         (alice, bob)
     }
 
-    #[test]
+    // #[test]
     fn test_key_exchange() {
         let (alice, bob) = get_connected_pair();
 
         assert_eq!(alice.our_shared_secret_key, bob.our_shared_secret_key);
         assert!(!alice.our_shared_secret_key.is_none());
+    }
+
+    #[test]
+    fn test_encryption_decryption() {
+        let (mut alice, mut bob) = get_connected_pair();
+
+        let plaintext = b"hello world";
+
+        let ciphertext = alice.encrypt_impl(plaintext);
+
+        let plaintext_prime = bob.decrypt_impl(&ciphertext);
+
+        assert_eq!(plaintext, &plaintext_prime[..]);
+    }
+
+    #[test]
+    fn test_crypto_conversation() {
+        let (mut alice, mut bob) = get_connected_pair();
+
+        let alice_plaintext = b"hello world";
+        let bob_plaintext = b"lorem ipsum";
+
+        let alice_ciphertext = alice.encrypt_impl(alice_plaintext);
+        let bob_ciphertext = bob.encrypt_impl(bob_plaintext);
+
+        let alice_plaintext_prime = bob.decrypt_impl(&alice_ciphertext);
+        assert_eq!(alice_plaintext, &alice_plaintext_prime[..]);
+
+        let bob_plaintext_prime = alice.decrypt_impl(&bob_ciphertext);
+        assert_eq!(bob_plaintext, &bob_plaintext_prime[..]);
+    }
+
+    #[test]
+    fn test_two_message_encryption() {
+        let (mut alice, mut bob) = get_connected_pair();
+
+        let plaintext = b"hello world";
+
+        let ciphertext1 = alice.encrypt_impl(plaintext);
+        let ciphertext2 = alice.encrypt_impl(plaintext);
+        assert_ne!(ciphertext1, ciphertext2);
+
+        let plaintext_prime1 = bob.decrypt_impl(&ciphertext1);
+        let plaintext_prime2 = bob.decrypt_impl(&ciphertext2);
+
+        assert_eq!(plaintext, &plaintext_prime1[..]);
+        assert_eq!(plaintext, &plaintext_prime2[..]);
     }
 }
