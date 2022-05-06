@@ -11,3 +11,8 @@ bytes = "1.1.0"
 log = "0.4.0"
 tokio = { version = "1.17.0", features = ["macros", "rt", "rt-multi-thread", "io-util", "net"] }
 typestate = "0.8.0"
+
+# Crypto dependencies
+x25519-dalek = "1" # ephemeral key exchange
+rand = "0.8.5" # randomness for local keygen
+salsa20 = "0.10.2" # CPRNG for Nonce generation
