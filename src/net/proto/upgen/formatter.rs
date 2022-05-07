@@ -7,7 +7,7 @@ use bytes::Bytes;
 use bytes::BytesMut;
 
 use crate::net::proto::upgen::{
-    crypto::{null, prototype, CryptoProtocol},
+    crypto::CryptoProtocol,
     frames::{CovertPayload, FieldKind, FrameField, OvertFrameSpec},
 };
 use crate::net::{Deserializer, Serializer};
@@ -313,6 +313,8 @@ impl Deserializer<CovertPayload> for Formatter {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    
+    use crate::net::proto::upgen::crypto::{null, prototype};
 
     use super::*;
 
