@@ -1,11 +1,9 @@
-use crate::net::proto::upgen::crypto::{self, CryptoProtocol};
-
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use std::io::Cursor;
 
-pub struct CryptoModule {
-    // Not sure what's gonna go in here yet.
-}
+use crate::net::proto::upgen::crypto::{self, CryptoProtocol};
+
+pub struct CryptoModule {}
 
 impl CryptoModule {
     pub fn new() -> CryptoModule {
@@ -15,7 +13,13 @@ impl CryptoModule {
 
 impl CryptoProtocol for CryptoModule {
     fn material_len(&self, material_kind: crypto::CryptoMaterialKind) -> usize {
-        todo!()
+        match material_kind {
+            _ => 0,
+        }
+    }
+
+    fn get_ciphertext_len(&self, plaintext_len: usize) -> usize {
+        plaintext_len
     }
 
     fn encrypt(
@@ -23,25 +27,20 @@ impl CryptoProtocol for CryptoModule {
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
     ) -> Result<Bytes, crypto::Error> {
-        todo!();
-    }
-    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
-        todo!();
-    }
-    fn generate_ephemeral_public_key(&mut self) -> Bytes {
-        todo!();
-    }
-    fn receive_ephemeral_public_key(&mut self, key: Bytes) {
-        todo!();
-    }
-    fn get_iv(&mut self) -> Bytes {
-        todo!();
-    }
-    fn get_encrypted_header(&mut self, nbytes: usize) -> Bytes {
-        todo!();
+        Ok(plaintext.copy_to_bytes(ciphertext_len))
     }
 
-    fn suggest_ciphertext_nbytes(&self, plaintext_len: usize) -> usize {
-        todo!()
+    fn decrypt(&mut self, ciphertext: &Bytes) -> Result<Bytes, crypto::Error> {
+        Ok(ciphertext.clone())
+    }
+
+    fn get_material(&mut self, material_kind: crypto::CryptoMaterialKind) -> Bytes {
+        match material_kind {
+            _ => Bytes::new(),
+        }
+    }
+
+    fn set_material(&mut self, _material_kind: crypto::CryptoMaterialKind, _data: Bytes) {
+        // Don't need to store anything.
     }
 }

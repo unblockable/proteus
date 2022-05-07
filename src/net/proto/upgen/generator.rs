@@ -205,36 +205,26 @@ impl Generator {
         // crypto module. For now we default to the prototype module.
         // We also only build a one-rtt protocol and that should change.
         let (hs1, hs2) = {
-            // Both handshake messages are mostly the same, except the key material.
-            let mut h1_spec = OvertFrameSpec::new();
-            let mut h2_spec = OvertFrameSpec::new();
+            // Handshake messages are identical (key material value is variable).
+            let mut spec = OvertFrameSpec::new();
 
             for field in unenc_fields_hs {
-                h1_spec.push_field(field.clone());
-                h2_spec.push_field(field);
+                spec.push_field(field);
             }
 
             // Ephemeral key exchange: place at end of unencrypted fields.
-            {
-                let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterialSent));
-                h1_spec.push_field(f);
-            }
-            {
-                let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterialReceived));
-                h2_spec.push_field(f);
-            }
+            let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterial));
+            spec.push_field(f);
 
             if num_enc_header_bytes_hs > 0 {
                 let concat = create_encrypted_header_field(num_enc_header_bytes_hs);
-                h1_spec.push_field(concat.clone());
-                h2_spec.push_field(concat);
+                spec.push_field(concat);
 
                 let mac = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC));
-                h1_spec.push_field(mac.clone());
-                h2_spec.push_field(mac);
+                spec.push_field(mac);
             }
 
-            (h1_spec, h2_spec)
+            (spec.clone(), spec)
         };
 
         let data = {

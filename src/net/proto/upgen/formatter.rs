@@ -1,4 +1,3 @@
-use std::cmp;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
@@ -101,7 +100,7 @@ impl Formatter {
         // (i.e., total - fixed), but now it's only covering payload.
         let payload_len = if max_len > 0 {
             std::cmp::min(
-                self.crypt_spec.suggest_ciphertext_nbytes(payload.remaining()),
+                self.crypt_spec.get_ciphertext_len(payload.remaining()),
                 max_len,
             )
         } else {

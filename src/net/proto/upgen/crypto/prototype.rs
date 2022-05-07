@@ -147,15 +147,34 @@ impl CryptoModule {
 
     fn handle_key_material_sent(&mut self) -> Option<Bytes> {
         let mut buf =
-            BytesMut::with_capacity(self.material_len(crypto::CryptoMaterialKind::KeyMaterialSent));
+            BytesMut::with_capacity(self.material_len(crypto::CryptoMaterialKind::KeyMaterial));
         buf.extend_from_slice(&self.produce_my_half_handshake());
         Some(buf.freeze())
         //Some(Bytes::from_iter(self.produce_my_half_handshake().iter()))
     }
+
+    fn generate_ephemeral_public_key(&mut self) -> Bytes {
+        todo!();
+    }
+    fn receive_ephemeral_public_key(&mut self, key: Bytes) {
+        todo!();
+    }
+
+    fn get_iv(&mut self) -> Bytes {
+        todo!();
+    }
+
+    fn get_encrypted_header(&mut self, nbytes: usize) -> Bytes {
+        todo!();
+    }
+
+    fn get_mac(&mut self) -> Bytes {
+        todo!();
+    }
 }
 
 impl CryptoProtocol for CryptoModule {
-    fn suggest_ciphertext_nbytes(&self, plaintext_len: usize) -> usize {
+    fn get_ciphertext_len(&self, plaintext_len: usize) -> usize {
         CryptoModule::suggest_ciphertext_nbytes(plaintext_len)
     }
 
@@ -164,7 +183,7 @@ impl CryptoProtocol for CryptoModule {
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
     ) -> Result<Bytes, crypto::Error> {
-        if ciphertext_len < self.suggest_ciphertext_nbytes(0) {
+        if ciphertext_len < CryptoModule::suggest_ciphertext_nbytes(0) {
             return Err(crypto::Error::CryptFailure);
         }
 
@@ -192,8 +211,7 @@ impl CryptoProtocol for CryptoModule {
     fn material_len(&self, material_kind: crypto::CryptoMaterialKind) -> usize {
         match material_kind {
             crypto::CryptoMaterialKind::IV => 16,
-            crypto::CryptoMaterialKind::KeyMaterialSent => X25519_KEY_NBYTES,
-            crypto::CryptoMaterialKind::KeyMaterialReceived => X25519_KEY_NBYTES,
+            crypto::CryptoMaterialKind::KeyMaterial => X25519_KEY_NBYTES,
             crypto::CryptoMaterialKind::MAC => CryptoModule::get_mac_len(),
             _ => {
                 unimplemented!();
@@ -201,19 +219,20 @@ impl CryptoProtocol for CryptoModule {
         }
     }
 
-    fn generate_ephemeral_public_key(&mut self) -> Bytes {
-        todo!();
-    }
-    fn receive_ephemeral_public_key(&mut self, key: Bytes) {
-        todo!();
-    }
-
-    fn get_iv(&mut self) -> Bytes {
-        todo!();
+    fn get_material(&mut self, material_kind: crypto::CryptoMaterialKind) -> Bytes {
+        match material_kind {
+            crypto::CryptoMaterialKind::IV => self.get_iv(),
+            crypto::CryptoMaterialKind::KeyMaterial => self.generate_ephemeral_public_key(),
+            crypto::CryptoMaterialKind::MAC => self.get_mac(),
+            crypto::CryptoMaterialKind::EncryptedHeader(len) => self.get_encrypted_header(len),
+        }
     }
 
-    fn get_encrypted_header(&mut self, nbytes: usize) -> Bytes {
-        todo!();
+    fn set_material(&mut self, material_kind: crypto::CryptoMaterialKind, data: Bytes) {
+        match material_kind {
+            crypto::CryptoMaterialKind::KeyMaterial => self.receive_ephemeral_public_key(data),
+            _ => {}
+        }
     }
 }
 
