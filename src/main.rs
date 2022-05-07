@@ -7,7 +7,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::net::proto::{null, socks, upgen};
 use crate::net::Connection;
-use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig};
+use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
 use crate::pt::control;
 
 #[tokio::main]
@@ -161,16 +161,17 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     let pt_conn = Connection::new(pt_stream);
     let fwd_conn = Connection::new(fwd_stream);
 
-    // TODO
-    // match conf.forward_proto {
-    //     ForwardProtocol::Basic => {
-    //         // no special handshake required
-    //     },
-    //     ForwardProtocol::Extended(cookie_path) => {
-    //         // or::run_extor_client(fwd_conn).await
-    //         todo!()
-    //     }
-    // }
+    match conf.forward_proto {
+        ForwardProtocol::Basic => {
+            // No special OR handshake required.
+            log::debug!("Using basic 'data only' protocol with forward server {}", fwd_addr);
+        },
+        ForwardProtocol::Extended(_cookie_path) => {
+            log::debug!("Using extended OR protocol with forward server {}", fwd_addr);
+            unimplemented!("Extended OR protocol is not yet supported.")
+            // or::run_extor_client(fwd_conn).await
+        }
+    }
 
     log::debug!(
         "Running UPGen server protocol to forward data between {} and {}",
