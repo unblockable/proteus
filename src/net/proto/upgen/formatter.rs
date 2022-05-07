@@ -101,7 +101,7 @@ impl Formatter {
         // (i.e., total - fixed), but now it's only covering payload.
         let payload_len = if max_len > 0 {
             std::cmp::min(
-                prototype::CryptoModule::suggest_ciphertext_nbytes(payload.remaining()),
+                self.crypt_spec.suggest_ciphertext_nbytes(payload.remaining()),
                 max_len,
             )
         } else {

@@ -135,7 +135,7 @@ impl CryptoModule {
         16 // Poly1305 MAC tag is 16 bytes
     }
 
-    pub fn suggest_ciphertext_nbytes(plaintext_len: usize) -> usize {
+    fn suggest_ciphertext_nbytes(plaintext_len: usize) -> usize {
         plaintext_len + CryptoModule::get_mac_len()
     }
 
@@ -155,12 +155,16 @@ impl CryptoModule {
 }
 
 impl CryptoProtocol for CryptoModule {
+    fn suggest_ciphertext_nbytes(&self, plaintext_len: usize) -> usize {
+        CryptoModule::suggest_ciphertext_nbytes(plaintext_len)
+    }
+
     fn encrypt(
         &mut self,
         plaintext: &mut Cursor<Bytes>,
         ciphertext_len: usize,
     ) -> Result<Bytes, crypto::Error> {
-        if ciphertext_len < CryptoModule::suggest_ciphertext_nbytes(0) {
+        if ciphertext_len < self.suggest_ciphertext_nbytes(0) {
             return Err(crypto::Error::CryptFailure);
         }
 

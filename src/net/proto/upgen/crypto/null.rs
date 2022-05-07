@@ -40,4 +40,8 @@ impl CryptoProtocol for CryptoModule {
     fn get_encrypted_header(&mut self, nbytes: usize) -> Bytes {
         todo!();
     }
+
+    fn suggest_ciphertext_nbytes(&self, plaintext_len: usize) -> usize {
+        todo!()
+    }
 }

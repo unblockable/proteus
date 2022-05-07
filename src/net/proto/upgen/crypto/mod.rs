@@ -35,6 +35,8 @@ pub enum CryptoMaterialKind {
 pub trait CryptoProtocol {
     fn material_len(&self, material_kind: CryptoMaterialKind) -> usize;
 
+    fn suggest_ciphertext_nbytes(&self, plaintext_len: usize) -> usize;
+
     fn encrypt(
         &mut self,
         plaintext: &mut Cursor<Bytes>,
