@@ -8,7 +8,7 @@ use bytes::Bytes;
 use bytes::BytesMut;
 
 use crate::net::proto::upgen::{
-    crypto::{null, CryptoProtocol},
+    crypto::{null, prototype, CryptoProtocol},
     frames::{CovertPayload, FieldKind, FrameField, OvertFrameSpec},
 };
 use crate::net::{Deserializer, Serializer};
@@ -82,29 +82,34 @@ impl Formatter {
         log::trace!("We have {} fields", fields.len());
 
         // Payload len is variable, so compute that first.
-        let mut payload_len = 0;
+        let mut max_len: usize = 0;
         for field in fields {
             if let FieldKind::Length(num_bytes) = field.kind {
                 let base: u32 = 2;
                 let num_bits = 8 * u32::from(num_bytes);
-                let max_len = base.pow(num_bits) - 1;
+                max_len = (base.pow(num_bits) - 1) as usize;
                 log::trace!(
-                    "Found {}-byte length field which can encode payload length <= {} bytes",
+                    "Found {}-byte length field which can encode at most {} bytes",
                     num_bytes,
                     max_len
-                );
-                payload_len = cmp::min(max_len as usize, payload.remaining());
-                log::trace!(
-                    "We have {} available payload bytes, so we can write {} of it",
-                    payload.remaining(),
-                    payload_len
                 );
                 break;
             }
         }
 
+        // FIXME length field should cover everything that is NOT fixed length
+        // (i.e., total - fixed), but now it's only covering payload.
+        let payload_len = if max_len > 0 {
+            std::cmp::min(
+                prototype::CryptoModule::suggest_ciphertext_nbytes(payload.remaining()),
+                max_len,
+            )
+        } else {
+            0
+        };
+
         let fixed_len = self.frame_spec.get_fixed_len();
-        let total_len = fixed_len + payload_len;
+        let total_len = fixed_len + payload_len; // FIXME what about other var len fields?
         let mut buf = BytesMut::with_capacity(total_len);
 
         log::trace!(
@@ -130,9 +135,10 @@ impl Formatter {
                     match num_bytes {
                         1 => buf.put_u8(u8::try_from(payload_len).unwrap_or(u8::MAX)),
                         2 => buf.put_u16(u16::try_from(payload_len).unwrap_or(u16::MAX)),
-                        3 => buf.put_u32(u32::try_from(payload_len).unwrap_or(u32::MAX)),
-                        4 => buf.put_u64(u64::try_from(payload_len).unwrap_or(u64::MAX)),
-                        _ => buf.put_u128(u128::try_from(payload_len).unwrap_or(u128::MAX)),
+                        4 => buf.put_u32(u32::try_from(payload_len).unwrap_or(u32::MAX)),
+                        8 => buf.put_u64(u64::try_from(payload_len).unwrap_or(u64::MAX)),
+                        16 => buf.put_u128(u128::try_from(payload_len).unwrap_or(u128::MAX)),
+                        _ => unimplemented!("Length field size not supported: {}", num_bytes),
                     }
                 }
                 FieldKind::CryptoMaterial(material) => {
@@ -141,14 +147,20 @@ impl Formatter {
                 FieldKind::Payload => {
                     if payload_len > 0 {
                         log::trace!(
-                            "Writing {} payload bytes out of {} available bytes",
-                            payload_len,
+                            "We have {} available payload bytes. Encrypting.",
                             payload.remaining()
                         );
 
-                        let plaintext = payload.copy_to_bytes(payload_len);
+                        let pos_before = payload.position();
+
                         // FIXME don't unwrap this, instead bubble the error.
-                        let ciphertext = self.crypt_spec.encrypt(&plaintext).unwrap();
+                        let ciphertext = self.crypt_spec.encrypt(payload, payload_len).unwrap();
+
+                        log::trace!(
+                            "Encrypted {} plaintext bytes into {} ciphertext bytes.",
+                            payload.position() - pos_before,
+                            ciphertext.len()
+                        );
 
                         buf.put_slice(&ciphertext);
                     }
@@ -198,9 +210,10 @@ impl Formatter {
                     payload_len = (src.remaining() >= len).then(|| match len {
                         1 => src.get_u8() as usize,
                         2 => src.get_u16() as usize,
-                        3 => src.get_u32() as usize,
-                        4 => src.get_u64() as usize,
-                        _ => src.get_u128() as usize,
+                        4 => src.get_u32() as usize,
+                        8 => src.get_u64() as usize,
+                        16 => src.get_u128() as usize,
+                        _ => unimplemented!("Length field size not supported: {}", len),
                     })?;
 
                     log::trace!(
@@ -216,11 +229,19 @@ impl Formatter {
                     let len = payload_len;
                     if len > 0 {
                         let ciphertext = (src.remaining() >= len).then(|| {
-                            log::trace!("Copying {} bytes from payload field", len);
+                            log::trace!("Decrypting {} bytes from payload field", len);
                             src.copy_to_bytes(len)
                         })?;
+
                         // FIXME don't unwrap this, instead bubble the error.
-                        let plaintext = self.crypt_spec.encrypt(&ciphertext).unwrap();
+                        let plaintext = self.crypt_spec.decrypt(&ciphertext).unwrap();
+
+                        log::trace!(
+                            "Decrypted {} ciphertext bytes into {} plaintext bytes.",
+                            len,
+                            plaintext.len()
+                        );
+
                         payload = Some(plaintext);
                     }
                 }
