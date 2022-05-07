@@ -57,16 +57,17 @@ impl Generator {
         let num_normal = 4;
         
         let norm_first = self.rng.gen_bool(0.5);
-        let offset = if num_encodable_types > 4 && norm_first {
+        
+        if num_encodable_types == 4 || norm_first {
             // Normal messages first, control second
             // Handshake type is the start val
             start_val
         } else {
             // Control messages first, normal second
-            num_encodable_types - num_normal
-        };
-
-        start_val + offset
+            // Handshake type comes after the control types
+            let offset = num_encodable_types - num_normal;
+            start_val + offset
+        }
     }
 
     pub fn generate_overt_protocol(&mut self) -> OvertProtocol {
@@ -84,12 +85,9 @@ impl Generator {
             let in_data = self.rng.gen_bool(0.5);
             let is_enc = self.rng.gen_bool(0.5);
             
-            let field_size = 1; // encode type in 1 byte
-            let hs_val = self.compute_handshake_type_val();
-            let data_val = hs_val + 1;
-
             if is_enc {
                 // Encrypted, so we don't care about the values.
+                let field_size = 1; // encode type in 1 byte
                 if in_handshake {
                     num_enc_header_bytes_hs += field_size;
                 }
@@ -98,6 +96,8 @@ impl Generator {
                 }
             } else {
                 // Unencrypted, use that computed type values
+                let hs_val = self.compute_handshake_type_val();
+                let data_val = hs_val + 1;
                 if in_handshake {
                     let b = Bytes::copy_from_slice(&[hs_val]);
                     let field = FrameField::new(FieldKind::Fixed(b));
@@ -156,7 +156,7 @@ impl Generator {
         unenc_fields_hs.shuffle(&mut self.rng);
 
         // FIXME data field only has length and maybe type
-        // but these two should be in the same order as in header
+        // but these two should be in the same order as in handshake
         unenc_fields_data.shuffle(&mut self.rng);
 
         // Observable randomness
@@ -173,9 +173,11 @@ impl Generator {
             if self.rng.gen_bool(0.2) {
                 // Included in handshake
                 let size = self.choose_weighted(&[(1, 0.4), (2, 0.4), (3, 0.1), (4, 0.1)]);
+                
                 let mut buf = BytesMut::with_capacity(size);
                 buf.put_bytes(0, size);
                 let b = buf.freeze();
+
                 let field = FrameField::new(FieldKind::Fixed(b));
                 unenc_fields_hs.push(field);
             }
@@ -185,25 +187,25 @@ impl Generator {
         // Maybe in handhsake, maybe in data
         // Always encrypted
         {
-            let size = self.choose_weighted(&[(0, 0.5), (1, 0.25), (2, 0.25)]);
-
-            if size > 0 {
-                if num_enc_header_bytes_hs > 0 {
-                    num_enc_header_bytes_hs += size as usize;
-                }
-                if num_enc_header_bytes_data > 0 {
-                    num_enc_header_bytes_data += size as usize;
-                }
+            if num_enc_header_bytes_hs > 0 {
+                let size = self.choose_weighted(&[(0, 0.5), (1, 0.25), (2, 0.25)]);
+                num_enc_header_bytes_hs += size as usize;
+            }
+            if num_enc_header_bytes_data > 0 {
+                let size = self.choose_weighted(&[(0, 0.8), (1, 0.1), (2, 0.1)]);
+                num_enc_header_bytes_data += size as usize;
             }
         }
 
         // OK construct the protocol now
         let mut unenc_fields_h2 = unenc_fields_hs.clone();
 
-        // TODO eventually we can choose among other crypto modules
-        let crypto = prototype::CryptoModule::new();
-
+        // TODO eventually we should choose among available crypto modules. The
+        // decisions about key material will eventually depend on the chosen
+        // crypto module. For now we default to the prototype module.
+        // We also only build a one-rtt protocol and that should change.
         let (hs1, hs2) = {
+            // Both handshake messages are mostly the same, except the key material.
             let mut h1_spec = OvertFrameSpec::new();
             let mut h2_spec = OvertFrameSpec::new();
 
@@ -212,7 +214,7 @@ impl Generator {
                 h2_spec.push_field(field);
             }
 
-            // Ephemeral key exchange: place at end of unencrypted fields
+            // Ephemeral key exchange: place at end of unencrypted fields.
             {
                 let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterialSent));
                 h1_spec.push_field(f);
@@ -250,6 +252,7 @@ impl Generator {
                 data_spec.push_field(mac);
             }
 
+            // Crypto module handles adding MAC after the payload.
             data_spec.push_field(FrameField::new(FieldKind::Payload));
             data_spec
         };
