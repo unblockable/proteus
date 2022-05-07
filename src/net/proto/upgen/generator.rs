@@ -198,8 +198,6 @@ impl Generator {
         }
 
         // OK construct the protocol now
-        let mut unenc_fields_h2 = unenc_fields_hs.clone();
-
         // TODO eventually we should choose among available crypto modules. The
         // decisions about key material will eventually depend on the chosen
         // crypto module. For now we default to the prototype module.
