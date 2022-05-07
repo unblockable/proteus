@@ -141,7 +141,8 @@ impl Formatter {
                     }
                 }
                 FieldKind::CryptoMaterial(material) => {
-                    todo!()
+                    let b = self.crypt_spec.get_material(*material);
+                    buf.put_slice(&b);
                 }
                 FieldKind::Payload => {
                     if payload_len > 0 {
@@ -222,7 +223,13 @@ impl Formatter {
                     );
                 }
                 FieldKind::CryptoMaterial(material) => {
-                    todo!()
+                    let len = self.crypt_spec.material_len(*material);
+
+                    let data = (src.remaining() >= len).then(|| {
+                        src.copy_to_bytes(len)
+                    })?;
+
+                    self.crypt_spec.set_material(*material, data);
                 }
                 FieldKind::Payload => {
                     let len = payload_len;

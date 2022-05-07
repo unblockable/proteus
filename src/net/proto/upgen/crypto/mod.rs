@@ -21,7 +21,7 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 // These are all fixed-length, variable value
 pub enum CryptoMaterialKind {
     IV,
