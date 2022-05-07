@@ -20,13 +20,14 @@ impl InitState for UpgenProtocol<Init> {
         upgen_conn: Connection,
         other_conn: Connection,
         spec: OvertProtocol,
+        fmt: Formatter,
     ) -> UpgenProtocol<Init> {
         UpgenProtocol::<Init> {
             state: Init {
                 upgen_conn,
                 other_conn,
-                fmt: Formatter::new(),
                 spec,
+                fmt,
             },
         }
     }

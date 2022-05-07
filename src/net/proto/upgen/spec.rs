@@ -16,11 +16,11 @@ pub mod upgen {
     pub struct Init {
         pub upgen_conn: Connection,
         pub other_conn: Connection,
-        pub fmt: Formatter,
         pub spec: OvertProtocol,
+        pub fmt: Formatter,
     }
     pub trait Init {
-        fn new(upgen_conn: Connection, other_conn: Connection, spec: OvertProtocol) -> Init;
+        fn new(upgen_conn: Connection, other_conn: Connection, spec: OvertProtocol, fmt: Formatter) -> Init;
         fn start_client(self) -> ClientHandshake1;
         fn start_server(self) -> ServerHandshake1;
     }

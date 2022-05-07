@@ -70,7 +70,7 @@ impl Generator {
         }
     }
 
-    pub fn generate_overt_protocol(&mut self) -> OvertProtocol {
+    pub fn generate_overt_protocol(&mut self) -> (OvertProtocol, Box<dyn CryptoProtocol + Send + Sync>) {
         let mut unenc_fields_hs = Vec::new();
         let mut num_enc_header_bytes_hs: usize = 0;
 
@@ -202,6 +202,9 @@ impl Generator {
         // decisions about key material will eventually depend on the chosen
         // crypto module. For now we default to the prototype module.
         // We also only build a one-rtt protocol and that should change.
+        let crypto_proto = Box::new(null::CryptoModule::new());
+        // let crypto_proto = Box::new(prototype::CryptoModule::new());
+
         let (hs1, hs2) = {
             // Handshake messages are identical (key material value is variable).
             let mut spec = OvertFrameSpec::new();
@@ -246,6 +249,8 @@ impl Generator {
         };
 
         let proto_spec = onertt::ProtocolSpec::new(hs1, hs2, data);
-        OvertProtocol::OneRtt(proto_spec)
+        let net_proto = OvertProtocol::OneRtt(proto_spec);
+        
+        (net_proto, crypto_proto)
     }
 }

@@ -6,6 +6,7 @@ use crate::net::{
     Connection,
 };
 
+use self::formatter::Formatter;
 use self::generator::Generator;
 
 mod crypto;
@@ -43,8 +44,10 @@ pub async fn run_upgen_client(
     other_conn: Connection,
     seed: u64,
 ) -> Result<(), upgen::Error> {
-    let overt_proto = Generator::new(seed).generate_overt_protocol();
-    let proto = UpgenProtocol::new(upgen_conn, other_conn, overt_proto).start_client();
+    let (overt_proto, crypto_proto) = Generator::new(seed).generate_overt_protocol();
+    let fmt = Formatter::new(crypto_proto);
+
+    let proto = UpgenProtocol::new(upgen_conn, other_conn, overt_proto, fmt).start_client();
 
     let proto = match proto.send_handshake1().await {
         ClientHandshake1Result::ClientHandshake2(s) => s,
@@ -67,8 +70,10 @@ pub async fn run_upgen_server(
     other_conn: Connection,
     seed: u64,
 ) -> Result<(), upgen::Error> {
-    let overt_proto = Generator::new(seed).generate_overt_protocol();
-    let proto = UpgenProtocol::new(upgen_conn, other_conn, overt_proto).start_server();
+    let (overt_proto, crypto_proto) = Generator::new(seed).generate_overt_protocol();
+    let fmt = Formatter::new(crypto_proto);
+    
+    let proto = UpgenProtocol::new(upgen_conn, other_conn, overt_proto, fmt).start_server();
 
     let proto = match proto.recv_handshake1().await {
         ServerHandshake1Result::ServerHandshake2(s) => s,

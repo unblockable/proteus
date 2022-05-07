@@ -46,23 +46,21 @@ impl Deserializer<CovertPayload> for SharedFormatter {
 
 pub struct Formatter {
     frame_spec: OvertFrameSpec,
-    crypt_spec: Box<dyn CryptoProtocol + Send + Sync>,
+    crypto_spec: Box<dyn CryptoProtocol + Send + Sync>,
 }
 
 impl Formatter {
     /// Creates a formatter with a default frame spec with two fields:
     ///   1. variable-value length field (fixed at 2 bytes)
     ///   2. variable-value payload field
-    pub fn new() -> Formatter {
+    pub fn new(crypto_spec: Box<dyn CryptoProtocol + Send + Sync>) -> Formatter {
         let mut default_spec = OvertFrameSpec::new();
         default_spec.push_field(FrameField::new(FieldKind::Length(2)));
         default_spec.push_field(FrameField::new(FieldKind::Payload));
 
-        let default_crypto = Box::new(null::CryptoModule::new());
-
         Formatter {
             frame_spec: default_spec,
-            crypt_spec: default_crypto,
+            crypto_spec: crypto_spec,
         }
     }
 
@@ -100,7 +98,7 @@ impl Formatter {
         // (i.e., total - fixed), but now it's only covering payload.
         let payload_len = if max_len > 0 {
             std::cmp::min(
-                self.crypt_spec.get_ciphertext_len(payload.remaining()),
+                self.crypto_spec.get_ciphertext_len(payload.remaining()),
                 max_len,
             )
         } else {
@@ -141,7 +139,7 @@ impl Formatter {
                     }
                 }
                 FieldKind::CryptoMaterial(material) => {
-                    let b = self.crypt_spec.get_material(*material);
+                    let b = self.crypto_spec.get_material(*material);
                     if b.len() > 0 {
                         buf.put_slice(&b);
                     }
@@ -156,7 +154,7 @@ impl Formatter {
                         let pos_before = payload.position();
 
                         // FIXME don't unwrap this, instead bubble the error.
-                        let ciphertext = self.crypt_spec.encrypt(payload, payload_len).unwrap();
+                        let ciphertext = self.crypto_spec.encrypt(payload, payload_len).unwrap();
 
                         log::trace!(
                             "Encrypted {} plaintext bytes into {} ciphertext bytes.",
@@ -225,14 +223,14 @@ impl Formatter {
                     );
                 }
                 FieldKind::CryptoMaterial(material) => {
-                    let len = self.crypt_spec.material_len(*material);
+                    let len = self.crypto_spec.material_len(*material);
 
                     if len > 0 {
                         let data = (src.remaining() >= len).then(|| {
                             src.copy_to_bytes(len)
                         })?;
     
-                        self.crypt_spec.set_material(*material, data);
+                        self.crypto_spec.set_material(*material, data);
                     }
                 }
                 FieldKind::Payload => {
@@ -244,7 +242,7 @@ impl Formatter {
                         })?;
 
                         // FIXME don't unwrap this, instead bubble the error.
-                        let plaintext = self.crypt_spec.decrypt(&ciphertext).unwrap();
+                        let plaintext = self.crypto_spec.decrypt(&ciphertext).unwrap();
 
                         log::trace!(
                             "Decrypted {} ciphertext bytes into {} plaintext bytes.",
@@ -329,7 +327,7 @@ mod tests {
     }
 
     fn get_simple_formatter() -> Formatter {
-        let mut fmt = Formatter::new();
+        let mut fmt = Formatter::new(Box::new(null::CryptoModule::new()));
         let mut spec = OvertFrameSpec::new();
         spec.push_field(FrameField::new(FieldKind::Length(1)));
         spec.push_field(FrameField::new(FieldKind::Payload));
@@ -338,7 +336,7 @@ mod tests {
     }
 
     fn get_complex_formatter() -> Formatter {
-        let mut fmt = Formatter::new();
+        let mut fmt = Formatter::new(Box::new(null::CryptoModule::new()));
         let mut spec = OvertFrameSpec::new();
         spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from(
             "Test Greeting v1.1.1.1",
@@ -382,7 +380,7 @@ mod tests {
 
     #[test]
     fn multiple_frames() {
-        let mut fmt = Formatter::new();
+        let mut fmt = Formatter::new(Box::new(null::CryptoModule::new()));
         let mut spec = OvertFrameSpec::new();
         spec.push_field(FrameField::new(FieldKind::Length(1)));
         spec.push_field(FrameField::new(FieldKind::Payload));
