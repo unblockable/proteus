@@ -1,7 +1,7 @@
 use crate::net::proto::upgen::crypto::{self, CryptoProtocol};
 
 use std::io::Cursor;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use bytes::{Buf, Bytes, BytesMut};
 
@@ -18,6 +18,9 @@ use x25519_dalek::{x25519, PublicKey, StaticSecret};
 
 const X25519_KEY_NBYTES: usize = 32;
 
+#![feature(backtrace)]
+use std::backtrace::Backtrace;
+
 enum CipherKind {
     Sender,
     Receiver,
@@ -28,10 +31,17 @@ struct Cipher {
     decryption_nonce_gen: Salsa20,
     encryption_cipher: ChaCha20Poly1305,
     decryption_cipher: ChaCha20Poly1305,
+    nbytes_encrypted: usize,
+    nbytes_decrypted: usize,
+    fingerprint: [u8; 8],
 }
 
 impl Cipher {
     pub fn new(secret_key: [u8; 32], cipher_kind: CipherKind) -> Cipher {
+
+        let bt = Backtrace::new();
+        println!("New cipher! bt={:?}", bt);
+
         const NONCE_A: [u8; 8] = [0xAA; 8];
         const NONCE_B: [u8; 8] = [0xBB; 8];
 
@@ -45,11 +55,17 @@ impl Cipher {
             CipherKind::Receiver => NONCE_A,
         };
 
+        let mut fingerprint: [u8; 8] = [0; 8];
+        OsRng.fill_bytes(&mut fingerprint);
+
         Cipher {
             encryption_nonce_gen: Salsa20::new(&secret_key.into(), &encryption_nonce.into()),
             decryption_nonce_gen: Salsa20::new(&secret_key.into(), &decryption_nonce.into()),
             encryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
             decryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
+            nbytes_encrypted: 0,
+            nbytes_decrypted: 0,
+            fingerprint: fingerprint,
         }
     }
 
@@ -60,7 +76,12 @@ impl Cipher {
     }
 
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Vec<u8> {
+        self.nbytes_encrypted += plaintext.len();
+
         let nonce = Cipher::get_nonce(&mut self.encryption_nonce_gen);
+
+        println!("My fingerprint: {:?}", self.fingerprint);
+        println!("Encrypting with nonce {:?}, nbytes_encrypted = {:?}", nonce, self.nbytes_encrypted);
 
         self.encryption_cipher
             .encrypt(&nonce.into(), plaintext)
@@ -68,7 +89,12 @@ impl Cipher {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        self.nbytes_decrypted += ciphertext.len();
+
         let nonce = Cipher::get_nonce(&mut self.decryption_nonce_gen);
+
+        println!("My fingerprint: {:?}", self.fingerprint);
+        println!("Decrypting with nonce {:?}, nbytes_decrypted = {:?}", nonce, self.nbytes_decrypted);
 
         self.decryption_cipher
             .decrypt(&nonce.into(), ciphertext)
@@ -81,7 +107,7 @@ pub struct CryptoModule {
     my_secret_key: StaticSecret,
     my_public_key: Option<PublicKey>,
     our_shared_secret_key: Option<[u8; 32]>,
-    cipher: Option<Rc<Cipher>>,
+    cipher: Option<Arc<Cipher>>,
 }
 
 impl CryptoModule {
@@ -115,7 +141,7 @@ impl CryptoModule {
         } else {
         }
 
-        self.cipher = Some(Rc::new(Cipher::new(
+        self.cipher = Some(Arc::new(Cipher::new(
             self.our_shared_secret_key.unwrap(),
             my_role,
         )));
@@ -123,12 +149,15 @@ impl CryptoModule {
 
     fn encrypt_impl(&mut self, plaintext: &[u8]) -> Vec<u8> {
         let mut cipher = self.cipher.as_mut().unwrap();
-        Rc::get_mut(&mut cipher).unwrap().encrypt(plaintext)
+        let ctext = Arc::get_mut(&mut cipher).unwrap().encrypt(plaintext);
+        println!("\n Plaintext {:?} {:?} \n Encrypting {:?} {:?} \n", plaintext, plaintext.len(), ctext, ctext.len());
+        ctext
     }
 
     fn decrypt_impl(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        println!("\n Decrypting {:?} {:?} \n", ciphertext, ciphertext.len());
         let mut cipher = self.cipher.as_mut().unwrap();
-        Rc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
+        Arc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
     }
 
     fn get_mac_len() -> usize {

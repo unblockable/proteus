@@ -226,10 +226,8 @@ impl Formatter {
                     let len = self.crypto_spec.material_len(*material);
 
                     if len > 0 {
-                        let data = (src.remaining() >= len).then(|| {
-                            src.copy_to_bytes(len)
-                        })?;
-    
+                        let data = (src.remaining() >= len).then(|| src.copy_to_bytes(len))?;
+
                         self.crypto_spec.set_material(*material, data);
                     }
                 }
@@ -313,7 +311,7 @@ impl Deserializer<CovertPayload> for Formatter {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    
+
     use crate::net::proto::upgen::crypto::{null, prototype, CryptoMaterialKind};
 
     use super::*;
@@ -368,6 +366,29 @@ mod tests {
         assert_eq!(bytes, bytes_deserialized);
     }
 
+    fn assert_serialize_deserialize_pair_eq(
+        bytes: Bytes,
+        snd_fmt: &mut Formatter,
+        rcv_fmt: &mut Formatter,
+    ) {
+        let mut bytes1 = BytesMut::with_capacity(bytes.len());
+        bytes1.put_slice(&bytes);
+        let msg1 = CovertPayload {
+            data: bytes1.freeze(),
+        };
+        let bytes_serialized = snd_fmt.serialize_frame(msg1);
+
+        let mut bytes2 = BytesMut::with_capacity(bytes_serialized.len());
+        bytes2.put_slice(&bytes_serialized);
+        let msg2 = rcv_fmt
+            .deserialize_frame(&mut Cursor::new(&bytes2))
+            .unwrap();
+        let bytes_deserialized = msg2.data;
+
+        assert_eq!(bytes.len(), bytes_deserialized.len());
+        assert_eq!(bytes, bytes_deserialized);
+    }
+
     #[test]
     fn small_payload_simple_formatter() {
         assert_serialize_deserialize_eq(get_payload(10), get_simple_formatter());
@@ -398,23 +419,52 @@ mod tests {
         assert_serialize_deserialize_eq(get_payload(100000), get_complex_formatter());
     }
 
-    #[test]
-    fn prototype_crypto() {
+    // Helper, because set_frame_spec() consumes the frame spec. Probably it should just take a
+    // ref in the future.
+    fn prototype_crypto_make_spec() -> OvertFrameSpec {
         let mut spec = OvertFrameSpec::new();
-        spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from("UPGen Prototype Crypto"))));
-        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::IV)));
-        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterial)));
-        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::EncryptedHeader(32))));
-        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC)));
+        spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from(
+            "UPGen Prototype Crypto",
+        ))));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
+            CryptoMaterialKind::IV,
+        )));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
+            CryptoMaterialKind::KeyMaterial,
+        )));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
+            CryptoMaterialKind::EncryptedHeader(32),
+        )));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
+            CryptoMaterialKind::MAC,
+        )));
         spec.push_field(FrameField::new(FieldKind::Length(1)));
         spec.push_field(FrameField::new(FieldKind::Payload));
+        spec
+    }
 
-        let mut fmt = Formatter::new(Box::new(prototype::CryptoModule::new()));
-        fmt.set_frame_spec(spec);
+    #[test]
+    fn prototype_crypto() {
+        let mut alice = prototype::CryptoModule::new();
+        let mut bob = prototype::CryptoModule::new();
+
+        let alice_key = alice.get_material(CryptoMaterialKind::KeyMaterial);
+        let bob_key = bob.get_material(CryptoMaterialKind::KeyMaterial);
+
+        alice.set_material(CryptoMaterialKind::KeyMaterial, bob_key);
+        bob.set_material(CryptoMaterialKind::KeyMaterial, alice_key);
+
+        let mut alice_fmt = Formatter::new(Box::new(alice));
+        alice_fmt.set_frame_spec(prototype_crypto_make_spec());
+
+        let mut bob_fmt = Formatter::new(Box::new(bob));
+        bob_fmt.set_frame_spec(prototype_crypto_make_spec());
 
         // Payload fits in one frame
-        assert_serialize_deserialize_eq(get_payload(255), fmt);
+        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
+        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
+        //assert_serialize_deserialize_pair_eq(get_payload(300), &mut alice_fmt, &mut bob_fmt);
         // Payload needs two frames
-        assert_serialize_deserialize_eq(get_payload(256), fmt);
+        //assert_serialize_deserialize_eq(get_payload(256), fmt);
     }
 }
