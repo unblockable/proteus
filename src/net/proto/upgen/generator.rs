@@ -12,6 +12,7 @@ fn create_encrypted_header_field(size: usize) -> FrameField {
 }
 
 pub struct Generator {
+    seed: u64,
     rng: StdRng,
 }
 
@@ -20,6 +21,7 @@ impl Generator {
         // Use the seed to generate an overt protocol which specifies the format
         // of all frames that are transferred over the network.
         Generator {
+            seed,
             rng: StdRng::seed_from_u64(seed),
         }
     }
@@ -205,9 +207,14 @@ impl Generator {
         let crypto_proto = Box::new(null::CryptoModule::new());
         // let crypto_proto = Box::new(prototype::CryptoModule::new());
 
+        // For testing in wireshark
+        let greet = format!("UPGen v0.0.0.0.1 seed={}!", self.seed);
+        let greeting = FrameField::new(FieldKind::Fixed(Bytes::from(greet)));
+
         let (hs1, hs2) = {
             // Handshake messages are identical (key material value is variable).
             let mut spec = OvertFrameSpec::new();
+            spec.push_field(greeting.clone()); // XXX remove after demo
 
             for field in unenc_fields_hs {
                 spec.push_field(field);
@@ -230,6 +237,7 @@ impl Generator {
 
         let data = {
             let mut data_spec = OvertFrameSpec::new();
+            data_spec.push_field(greeting); // XXX remove after demo
 
             for field in unenc_fields_data {
                 data_spec.push_field(field);
