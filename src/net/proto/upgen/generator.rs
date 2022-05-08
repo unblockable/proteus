@@ -79,6 +79,14 @@ impl Generator {
         let mut unenc_fields_data = Vec::new();
         let mut num_enc_header_bytes_data: usize = 0;
 
+        log::debug!("Generator: protocol with seed {}", self.seed);
+
+        // FIXME remove this after demo
+        // Greeting for demo so the protocol can be observed in wireshark.
+        let greet = format!("UPGen v0.0.0.0.1 seed={}!", self.seed);
+        log::debug!("Generator: both: added greeting field: {}", greet);
+        let greeting = FrameField::new(FieldKind::Fixed(Bytes::from(greet)));
+
         // Type
         // Maybe in handshake, maybe in data
         {
@@ -91,9 +99,11 @@ impl Generator {
                 // Encrypted, so we don't care about the values.
                 let field_size = 1; // encode type in 1 byte
                 if in_handshake {
+                    log::debug!("Generator: handshake: 1 byte encrypted type field");
                     num_enc_header_bytes_hs += field_size;
                 }
                 if in_data {
+                    log::debug!("Generator: data: 1 byte encrypted type field");
                     num_enc_header_bytes_data += field_size;
                 }
             } else {
@@ -101,11 +111,13 @@ impl Generator {
                 let hs_val = self.compute_handshake_type_val();
                 let data_val = hs_val + 1;
                 if in_handshake {
+                    log::debug!("Generator: handshake: 1 byte type field: {}", hs_val);
                     let b = Bytes::copy_from_slice(&[hs_val]);
                     let field = FrameField::new(FieldKind::Fixed(b));
                     unenc_fields_hs.push(field);
                 }
                 if in_data {
+                    log::debug!("Generator: data: 1 byte type field: {}", data_val);
                     let b = Bytes::copy_from_slice(&[data_val]);
                     let field = FrameField::new(FieldKind::Fixed(b));
                     unenc_fields_data.push(field);
@@ -119,6 +131,7 @@ impl Generator {
         {
             // Always unencrypted
             let size = self.choose_weighted(&[(2u8, 0.75), (4u8, 0.25)]);
+            log::debug!("Generator: both: added {} byte length field", size);
             let field = FrameField::new(FieldKind::Length(size));
             unenc_fields_hs.push(field.clone());
             unenc_fields_data.push(field);
@@ -138,13 +151,18 @@ impl Generator {
                 if self.rng.gen_bool(0.5) {
                     // Encrypted
                     num_enc_header_bytes_hs += field_size;
+                    log::debug!("Generator: handshake: {} byte encrypted version field", field_size);
                 } else {
                     // Unencrypted
                     let major = self.choose(&[0u8, 1u8, 2u8, 3u8]);
                     let b = match field_size {
-                        1 => Bytes::copy_from_slice(&[major]),
+                        1 => {
+                            log::debug!("Generator: handshake: 1 byte version field: {}", major);
+                            Bytes::copy_from_slice(&[major])
+                        },
                         _ => {
                             let minor = self.choose_weighted(&[(0u8, 0.5), (1u8, 0.4), (2u8, 0.1)]);
+                            log::debug!("Generator: handshake: 2 byte version field: {} {}", major, minor);
                             Bytes::copy_from_slice(&[major, minor])
                         }
                     };
@@ -175,6 +193,7 @@ impl Generator {
             if self.rng.gen_bool(0.2) {
                 // Included in handshake
                 let size = self.choose_weighted(&[(1, 0.4), (2, 0.4), (3, 0.1), (4, 0.1)]);
+                log::debug!("Generator: handshake: {} byte reserved field init to 0", size);
                 
                 let mut buf = BytesMut::with_capacity(size);
                 buf.put_bytes(0, size);
@@ -191,10 +210,12 @@ impl Generator {
         {
             if num_enc_header_bytes_hs > 0 {
                 let size = self.choose_weighted(&[(0, 0.5), (1, 0.25), (2, 0.25)]);
+                log::debug!("Generator: handshake: {} byte encrypted protocol-specific field", size);
                 num_enc_header_bytes_hs += size as usize;
             }
             if num_enc_header_bytes_data > 0 {
                 let size = self.choose_weighted(&[(0, 0.8), (1, 0.1), (2, 0.1)]);
+                log::debug!("Generator: data: {} byte encrypted protocol-specific field", size);
                 num_enc_header_bytes_data += size as usize;
             }
         }
@@ -206,10 +227,6 @@ impl Generator {
         // We also only build a one-rtt protocol and that should change.
         let crypto_proto = Box::new(null::CryptoModule::new());
         // let crypto_proto = Box::new(prototype::CryptoModule::new());
-
-        // For testing in wireshark
-        let greet = format!("UPGen v0.0.0.0.1 seed={}!", self.seed);
-        let greeting = FrameField::new(FieldKind::Fixed(Bytes::from(greet)));
 
         let (hs1, hs2) = {
             // Handshake messages are identical (key material value is variable).
@@ -223,6 +240,7 @@ impl Generator {
             // Ephemeral key exchange: place at end of unencrypted fields.
             let f = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterial));
             spec.push_field(f);
+            log::debug!("Generator: handshake: key material field");
 
             if num_enc_header_bytes_hs > 0 {
                 let concat = create_encrypted_header_field(num_enc_header_bytes_hs);
@@ -230,6 +248,7 @@ impl Generator {
 
                 let mac = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC));
                 spec.push_field(mac);
+                log::debug!("Generator: handshake: header mac field");
             }
 
             (spec.clone(), spec)
@@ -249,9 +268,11 @@ impl Generator {
 
                 let mac = FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC));
                 data_spec.push_field(mac);
+                log::debug!("Generator: data: header mac field");
             }
 
             // Crypto module handles adding MAC after the payload.
+            log::debug!("Generator: data: payload+mac field");
             data_spec.push_field(FrameField::new(FieldKind::Payload));
             data_spec
         };
