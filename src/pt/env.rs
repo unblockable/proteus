@@ -111,6 +111,15 @@ impl From<ParseIntError> for ParseEnvError {
     }
 }
 
+pub fn log_env_vars() {
+    for (k, v) in env::vars() {
+        log::debug!("env: key={} value={}", k, v);
+    }
+    for a in env::args() {
+        log::debug!("arg: value={}", a);
+    }
+}
+
 pub fn parse_is_version_supported() -> Result<bool, ParseEnvError> {
     let versions = env::var(CommonKey::TOR_PT_MANAGED_TRANSPORT_VER.to_string())?;
     Ok(versions
