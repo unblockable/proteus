@@ -10,7 +10,7 @@ use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
 use crate::pt::control;
 
-const FIXED_SEED: u64 = 123321;
+const FIXED_SEED: u64 = 222444888;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
