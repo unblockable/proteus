@@ -145,31 +145,36 @@ impl CryptoModule {
         usize::try_from(isize::try_from(ciphertext_len).unwrap() - 16isize).ok()
     }
 
-    fn handle_key_material_sent(&mut self) -> Option<Bytes> {
+    fn generate_ephemeral_public_key(&mut self) -> Bytes {
         let mut buf =
             BytesMut::with_capacity(self.material_len(crypto::CryptoMaterialKind::KeyMaterial));
         buf.extend_from_slice(&self.produce_my_half_handshake());
-        Some(buf.freeze())
-        //Some(Bytes::from_iter(self.produce_my_half_handshake().iter()))
+        buf.freeze()
     }
 
-    fn generate_ephemeral_public_key(&mut self) -> Bytes {
-        todo!();
-    }
     fn receive_ephemeral_public_key(&mut self, key: Bytes) {
-        todo!();
+        let mut buf: [u8; 32] = Default::default();
+        buf.copy_from_slice(&key[0..32]);
+        self.receive_their_half_handshake(buf);
+    }
+
+    fn get_random_bytes(nbytes: usize) -> Bytes {
+        let mut random_buf: Vec<u8> = Default::default();
+        random_buf.resize(nbytes, 0);
+        OsRng.fill_bytes(&mut random_buf);
+        Bytes::from(random_buf)
     }
 
     fn get_iv(&mut self) -> Bytes {
-        todo!();
+        CryptoModule::get_random_bytes(self.material_len(crypto::CryptoMaterialKind::IV))
     }
 
     fn get_encrypted_header(&mut self, nbytes: usize) -> Bytes {
-        todo!();
+        CryptoModule::get_random_bytes(nbytes)
     }
 
     fn get_mac(&mut self) -> Bytes {
-        todo!();
+        CryptoModule::get_random_bytes(self.material_len(crypto::CryptoMaterialKind::MAC))
     }
 }
 
@@ -213,9 +218,7 @@ impl CryptoProtocol for CryptoModule {
             crypto::CryptoMaterialKind::IV => 16,
             crypto::CryptoMaterialKind::KeyMaterial => X25519_KEY_NBYTES,
             crypto::CryptoMaterialKind::MAC => CryptoModule::get_mac_len(),
-            _ => {
-                unimplemented!();
-            }
+            crypto::CryptoMaterialKind::EncryptedHeader(len) => len,
         }
     }
 
@@ -250,6 +253,19 @@ mod tests {
 
         alice.receive_their_half_handshake(bob_key);
         bob.receive_their_half_handshake(alice_key);
+
+        (alice, bob)
+    }
+
+    fn get_connected_pair_public() -> (CryptoModule, CryptoModule) {
+        let mut alice = CryptoModule::new();
+        let mut bob = CryptoModule::new();
+
+        let alice_key = alice.generate_ephemeral_public_key();
+        let bob_key = bob.generate_ephemeral_public_key();
+
+        alice.receive_ephemeral_public_key(bob_key);
+        bob.receive_ephemeral_public_key(alice_key);
 
         (alice, bob)
     }
@@ -324,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_public_api() {
-        let (mut alice, mut bob) = get_connected_pair();
+        let (mut alice, mut bob) = get_connected_pair_public();
 
         let plaintext = Bytes::from("hello world");
         let mut cursor = Cursor::new(plaintext);
@@ -341,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_public_api_partial_write() {
-        let (mut alice, mut bob) = get_connected_pair();
+        let (mut alice, mut bob) = get_connected_pair_public();
 
         let plaintext = Bytes::from("hello world");
         let original_plaintext_nbytes = plaintext.len();
@@ -365,5 +381,22 @@ mod tests {
 
         let plaintext_prime = bob.decrypt(&ciphertext).unwrap();
         assert_eq!(Bytes::from("h"), plaintext_prime);
+    }
+
+    #[test]
+    fn test_public_api_materials() {
+        let mut alice = CryptoModule::new();
+
+        let materials = [
+            crypto::CryptoMaterialKind::IV,
+            crypto::CryptoMaterialKind::KeyMaterial,
+            crypto::CryptoMaterialKind::MAC,
+            crypto::CryptoMaterialKind::EncryptedHeader(32),
+        ];
+
+        for material in materials.iter() {
+            let random_bytes = alice.get_material(*material);
+            assert_eq!(random_bytes.len(), alice.material_len(*material));
+        }
     }
 }
