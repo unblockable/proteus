@@ -314,7 +314,7 @@ impl Deserializer<CovertPayload> for Formatter {
 mod tests {
     use std::io::Cursor;
     
-    use crate::net::proto::upgen::crypto::{null, prototype};
+    use crate::net::proto::upgen::crypto::{null, prototype, CryptoMaterialKind};
 
     use super::*;
 
@@ -396,5 +396,25 @@ mod tests {
     #[test]
     fn large_payload_complex_formatter() {
         assert_serialize_deserialize_eq(get_payload(100000), get_complex_formatter());
+    }
+
+    #[test]
+    fn prototype_crypto() {
+        let mut spec = OvertFrameSpec::new();
+        spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from("UPGen Prototype Crypto"))));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::IV)));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::KeyMaterial)));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::EncryptedHeader(32))));
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(CryptoMaterialKind::MAC)));
+        spec.push_field(FrameField::new(FieldKind::Length(1)));
+        spec.push_field(FrameField::new(FieldKind::Payload));
+
+        let mut fmt = Formatter::new(Box::new(prototype::CryptoModule::new()));
+        fmt.set_frame_spec(spec);
+
+        // Payload fits in one frame
+        assert_serialize_deserialize_eq(get_payload(255), fmt);
+        // Payload needs two frames
+        assert_serialize_deserialize_eq(get_payload(256), fmt);
     }
 }
