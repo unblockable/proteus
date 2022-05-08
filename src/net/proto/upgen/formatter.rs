@@ -429,9 +429,13 @@ mod tests {
         spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
             CryptoMaterialKind::IV,
         )));
+
+        /*
         spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
             CryptoMaterialKind::KeyMaterial,
         )));
+        */
+
         spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
             CryptoMaterialKind::EncryptedHeader(32),
         )));
@@ -460,9 +464,11 @@ mod tests {
         let mut bob_fmt = Formatter::new(Box::new(bob));
         bob_fmt.set_frame_spec(prototype_crypto_make_spec());
 
+        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
+        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
+        assert_serialize_deserialize_pair_eq(get_payload(300), &mut alice_fmt, &mut bob_fmt);
+
         // Payload fits in one frame
-        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
-        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
         //assert_serialize_deserialize_pair_eq(get_payload(300), &mut alice_fmt, &mut bob_fmt);
         // Payload needs two frames
         //assert_serialize_deserialize_eq(get_payload(256), fmt);

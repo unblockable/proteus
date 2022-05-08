@@ -18,9 +18,6 @@ use x25519_dalek::{x25519, PublicKey, StaticSecret};
 
 const X25519_KEY_NBYTES: usize = 32;
 
-#![feature(backtrace)]
-use std::backtrace::Backtrace;
-
 enum CipherKind {
     Sender,
     Receiver,
@@ -33,15 +30,10 @@ struct Cipher {
     decryption_cipher: ChaCha20Poly1305,
     nbytes_encrypted: usize,
     nbytes_decrypted: usize,
-    fingerprint: [u8; 8],
 }
 
 impl Cipher {
     pub fn new(secret_key: [u8; 32], cipher_kind: CipherKind) -> Cipher {
-
-        let bt = Backtrace::new();
-        println!("New cipher! bt={:?}", bt);
-
         const NONCE_A: [u8; 8] = [0xAA; 8];
         const NONCE_B: [u8; 8] = [0xBB; 8];
 
@@ -65,7 +57,6 @@ impl Cipher {
             decryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
             nbytes_encrypted: 0,
             nbytes_decrypted: 0,
-            fingerprint: fingerprint,
         }
     }
 
@@ -80,9 +71,6 @@ impl Cipher {
 
         let nonce = Cipher::get_nonce(&mut self.encryption_nonce_gen);
 
-        println!("My fingerprint: {:?}", self.fingerprint);
-        println!("Encrypting with nonce {:?}, nbytes_encrypted = {:?}", nonce, self.nbytes_encrypted);
-
         self.encryption_cipher
             .encrypt(&nonce.into(), plaintext)
             .expect("encryption failure")
@@ -92,9 +80,6 @@ impl Cipher {
         self.nbytes_decrypted += ciphertext.len();
 
         let nonce = Cipher::get_nonce(&mut self.decryption_nonce_gen);
-
-        println!("My fingerprint: {:?}", self.fingerprint);
-        println!("Decrypting with nonce {:?}, nbytes_decrypted = {:?}", nonce, self.nbytes_decrypted);
 
         self.decryption_cipher
             .decrypt(&nonce.into(), ciphertext)
@@ -108,6 +93,8 @@ pub struct CryptoModule {
     my_public_key: Option<PublicKey>,
     our_shared_secret_key: Option<[u8; 32]>,
     cipher: Option<Arc<Cipher>>,
+    sent_handshake: bool,
+    recv_handshake: bool,
 }
 
 impl CryptoModule {
@@ -120,10 +107,18 @@ impl CryptoModule {
             my_public_key: None,
             our_shared_secret_key: None,
             cipher: None,
+            sent_handshake: false,
+            recv_handshake: false,
         }
     }
 
     fn produce_my_half_handshake(&mut self) -> [u8; 32] {
+        if self.sent_handshake {
+            panic!("Crypto prototype should never send more than one handshake.");
+        }
+
+        self.sent_handshake = true;
+
         self.my_public_key = Some(PublicKey::from(&self.my_secret_key));
         self.my_public_key.unwrap().to_bytes()
     }
@@ -132,6 +127,12 @@ impl CryptoModule {
      * Produces the shared secret and instantiates the ciphers.
      */
     fn receive_their_half_handshake(&mut self, their_public_key: [u8; 32]) {
+        if self.recv_handshake {
+            panic!("Crypto prototype should never send more than one handshake.");
+        }
+
+        self.recv_handshake = true;
+
         self.our_shared_secret_key = Some(x25519(self.my_secret_key.to_bytes(), their_public_key));
 
         let mut my_role = CipherKind::Sender;
@@ -150,12 +151,10 @@ impl CryptoModule {
     fn encrypt_impl(&mut self, plaintext: &[u8]) -> Vec<u8> {
         let mut cipher = self.cipher.as_mut().unwrap();
         let ctext = Arc::get_mut(&mut cipher).unwrap().encrypt(plaintext);
-        println!("\n Plaintext {:?} {:?} \n Encrypting {:?} {:?} \n", plaintext, plaintext.len(), ctext, ctext.len());
         ctext
     }
 
     fn decrypt_impl(&mut self, ciphertext: &[u8]) -> Vec<u8> {
-        println!("\n Decrypting {:?} {:?} \n", ciphertext, ciphertext.len());
         let mut cipher = self.cipher.as_mut().unwrap();
         Arc::get_mut(&mut cipher).unwrap().decrypt(ciphertext)
     }
