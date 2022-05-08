@@ -10,6 +10,8 @@ use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
 use crate::pt::control;
 
+const FIXED_SEED: u64 = 123321;
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     control::init_logger();
@@ -103,7 +105,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             );
 
             // match null::run_null_client(rvs_conn, pt_conn).await {
-            match upgen::run_upgen_client(pt_conn, rvs_conn, 123).await {
+            match upgen::run_upgen_client(pt_conn, rvs_conn, FIXED_SEED).await {
                 Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", rvs_addr),
                 Err(e) => log::debug!(
                     "Stream from peer {} failed during UPGen protocol: {}",
@@ -180,7 +182,7 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     );
 
     // match null::run_null_server(pt_conn, fwd_conn).await {
-    match upgen::run_upgen_server(pt_conn, fwd_conn, 123).await {
+    match upgen::run_upgen_server(pt_conn, fwd_conn, FIXED_SEED).await {
         Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", pt_addr),
         Err(e) => log::debug!(
             "Stream from peer {} failed during UPGen protocol: {}",
