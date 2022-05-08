@@ -93,7 +93,6 @@ pub struct CryptoModule {
     my_public_key: Option<PublicKey>,
     our_shared_secret_key: Option<[u8; 32]>,
     cipher: Option<Arc<Cipher>>,
-    sent_handshake: bool,
     recv_handshake: bool,
 }
 
@@ -107,19 +106,15 @@ impl CryptoModule {
             my_public_key: None,
             our_shared_secret_key: None,
             cipher: None,
-            sent_handshake: false,
             recv_handshake: false,
         }
     }
 
     fn produce_my_half_handshake(&mut self) -> [u8; 32] {
-        if self.sent_handshake {
-            panic!("Crypto prototype should never send more than one handshake.");
+        if self.my_public_key.is_none() {
+            self.my_public_key = Some(PublicKey::from(&self.my_secret_key));
         }
 
-        self.sent_handshake = true;
-
-        self.my_public_key = Some(PublicKey::from(&self.my_secret_key));
         self.my_public_key.unwrap().to_bytes()
     }
 
@@ -133,13 +128,14 @@ impl CryptoModule {
 
         self.recv_handshake = true;
 
+        self.produce_my_half_handshake();
+
         self.our_shared_secret_key = Some(x25519(self.my_secret_key.to_bytes(), their_public_key));
 
         let mut my_role = CipherKind::Sender;
 
         if their_public_key < self.my_public_key.unwrap().to_bytes() {
             my_role = CipherKind::Receiver;
-        } else {
         }
 
         self.cipher = Some(Arc::new(Cipher::new(

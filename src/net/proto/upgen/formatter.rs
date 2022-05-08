@@ -421,7 +421,7 @@ mod tests {
 
     // Helper, because set_frame_spec() consumes the frame spec. Probably it should just take a
     // ref in the future.
-    fn prototype_crypto_make_spec() -> OvertFrameSpec {
+    fn aux_prototype_crypto_make_dataframe_spec() -> OvertFrameSpec {
         let mut spec = OvertFrameSpec::new();
         spec.push_field(FrameField::new(FieldKind::Fixed(Bytes::from(
             "UPGen Prototype Crypto",
@@ -429,12 +429,6 @@ mod tests {
         spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
             CryptoMaterialKind::IV,
         )));
-
-        /*
-        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
-            CryptoMaterialKind::KeyMaterial,
-        )));
-        */
 
         spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
             CryptoMaterialKind::EncryptedHeader(32),
@@ -447,8 +441,16 @@ mod tests {
         spec
     }
 
+    fn aux_prototype_crypto_make_handshake_spec() -> OvertFrameSpec {
+        let mut spec = OvertFrameSpec::new();
+        spec.push_field(FrameField::new(FieldKind::CryptoMaterial(
+            CryptoMaterialKind::KeyMaterial,
+        )));
+        spec
+    }
+
     #[test]
-    fn prototype_crypto() {
+    fn prototype_crypto_data() {
         let mut alice = prototype::CryptoModule::new();
         let mut bob = prototype::CryptoModule::new();
 
@@ -459,18 +461,55 @@ mod tests {
         bob.set_material(CryptoMaterialKind::KeyMaterial, alice_key);
 
         let mut alice_fmt = Formatter::new(Box::new(alice));
-        alice_fmt.set_frame_spec(prototype_crypto_make_spec());
+        alice_fmt.set_frame_spec(aux_prototype_crypto_make_dataframe_spec());
 
         let mut bob_fmt = Formatter::new(Box::new(bob));
-        bob_fmt.set_frame_spec(prototype_crypto_make_spec());
+        bob_fmt.set_frame_spec(aux_prototype_crypto_make_dataframe_spec());
 
-        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
-        assert_serialize_deserialize_pair_eq(get_payload(10), &mut alice_fmt, &mut bob_fmt);
-        assert_serialize_deserialize_pair_eq(get_payload(300), &mut alice_fmt, &mut bob_fmt);
+        for msg_size in 1..1000 {
+            assert_serialize_deserialize_pair_eq(
+                get_payload(msg_size),
+                &mut alice_fmt,
+                &mut bob_fmt,
+            );
+        }
+    }
 
-        // Payload fits in one frame
-        //assert_serialize_deserialize_pair_eq(get_payload(300), &mut alice_fmt, &mut bob_fmt);
-        // Payload needs two frames
-        //assert_serialize_deserialize_eq(get_payload(256), fmt);
+    #[test]
+    fn prototype_crypto_convo() {
+        let mut alice = prototype::CryptoModule::new();
+        let mut bob = prototype::CryptoModule::new();
+
+        let mut alice_fmt = Formatter::new(Box::new(alice));
+        let mut bob_fmt = Formatter::new(Box::new(bob));
+
+        // --> Handshake Phase <--
+        alice_fmt.set_frame_spec(aux_prototype_crypto_make_handshake_spec());
+        bob_fmt.set_frame_spec(aux_prototype_crypto_make_handshake_spec());
+
+        assert_serialize_deserialize_pair_eq(get_payload(0), &mut alice_fmt, &mut bob_fmt);
+        assert_serialize_deserialize_pair_eq(get_payload(0), &mut bob_fmt, &mut alice_fmt);
+
+        // --> Data Phase <--
+        alice_fmt.set_frame_spec(aux_prototype_crypto_make_dataframe_spec());
+        bob_fmt.set_frame_spec(aux_prototype_crypto_make_dataframe_spec());
+
+        // Alice sending to Bob
+        for msg_size in 1..1000 {
+            assert_serialize_deserialize_pair_eq(
+                get_payload(msg_size),
+                &mut alice_fmt,
+                &mut bob_fmt,
+            );
+        }
+
+        // Bob sending to Alice
+        for msg_size in 1..1000 {
+            assert_serialize_deserialize_pair_eq(
+                get_payload(msg_size),
+                &mut bob_fmt,
+                &mut alice_fmt,
+            );
+        }
     }
 }
