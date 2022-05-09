@@ -225,7 +225,7 @@ impl Generator {
         // decisions about key material will eventually depend on the chosen
         // crypto module. For now we default to the prototype module.
         // We also only build a one-rtt protocol and that should change.
-        let crypto_proto = Box::new(null::CryptoModule::new());
+        let crypto_proto = Box::new(prototype::CryptoModule::new());
         // let crypto_proto = Box::new(prototype::CryptoModule::new());
 
         let (hs1, hs2) = {
