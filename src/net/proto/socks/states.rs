@@ -118,6 +118,7 @@ impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
                     let next = ServerCommand1 {
                         conn: self.state.conn,
                         fmt: self.state.fmt,
+                        username: None,
                     };
                     ServerHandshake2Result::ServerCommand1(next.into())
                 }
@@ -235,6 +236,7 @@ impl ServerAuth2State for Socks5Protocol<ServerAuth2> {
                 let next = ServerCommand1 {
                     conn: self.state.conn,
                     fmt: self.state.fmt,
+                    username: Some(self.state.auth_request.username),
                 };
                 ServerAuth2Result::ServerCommand1(next.into())
             }
@@ -263,6 +265,7 @@ impl ServerCommand1State for Socks5Protocol<ServerCommand1> {
                 let next = ServerCommand2 {
                     conn: self.state.conn,
                     fmt: self.state.fmt,
+                    username: self.state.username,
                     request,
                 };
                 ServerCommand1Result::ServerCommand2(next.into())
@@ -381,6 +384,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
                         let next = Success {
                             conn,
                             dest: Connection::new(stream),
+                            username: self.state.username,
                         };
                         ServerCommand2Result::Success(next.into())
                     }
@@ -400,8 +404,8 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
 }
 
 impl SuccessState for Socks5Protocol<Success> {
-    fn finish(self) -> (Connection, Connection) {
-        (self.state.conn, self.state.dest)
+    fn finish(self) -> (Connection, Connection, Option<String>) {
+        (self.state.conn, self.state.dest, self.state.username)
     }
 }
 

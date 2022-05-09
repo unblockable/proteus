@@ -2,6 +2,7 @@ mod net;
 mod pt;
 
 use log;
+use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -9,8 +10,6 @@ use crate::net::proto::{null, socks, upgen};
 use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
 use crate::pt::control;
-
-const FIXED_SEED: u64 = 222444888;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -96,8 +95,25 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
     log::debug!("Accepted new stream from client {}", rvs_addr);
 
     match socks::run_socks5_server(Connection::new(rvs_stream)).await {
-        Ok((rvs_conn, pt_conn)) => {
+        Ok((rvs_conn, pt_conn, username_opt)) => {
             log::debug!("Socks5 with peer {} succeeded", rvs_addr);
+
+            let options = match username_opt {
+                Some(username) => {
+                    log::debug!("Obtained Socks5 username: {}", username);
+                    let mut map = HashMap::new();
+                    for entry in username.split(";").collect::<Vec<&str>>() {
+                        let parts: Vec<&str> = entry.split("=").filter(|tok| !tok.is_empty()).collect();
+                        if parts.len() == 2 && parts.get(0).is_some() && parts.get(1).is_some() {
+                            let k = parts.get(0).unwrap().to_string();
+                            let v = parts.get(1).unwrap().to_string();
+                            map.insert(k, v);
+                        }
+                    }
+                    map
+                },
+                None => HashMap::new(),
+            };
 
             log::debug!(
                 "Running UPGen client protocol to forward data from {}",
@@ -105,7 +121,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             );
 
             // match null::run_null_client(rvs_conn, pt_conn).await {
-            match upgen::run_upgen_client(pt_conn, rvs_conn, FIXED_SEED).await {
+            match upgen::run_upgen_client(pt_conn, rvs_conn, options).await {
                 Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", rvs_addr),
                 Err(e) => log::debug!(
                     "Stream from peer {} failed during UPGen protocol: {}",
@@ -182,7 +198,7 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     );
 
     // match null::run_null_server(pt_conn, fwd_conn).await {
-    match upgen::run_upgen_server(pt_conn, fwd_conn, FIXED_SEED).await {
+    match upgen::run_upgen_server(pt_conn, fwd_conn, conf.options).await {
         Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", pt_addr),
         Err(e) => log::debug!(
             "Stream from peer {} failed during UPGen protocol: {}",

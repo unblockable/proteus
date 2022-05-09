@@ -49,7 +49,9 @@ pub async fn run_socks5_client(
     unimplemented!()
 }
 
-pub async fn run_socks5_server(conn: Connection) -> Result<(Connection, Connection), socks::Error> {
+pub async fn run_socks5_server(
+    conn: Connection,
+) -> Result<(Connection, Connection, Option<String>), socks::Error> {
     let proto = Socks5Protocol::new(conn).start_server();
 
     let proto = match proto.recv_greeting().await {

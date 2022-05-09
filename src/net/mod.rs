@@ -9,6 +9,7 @@ use crate::net;
 
 pub mod proto;
 
+#[derive(std::fmt::Debug)]
 pub enum Error {
     Eof,
     IoError(std::io::Error),

@@ -99,6 +99,7 @@ pub mod socks5 {
     pub struct ServerCommand1 {
         pub conn: Connection,
         pub fmt: Formatter,
+        pub username: Option<String>,
     }
     #[async_trait]
     pub trait ServerCommand1 {
@@ -113,6 +114,7 @@ pub mod socks5 {
     pub struct ServerCommand2 {
         pub conn: Connection,
         pub fmt: Formatter,
+        pub username: Option<String>,
         pub request: ConnectRequest,
     }
     #[async_trait]
@@ -128,9 +130,10 @@ pub mod socks5 {
     pub struct Success {
         pub conn: Connection,
         pub dest: Connection,
+        pub username: Option<String>,
     }
     pub trait Success {
-        fn finish(self) -> (Connection, Connection);
+        fn finish(self) -> (Connection, Connection, Option<String>);
     }
 
     #[state]
