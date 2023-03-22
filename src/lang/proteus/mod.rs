@@ -6,12 +6,10 @@ pub struct ProteusParser {
 
 impl ProteusParser {
     pub fn new() -> Self {
-        Self {
-
-        }
+        Self {}
     }
 
     pub fn parse(&mut self, psf_filename: &str) -> ProteusSpecification {
-        ProteusSpecification::new()
+        ProteusSpecification::default()
     }
 }

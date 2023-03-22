@@ -85,6 +85,14 @@ impl Connection {
     {
         self.sink.write_frame(serializer, frame).await
     }
+
+    async fn read_bytes(&mut self) -> Result<Bytes, net::Error> {
+        self.source.read_bytes().await
+    }
+
+    async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
+        self.sink.write_bytes(bytes).await
+    }
 }
 
 struct NetSource {

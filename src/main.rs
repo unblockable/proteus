@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::lang::{ProteusSpecification, proteus::ProteusParser};
+use crate::lang::{Role, proteus::ProteusParser};
 use crate::net::proto::{socks, proteus};
 use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
@@ -122,7 +122,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             let mut parser = ProteusParser::new();
             // TODO replace with path to PSF, which will be in the options.
             let spec = parser.parse(" ");
-            let role = proteus::Role::Client;
+            let role = Role::Client;
 
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
@@ -204,7 +204,7 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     let mut parser = ProteusParser::new();
     // TODO replace with path to PSF, which will be in the options
     let spec = parser.parse(" ");
-    let role = proteus::Role::Server;
+    let role = Role::Server;
 
     log::debug!(
         "Running Proteus server protocol to forward data between {} and {}",
