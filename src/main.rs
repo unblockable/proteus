@@ -1,15 +1,17 @@
-mod net;
-mod pt;
-
 use log;
 use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::net::proto::{null, socks, upgen};
+use crate::lang::{ProteusSpecification, proteus::ProteusParser};
+use crate::net::proto::{socks, proteus};
 use crate::net::Connection;
 use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
 use crate::pt::control;
+
+mod lang;
+mod net;
+mod pt;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -115,13 +117,20 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                 None => HashMap::new(),
             };
 
+            // TODO double check, I think the PSF path can change for every Tor
+            // Browser connection, so we have to parse the PSF here on every connection.
+            let mut parser = ProteusParser::new();
+            // TODO replace with path to PSF, which will be in the options.
+            let spec = parser.parse(" ");
+            let role = proteus::Role::Client;
+
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
                 rvs_addr,
             );
 
             // match null::run_null_client(rvs_conn, pt_conn).await {
-            match upgen::run_upgen_client(pt_conn, rvs_conn, options).await {
+            match proteus::run_proteus(pt_conn, rvs_conn, options, &spec, role).await {
                 Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
                     "Stream from peer {} failed during Proteus protocol: {}",
@@ -191,14 +200,20 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
         }
     }
 
+    // TODO: Only load the supported PSF once for all proteus clients.
+    let mut parser = ProteusParser::new();
+    // TODO replace with path to PSF, which will be in the options
+    let spec = parser.parse(" ");
+    let role = proteus::Role::Server;
+
     log::debug!(
         "Running Proteus server protocol to forward data between {} and {}",
         pt_addr,
         fwd_addr
     );
 
-    // match null::run_null_server(pt_conn, fwd_conn).await {
-    match upgen::run_upgen_server(pt_conn, fwd_conn, conf.options).await {
+    // match crate::net::proto::null::run_null_server(pt_conn, fwd_conn).await {
+    match proteus::run_proteus(pt_conn, fwd_conn, conf.options, &spec, role).await {
         Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
         Err(e) => log::debug!(
             "Stream from peer {} failed during Proteus protocol: {}",
