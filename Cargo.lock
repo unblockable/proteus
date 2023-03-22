@@ -376,6 +376,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proteus"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chacha20poly1305",
+ "log",
+ "rand",
+ "salsa20",
+ "tokio",
+ "typestate",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -547,21 +562,6 @@ checksum = "9f214e8f697e925001e66ec2c6e37a4ef93f0f78c2eed7814394e10c62025b05"
 dependencies = [
  "generic-array",
  "subtle",
-]
-
-[[package]]
-name = "upgen"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "bytes",
- "chacha20poly1305",
- "log",
- "rand",
- "salsa20",
- "tokio",
- "typestate",
- "x25519-dalek",
 ]
 
 [[package]]

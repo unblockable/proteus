@@ -6,7 +6,7 @@ use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-const TRANSPORT_NAME: &str = "upgen";
+const TRANSPORT_NAME: &str = "proteus";
 const SUPPORTED_PT_VERSION: &str = "1";
 const SUPPORTED_SOCKS_VERSION: &str = "socks5";
 
@@ -153,17 +153,17 @@ pub fn parse_bind_addr_v6() -> Result<Ipv6Addr, ParseEnvError> {
     Ok(Ipv6Addr::from_str(addr)?)
 }
 
-pub fn parse_is_upgen_client() -> Result<bool, ParseEnvError> {
+pub fn parse_is_proteus_client() -> Result<bool, ParseEnvError> {
     let client_list = env::var(ClientKey::TOR_PT_CLIENT_TRANSPORTS.to_string())?;
-    Ok(name_list_has_upgen(client_list))
+    Ok(name_list_has_proteus(client_list))
 }
 
-pub fn parse_is_upgen_server() -> Result<bool, ParseEnvError> {
+pub fn parse_is_proteus_server() -> Result<bool, ParseEnvError> {
     let server_list = env::var(ServerKey::TOR_PT_SERVER_TRANSPORTS.to_string())?;
-    Ok(name_list_has_upgen(server_list))
+    Ok(name_list_has_proteus(server_list))
 }
 
-fn name_list_has_upgen(s: String) -> bool {
+fn name_list_has_proteus(s: String) -> bool {
     s.split(",")
         .collect::<Vec<&str>>()
         .contains(&TRANSPORT_NAME)
@@ -371,16 +371,16 @@ mod tests {
         let key = ClientKey::TOR_PT_CLIENT_TRANSPORTS.to_string();
 
         env::remove_var(key.clone());
-        assert_eq!(parse_is_upgen_client(), Err(ParseEnvError::VariableMissing));
+        assert_eq!(parse_is_proteus_client(), Err(ParseEnvError::VariableMissing));
 
-        for val in ["obfs3,obfs4,upgen", "upgen,upgen", "upgen"] {
+        for val in ["obfs3,obfs4,proteus", "proteus,proteus", "proteus"] {
             env::set_var(key.clone(), val);
-            assert_eq!(parse_is_upgen_client(), Ok(true));
+            assert_eq!(parse_is_proteus_client(), Ok(true));
         }
 
-        for val in ["", "obfs4,upge", "up,gen", "upgen1"] {
+        for val in ["", "obfs4,proteu", "pro,teus", "proteus1"] {
             env::set_var(key.clone(), val);
-            assert_eq!(parse_is_upgen_client(), Ok(false));
+            assert_eq!(parse_is_proteus_client(), Ok(false));
         }
     }
 
@@ -389,16 +389,16 @@ mod tests {
         let key = ServerKey::TOR_PT_SERVER_TRANSPORTS.to_string();
 
         env::remove_var(key.clone());
-        assert_eq!(parse_is_upgen_server(), Err(ParseEnvError::VariableMissing));
+        assert_eq!(parse_is_proteus_server(), Err(ParseEnvError::VariableMissing));
 
-        for val in ["obfs3,obfs4,upgen", "upgen,upgen", "upgen"] {
+        for val in ["obfs3,obfs4,proteus", "proteus,proteus", "proteus"] {
             env::set_var(key.clone(), val);
-            assert_eq!(parse_is_upgen_server(), Ok(true));
+            assert_eq!(parse_is_proteus_server(), Ok(true));
         }
 
-        for val in ["", "obfs4,upge", "up,gen", "upgen1"] {
+        for val in ["", "obfs4,proteu", "pro,teus", "proteus1"] {
             env::set_var(key.clone(), val);
-            assert_eq!(parse_is_upgen_server(), Ok(false));
+            assert_eq!(parse_is_proteus_server(), Ok(false));
         }
     }
 
@@ -490,7 +490,7 @@ mod tests {
 
         env::set_var(
             key.clone(),
-            "upgen:key1=value1;upgen:key2=value2;scramblesuit:key3=banana",
+            "proteus:key1=value1;proteus:key2=value2;scramblesuit:key3=banana",
         );
         let opts = parse_server_options();
         assert!(opts.is_ok());
@@ -502,7 +502,7 @@ mod tests {
         assert!(opt_map.get("key2").unwrap() == "value2");
         assert!(!opt_map.contains_key("key3"));
 
-        for val in ["upgen:key", "upgen:key=", "upgen:=value"] {
+        for val in ["proteus:key", "proteus:key=", "proteus:=value"] {
             env::set_var(key.clone(), val);
             assert_eq!(
                 parse_server_options(),
@@ -518,7 +518,7 @@ mod tests {
         env::remove_var(key.clone());
         assert_eq!(parse_server_bindaddr(), Err(ParseEnvError::VariableMissing));
 
-        // upgen is missing
+        // proteus is missing
         env::set_var(key.clone(), "scramblesuit-127.0.0.1:4891");
         assert_eq!(
             parse_server_bindaddr(),
@@ -527,7 +527,7 @@ mod tests {
 
         env::set_var(
             key.clone(),
-            "upgen-127.0.0.1:54321,scramblesuit-127.0.0.1:4891",
+            "proteus-127.0.0.1:54321,scramblesuit-127.0.0.1:4891",
         );
         let info = parse_server_bindaddr();
         assert!(info.is_ok());
@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(info.ip(), IpAddr::from_str("127.0.0.1").unwrap());
         assert_eq!(info.port(), u16::from_str("54321").unwrap());
 
-        for val in ["upgen-127.0.0.1", "upgen-127.0.0.1:", "upgen-:54321"] {
+        for val in ["proteus-127.0.0.1", "proteus-127.0.0.1:", "proteus-:54321"] {
             env::set_var(key.clone(), val);
             assert_eq!(
                 parse_server_bindaddr(),

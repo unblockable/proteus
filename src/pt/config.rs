@@ -80,13 +80,13 @@ impl Config {
         let common = Config::common_config_from_env()?;
 
         let mode = {
-            if Ok(true) == env::parse_is_upgen_client() {
+            if Ok(true) == env::parse_is_proteus_client() {
                 Mode::Client(Config::client_config_from_env()?)
-            } else if Ok(true) == env::parse_is_upgen_server() {
+            } else if Ok(true) == env::parse_is_proteus_server() {
                 Mode::Server(Config::server_config_from_env()?)
             } else {
                 return Err(ConfigError::EnvError(String::from(
-                    "Unable to find supported client or server upgen transport",
+                    "Unable to find supported client or server proteus transport",
                 )));
             }
         };
@@ -150,7 +150,7 @@ impl Config {
     }
 
     fn server_config_from_env() -> Result<ServerConfig, ConfigError> {
-        // Required for upgen.
+        // Required for proteus.
         let options = env::parse_server_options()?;
         let listen_bind_addr = env::parse_server_bindaddr()?;
 
@@ -203,7 +203,7 @@ mod tests {
         assert!(Config::from_env().is_err());
         env::set_var(CommonKey::TOR_PT_STATE_LOCATION.to_string(), "/tmp");
         assert!(Config::from_env().is_err());
-        env::set_var(ClientKey::TOR_PT_CLIENT_TRANSPORTS.to_string(), "upgen");
+        env::set_var(ClientKey::TOR_PT_CLIENT_TRANSPORTS.to_string(), "proteus");
         assert!(Config::from_env().is_ok());
     }
 
@@ -233,16 +233,16 @@ mod tests {
         assert!(Config::from_env().is_err());
         env::set_var(CommonKey::TOR_PT_STATE_LOCATION.to_string(), "/tmp");
         assert!(Config::from_env().is_err());
-        env::set_var(ServerKey::TOR_PT_SERVER_TRANSPORTS.to_string(), "upgen");
+        env::set_var(ServerKey::TOR_PT_SERVER_TRANSPORTS.to_string(), "proteus");
         assert!(Config::from_env().is_err());
         env::set_var(
             ServerKey::TOR_PT_SERVER_TRANSPORT_OPTIONS.to_string(),
-            "upgen:seed=12345",
+            "proteus:seed=12345",
         );
         assert!(Config::from_env().is_err());
         env::set_var(
             ServerKey::TOR_PT_SERVER_BINDADDR.to_string(),
-            "upgen-192.168.100.1:8080",
+            "proteus-192.168.100.1:8080",
         );
         assert!(Config::from_env().is_err());
         env::set_var(ServerKey::TOR_PT_ORPORT.to_string(), "127.0.0.1:9000");

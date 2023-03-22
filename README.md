@@ -1,4 +1,4 @@
-# UPGen
+# Proteus
 
 Debug build (also used for tests):
 
@@ -12,13 +12,13 @@ Run tests serially (because we modify environment variables):
 
     cargo test -- --test-threads=1
 
-Run upgen while logging to stderr:
+Run proteus while logging to stderr:
 
     RUST_LOG={error,warn,info,debug,trace} cargo run
 
 # Integration Testing
 
-Use ptadapter to wrap upgen over localhost.
+Use ptadapter to wrap proteus over localhost.
 
 Install ptadapter
 
@@ -30,27 +30,27 @@ Set up ptadapter config, `pta.conf`:
 
     [client]
 
-    exec = /Users/rjansen/Documents/scratch/upgen/target/debug/upgen
+    exec = /Users/rjansen/Documents/scratch/proteus/target/debug/proteus
     state = 
-    tunnels = client_upgen_1
+    tunnels = client_proteus_1
 
-    [client_upgen_1]
+    [client_proteus_1]
 
-    transport = upgen
+    transport = proteus
     listen = 127.0.0.1:8000
     upstream = 127.0.0.1:7999
     options-seed = 12345
 
     [server]
 
-    exec = /Users/rjansen/Documents/scratch/upgen/target/debug/upgen
+    exec = /Users/rjansen/Documents/scratch/proteus/target/debug/proteus
     state = 
     forward = 127.0.0.1:8080
-    tunnels = server_upgen_1
+    tunnels = server_proteus_1
 
-    [server_upgen_1]
+    [server_proteus_1]
 
-    transport = upgen
+    transport = proteus
     listen = 127.0.0.1:7999
     options-seed = 54321
 

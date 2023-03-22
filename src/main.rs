@@ -15,7 +15,7 @@ use crate::pt::control;
 async fn main() -> io::Result<()> {
     control::init_logger();
 
-    log::info!("UPGen started and initialized logger.");
+    log::info!("Proteus started and initialized logger.");
 
     let config = match Config::from_env() {
         Ok(c) => c,
@@ -50,12 +50,12 @@ async fn main() -> io::Result<()> {
         }
     }
 
-    log::info!("UPGen completed, exiting now.");
+    log::info!("Proteus completed, exiting now.");
     Ok(())
 }
 
 async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io::Result<()> {
-    log::info!("UPGen is running in client mode.");
+    log::info!("Proteus is running in client mode.");
 
     if client_conf.proxy.is_some() {
         // TODO: normally we send the ProxyDone message, but since we don't yet
@@ -116,15 +116,15 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             };
 
             log::debug!(
-                "Running UPGen client protocol to forward data from {}",
+                "Running Proteus client protocol to forward data from {}",
                 rvs_addr,
             );
 
             // match null::run_null_client(rvs_conn, pt_conn).await {
             match upgen::run_upgen_client(pt_conn, rvs_conn, options).await {
-                Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", rvs_addr),
+                Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
-                    "Stream from peer {} failed during UPGen protocol: {}",
+                    "Stream from peer {} failed during Proteus protocol: {}",
                     rvs_addr,
                     e
                 ),
@@ -143,9 +143,9 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
 }
 
 async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io::Result<()> {
-    log::info!("UPGen is running in server mode.");
+    log::info!("Proteus is running in server mode.");
 
-    // We run our upgen reverse proxy server here; let the OS choose the port.
+    // We run our proteus reverse proxy server here; let the OS choose the port.
     let listener = match TcpListener::bind(server_conf.listen_bind_addr).await {
         Ok(listener) => {
             control::send_to_parent(control::Message::ServerReady(server_conf.listen_bind_addr));
@@ -159,7 +159,7 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
         }
     };
 
-    // Main loop waiting for connections from upgen proxy clients.
+    // Main loop waiting for connections from proteus proxy clients.
     loop {
         let (pt_stream, _) = listener.accept().await?;
         let conf = server_conf.clone();
@@ -192,16 +192,16 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     }
 
     log::debug!(
-        "Running UPGen server protocol to forward data between {} and {}",
+        "Running Proteus server protocol to forward data between {} and {}",
         pt_addr,
         fwd_addr
     );
 
     // match null::run_null_server(pt_conn, fwd_conn).await {
     match upgen::run_upgen_server(pt_conn, fwd_conn, conf.options).await {
-        Ok(_) => log::debug!("Stream from peer {} succeeded UPGen protocol", pt_addr),
+        Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
         Err(e) => log::debug!(
-            "Stream from peer {} failed during UPGen protocol: {}",
+            "Stream from peer {} failed during Proteus protocol: {}",
             pt_addr,
             e
         ),
