@@ -1,60 +1,86 @@
-use crate::lang::{ProteusSpecification, Role, action::{Action, ActionId}};
-use crate::net::proto::proteus::{
-    message::{CovertPayload, OvertMessage},
-};
+use typestate::typestate;
 
-pub struct ProteusProtocol {
-    // An instantiation of a proteus protocol currently running on a connection.
-    spec: ProteusSpecification,
-    role: Role,
-    action_id: Option<ActionId>,
-    vec_id: Option<usize>,
-}
+#[typestate]
+pub mod proteus {
+    use crate::lang::{ProteusSpecification, Role};
+    use crate::net::proto::proteus;
+    use crate::net::proto::proteus::formatter::Formatter;
+    use crate::net::Connection;
 
-impl ProteusProtocol {
-    pub fn new(spec: ProteusSpecification, role: Role) -> Self {
-        Self {spec, role, action_id: None, vec_id: None}
+    use async_trait::async_trait;
+
+    #[automaton]
+    pub struct ProteusProtocol;
+
+    #[state]
+    pub struct Init {
+        pub app_conn: Connection,
+        pub proteus_conn: Connection,
+        pub spec: ProteusSpecification,
+        pub fmt: Formatter,
+    }
+    pub trait Init {
+        fn new(
+            app_conn: Connection,
+            proteus_conn: Connection,
+            spec: ProteusSpecification,
+            fmt: Formatter,
+        ) -> Init;
+        fn start(self, role: Role) -> Action;
     }
 
-    pub fn get_next_action(&mut self) -> &Action {
-        match self.action_id {
-            Some(aid) => match self.vec_id {
-                Some(mut vid) => {
-                    let actions = self.spec.current(aid);
-                    if vid > actions.len() {
-                        vid = 0;
-                    }
-                    &actions[vid]
-                },
-                None => {
-                    self.vec_id = Some(0);
-                    let vid = self.vec_id.unwrap();
-                    &self.spec.next(aid)[vid]
-                },
-            },
-            None => {
-                self.vec_id = Some(0);
-                let vid = self.vec_id.unwrap();
-                &self.spec.start()[vid]
-            }
+    #[state]
+    pub struct Action {
+        pub app_conn: Connection,
+        pub proteus_conn: Connection,
+        pub spec: ProteusSpecification,
+        pub fmt: Formatter,
+        pub role: Role,
+    }
+    #[async_trait]
+    pub trait Action {
+        async fn run(self) -> ActionResult;
+    }
+    pub enum ActionResult {
+        Success,
+        Error,
+    }
+
+    #[state]
+    pub struct Success {}
+    pub trait Success {
+        fn finish(self);
+    }
+
+    #[state]
+    pub struct Error {
+        pub error: proteus::Error,
+    }
+    pub trait Error {
+        fn finish(self) -> proteus::Error;
+    }
+
+    impl From<Init> for ProteusProtocol<Init> {
+        fn from(state: Init) -> Self {
+            ProteusProtocol::<Init> { state: state }
         }
     }
 
-    pub fn pack_message(
-        &mut self,
-        payload: CovertPayload,
-    ) -> OvertMessage {
-        // if success, set self.vec_id to None
-        // if failed, increment vec_id
-        todo!()
+    impl From<Action> for ProteusProtocol<Action> {
+        fn from(state: Action) -> Self {
+            ProteusProtocol::<Action> { state: state }
+        }
     }
 
-    pub fn unpack_message(
-        &mut self,
-        message: OvertMessage,
-    ) -> Result<CovertPayload, u64> {
-        // if success, set self.vec_id to None
-        // if failed, increment vec_id
-        todo!()
+    impl From<Success> for ProteusProtocol<Success> {
+        fn from(state: Success) -> Self {
+            ProteusProtocol::<Success> { state: state }
+        }
+    }
+
+    impl From<Error> for ProteusProtocol<Error> {
+        fn from(state: Error) -> Self {
+            ProteusProtocol::<Error> { state: state }
+        }
     }
 }

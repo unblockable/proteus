@@ -1,15 +1,18 @@
 use std::{collections::HashMap, fmt};
 
-use bytes::Buf;
-
 use crate::{
-    lang::{ProteusSpecification, Role, action::ActionKind},
-    net::{self, proto::proteus::{self, spec::ProteusProtocol, message::CovertPayload, formatter::Formatter}, Connection},
+    lang::{ProteusSpecification, Role},
+    net::{
+        self,
+        proto::proteus::{self, formatter::Formatter, spec::proteus::*},
+        Connection,
+    },
 };
 
 mod formatter;
-mod message;
-pub mod spec;
+mod frames;
+mod spec;
+mod states;
 
 #[derive(Debug)]
 pub enum Error {
@@ -38,51 +41,16 @@ pub async fn run_proteus(
     proteus_conn: Connection,
     other_conn: Connection,
     options: HashMap<String, String>,
-    spec: &ProteusSpecification,
+    spec: ProteusSpecification,
     role: Role,
 ) -> Result<(), proteus::Error> {
-    let mut proto = ProteusProtocol::new(spec.clone(), role.clone());
+    let fmt = Formatter::new();
+    let proto = ProteusProtocol::new(other_conn, proteus_conn, spec, fmt).start(role);
 
-    // Get the source and sink ends so we can forward data concurrently.
-    let (mut proteus_source, mut proteus_sink) = proteus_conn.into_split();
-    let (mut other_source, mut other_sink) = other_conn.into_split();
-
-    let mut formatter = Formatter::new();
-
-    loop {
-        let action = proto.get_next_action();
-
-        match action.get_kind(role.clone()) {
-            ActionKind::Send => {
-                // Read the raw covert data stream.
-                let bytes = match other_source.read_bytes().await {
-                    Ok(b) => b,
-                    Err(net_err) => match net_err {
-                        net::Error::Eof => break,
-                        _ => return Err(proteus::Error::from(net_err)),
-                    },
-                };
-
-                log::trace!("obfuscate: read {} app bytes", bytes.len());
-
-                if bytes.has_remaining() {
-                    let payload = CovertPayload { data: bytes };
-                    let message = proto.pack_message(payload);
-        
-                    let num_written = match proteus_sink.write_frame(&mut formatter, message).await {
-                        Ok(num) => num,
-                        Err(e) => return Err(proteus::Error::from(e)),
-                    };
-        
-                    log::trace!("obfuscate: wrote {} covert bytes", num_written);
-                }
-            },
-            ActionKind::Receive => {
-                todo!()
-            }
-        }
+    match proto.run().await {
+        ActionResult::Success(s) => Ok(s.finish()),
+        ActionResult::Error(e) => Err(e.finish()),
     }
-    todo!()
 }
 
 #[cfg(test)]

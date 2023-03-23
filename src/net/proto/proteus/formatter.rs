@@ -1,12 +1,12 @@
 use bytes::{Bytes, BytesMut};
 
 use crate::net::{
-    proto::proteus::message::OvertMessage, Deserialize, Deserializer, Serialize, Serializer,
+    proto::proteus::frames::OvertMessage, Deserialize, Deserializer, Serialize, Serializer,
 };
 
 #[derive(Clone, Copy)]
 pub struct Formatter {
-    // All proteus messages can be formatted without extra state.
+    // The proteus message is just bytes and can be formatted without extra state.
 }
 
 impl Formatter {
