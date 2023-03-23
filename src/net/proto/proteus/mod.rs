@@ -4,12 +4,12 @@ use bytes::Buf;
 
 use crate::{
     lang::{ProteusSpecification, Role, action::ActionKind},
-    net::{self, proto::proteus::{self, protocol::ProteusProtocol, message::CovertPayload, formatter::Formatter}, Connection},
+    net::{self, proto::proteus::{self, spec::ProteusProtocol, message::CovertPayload, formatter::Formatter}, Connection},
 };
 
 mod formatter;
 mod message;
-pub mod protocol;
+pub mod spec;
 
 #[derive(Debug)]
 pub enum Error {
