@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 
 use crate::{
-    lang::{ProteusSpecification, Role},
+    lang::spec::ProteusSpecification,
     net::{
         proto::proteus::{
             self,
@@ -16,34 +16,32 @@ use crate::{
 impl InitState for ProteusProtocol<Init> {
     fn new(
         app_conn: Connection,
-        proteus_conn: Connection,
+        net_conn: Connection,
         spec: ProteusSpecification,
-        fmt: Formatter,
     ) -> ProteusProtocol<Init> {
         Init {
             app_conn,
-            proteus_conn,
+            net_conn,
             spec,
-            fmt,
+            fmt: Formatter::new(),
         }
         .into()
     }
 
-    fn start(self, role: Role) -> ProteusProtocol<Action> {
-        Action {
+    fn start(self) -> ProteusProtocol<Run> {
+        Run {
             app_conn: self.state.app_conn,
-            proteus_conn: self.state.proteus_conn,
+            net_conn: self.state.net_conn,
             spec: self.state.spec,
             fmt: self.state.fmt,
-            role,
         }
         .into()
     }
 }
 
 #[async_trait]
-impl ActionState for ProteusProtocol<Action> {
-    async fn run(mut self) -> ActionResult {
+impl RunState for ProteusProtocol<Run> {
+    async fn run(mut self) -> RunResult {
         // Read from self.state.app_conn -> write to self.state.proteus_conn.
         // Read from self.state.proteus_conn -> write to self.state.app_conn.
 
@@ -52,10 +50,10 @@ impl ActionState for ProteusProtocol<Action> {
         // let (mut other_source, mut other_sink) = other_conn.into_split();
 
         // loop {
-        //     let action = proto.get_next_action();
+        //     let Run = proto.get_next_Run();
 
-        //     match action.get_kind(role.clone()) {
-        //         ActionKind::Send => {
+        //     match Run.get_kind(role.clone()) {
+        //         RunKind::Send => {
         //             // Read the raw covert data stream.
         //             let bytes = match other_source.read_bytes().await {
         //                 Ok(b) => b,
@@ -79,7 +77,7 @@ impl ActionState for ProteusProtocol<Action> {
         //                 log::trace!("obfuscate: wrote {} covert bytes", num_written);
         //             }
         //         },
-        //         ActionKind::Receive => {
+        //         RunKind::Receive => {
         //             todo!()
         //         }
         //     }

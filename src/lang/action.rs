@@ -1,45 +1,31 @@
-use crate::lang::{format::Format, Role};
+use crate::lang::{common::LengthBounds, format::Format};
 
-#[derive(Clone, PartialEq)]
-pub enum ActionKind {
-    Send,
-    Receive,
-}
-
-#[derive(Clone, Copy)]
-pub struct ActionId {
-    value: u64,
-}
-
-#[derive(Clone)]
 pub struct Action {
-    id: ActionId,
-    role: Role,
-    kind: ActionKind,
-    format: Format,
+    pub kind: ActionKind,
 }
 
-impl Action {
-    pub fn new(id: u64, role: Role, kind: ActionKind, format: Format) -> Self {
-        Self {
-            id: ActionId { value: id },
-            role,
-            kind,
-            format,
-        }
-    }
+pub enum ActionKind {
+    NetworkAction(NetworkAction),
+    CryptoAction(CryptoAction)
+}
 
-    pub fn get_kind(&self, for_role: Role) -> &ActionKind {
-        match for_role == self.role {
-            True => &self.kind,
-            False => match self.kind {
-                ActionKind::Send => &ActionKind::Receive,
-                ActionKind::Receive => &ActionKind::Send
-            }
-        }
-    }
+pub struct NetworkAction {
+    pub kind: NetworkActionKind,
+}
 
-    pub fn get_format(&self) -> &Format {
-        &self.format
-    }
+pub enum NetworkActionKind {
+    SendApp(Format), // not sure if we need/want a format for this
+    ReceiveApp(LengthBounds),
+    SendNet(Format),
+    ReceiveNet(LengthBounds),
+}
+
+pub struct CryptoAction {
+    pub kind: CryptoActionKind,
+}
+
+pub enum CryptoActionKind {
+    GenerateKey,
+    Encrypt,
+    Decrypt,
 }

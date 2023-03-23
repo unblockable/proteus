@@ -7,6 +7,7 @@ use crate::net::{
 #[derive(Clone, Copy)]
 pub struct Formatter {
     // The proteus message is just bytes and can be formatted without extra state.
+    // Do we want to specify the min and max lengths here, and set for each read?
 }
 
 impl Formatter {

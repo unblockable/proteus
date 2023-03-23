@@ -1,6 +1,5 @@
 use bytes::Bytes;
 
-#[derive(Clone)]
 pub enum FieldKind {
     // The value of the fixed enum is the actual value that will occur in the packet.
     Fixed(Bytes), // Fixed size, fixed value
@@ -10,7 +9,6 @@ pub enum FieldKind {
     Payload, // Variable size, variable value
 }
 
-#[derive(Clone)]
 pub struct Field {
     pub kind: FieldKind,
 }
@@ -31,7 +29,6 @@ impl Field {
     }
 }
 
-#[derive(Clone)]
 pub struct Format {
     fields: Vec<Field>,
 }

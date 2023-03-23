@@ -1,10 +1,10 @@
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    lang::{ProteusSpecification, Role},
+    lang::spec::ProteusSpecification,
     net::{
         self,
-        proto::proteus::{self, formatter::Formatter, spec::proteus::*},
+        proto::proteus::{self, spec::proteus::*},
         Connection,
     },
 };
@@ -42,14 +42,12 @@ pub async fn run_proteus(
     other_conn: Connection,
     options: HashMap<String, String>,
     spec: ProteusSpecification,
-    role: Role,
 ) -> Result<(), proteus::Error> {
-    let fmt = Formatter::new();
-    let proto = ProteusProtocol::new(other_conn, proteus_conn, spec, fmt).start(role);
+    let proto = ProteusProtocol::new(other_conn, proteus_conn, spec).start();
 
     match proto.run().await {
-        ActionResult::Success(s) => Ok(s.finish()),
-        ActionResult::Error(e) => Err(e.finish()),
+        RunResult::Success(s) => Ok(s.finish()),
+        RunResult::Error(e) => Err(e.finish()),
     }
 }
 

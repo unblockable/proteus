@@ -2,7 +2,7 @@ use typestate::typestate;
 
 #[typestate]
 pub mod proteus {
-    use crate::lang::{ProteusSpecification, Role};
+    use crate::lang::spec::ProteusSpecification;
     use crate::net::proto::proteus;
     use crate::net::proto::proteus::formatter::Formatter;
     use crate::net::Connection;
@@ -15,33 +15,27 @@ pub mod proteus {
     #[state]
     pub struct Init {
         pub app_conn: Connection,
-        pub proteus_conn: Connection,
+        pub net_conn: Connection,
         pub spec: ProteusSpecification,
         pub fmt: Formatter,
     }
     pub trait Init {
-        fn new(
-            app_conn: Connection,
-            proteus_conn: Connection,
-            spec: ProteusSpecification,
-            fmt: Formatter,
-        ) -> Init;
-        fn start(self, role: Role) -> Action;
+        fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpecification) -> Init;
+        fn start(self) -> Run;
     }
 
     #[state]
-    pub struct Action {
+    pub struct Run {
         pub app_conn: Connection,
-        pub proteus_conn: Connection,
+        pub net_conn: Connection,
         pub spec: ProteusSpecification,
         pub fmt: Formatter,
-        pub role: Role,
     }
     #[async_trait]
-    pub trait Action {
-        async fn run(self) -> ActionResult;
+    pub trait Run {
+        async fn run(self) -> RunResult;
     }
-    pub enum ActionResult {
+    pub enum RunResult {
         Success,
         Error,
     }
@@ -66,9 +60,9 @@ pub mod proteus {
         }
     }
 
-    impl From<Action> for ProteusProtocol<Action> {
-        fn from(state: Action) -> Self {
-            ProteusProtocol::<Action> { state: state }
+    impl From<Run> for ProteusProtocol<Run> {
+        fn from(state: Run) -> Self {
+            ProteusProtocol::<Run> { state: state }
         }
     }
 
