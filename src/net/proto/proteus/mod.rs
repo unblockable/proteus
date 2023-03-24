@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    lang::spec::ProteusSpecification,
+    lang::spec::proteus::ProteusSpecification,
     net::{
         self,
         proto::proteus::{self, spec::proteus::*},

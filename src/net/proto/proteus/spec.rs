@@ -2,7 +2,7 @@ use typestate::typestate;
 
 #[typestate]
 pub mod proteus {
-    use crate::lang::spec::ProteusSpecification;
+    use crate::lang::spec::proteus::ProteusSpecification;
     use crate::net::proto::proteus;
     use crate::net::proto::proteus::formatter::Formatter;
     use crate::net::Connection;

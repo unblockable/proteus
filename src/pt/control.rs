@@ -33,11 +33,19 @@ pub fn send_to_parent(msg: Message) {
         Message::ServerError(s) => println!("SMETHOD-ERROR proteus {}\nSMETHODS DONE", s),
         Message::Status(s) => println!("STATUS TRANSPORT=proteus {}", s),
         Message::Log((l, s)) => match l {
-            log::Level::Error => println!("LOG SEVERITY=error MESSAGE=\"{}\"", s.replace("\"", "'")),
-            log::Level::Warn => println!("LOG SEVERITY=warning MESSAGE=\"{}\"", s.replace("\"", "'")),
-            log::Level::Info => println!("LOG SEVERITY=notice MESSAGE=\"{}\"", s.replace("\"", "'")),
+            log::Level::Error => {
+                println!("LOG SEVERITY=error MESSAGE=\"{}\"", s.replace("\"", "'"))
+            }
+            log::Level::Warn => {
+                println!("LOG SEVERITY=warning MESSAGE=\"{}\"", s.replace("\"", "'"))
+            }
+            log::Level::Info => {
+                println!("LOG SEVERITY=notice MESSAGE=\"{}\"", s.replace("\"", "'"))
+            }
             log::Level::Debug => println!("LOG SEVERITY=info MESSAGE=\"{}\"", s.replace("\"", "'")),
-            log::Level::Trace => println!("LOG SEVERITY=debug MESSAGE=\"{}\"", s.replace("\"", "'")),
+            log::Level::Trace => {
+                println!("LOG SEVERITY=debug MESSAGE=\"{}\"", s.replace("\"", "'"))
+            }
         },
     }
 }

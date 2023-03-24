@@ -3,12 +3,16 @@ use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::lang::{common::Role, proteus::parser::ProteusParser};
-use crate::net::proto::{socks, proteus};
+use crate::lang::parse::Parse;
+use crate::lang::{common::Role, parse::proteus::ProteusParser};
+use crate::net::proto::{proteus, socks};
 use crate::net::Connection;
-use crate::pt::config::{ClientConfig, CommonConfig, Config, ConfigError, Mode, ServerConfig, ForwardProtocol};
+use crate::pt::config::{
+    ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
+};
 use crate::pt::control;
 
+mod crypto;
 mod lang;
 mod net;
 mod pt;
@@ -105,7 +109,8 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                     log::debug!("Obtained Socks5 username: {}", username);
                     let mut map = HashMap::new();
                     for entry in username.split(";").collect::<Vec<&str>>() {
-                        let parts: Vec<&str> = entry.split("=").filter(|tok| !tok.is_empty()).collect();
+                        let parts: Vec<&str> =
+                            entry.split("=").filter(|tok| !tok.is_empty()).collect();
                         if parts.len() == 2 && parts.get(0).is_some() && parts.get(1).is_some() {
                             let k = parts.get(0).unwrap().to_string();
                             let v = parts.get(1).unwrap().to_string();
@@ -113,7 +118,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                         }
                     }
                     map
-                },
+                }
                 None => HashMap::new(),
             };
 
@@ -121,7 +126,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             // Browser connection, so we have to parse the PSF here on every connection.
             let mut parser = ProteusParser::new();
             // TODO replace with path to PSF, which will be in the options.
-            let spec = parser.parse(" ", Role::Client);
+            let spec = parser.parse(" ", Role::Client).unwrap();
 
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
@@ -190,10 +195,16 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     match conf.forward_proto {
         ForwardProtocol::Basic => {
             // No special OR handshake required.
-            log::debug!("Using basic 'data only' protocol with forward server {}", fwd_addr);
-        },
+            log::debug!(
+                "Using basic 'data only' protocol with forward server {}",
+                fwd_addr
+            );
+        }
         ForwardProtocol::Extended(_cookie_path) => {
-            log::debug!("Using extended OR protocol with forward server {}", fwd_addr);
+            log::debug!(
+                "Using extended OR protocol with forward server {}",
+                fwd_addr
+            );
             unimplemented!("Extended OR protocol is not yet supported.")
             // or::run_extor_client(fwd_conn).await
         }
@@ -202,7 +213,7 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     // TODO: Only load the supported PSF once for all proteus clients.
     let mut parser = ProteusParser::new();
     // TODO replace with path to PSF, which will be in the options
-    let spec = parser.parse(" ", Role::Server);
+    let spec = parser.parse(" ", Role::Server).unwrap();
 
     log::debug!(
         "Running Proteus server protocol to forward data between {} and {}",

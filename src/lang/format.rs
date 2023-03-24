@@ -5,6 +5,8 @@ pub enum FieldKind {
     Fixed(Bytes), // Fixed size, fixed value
     // The length enum holds the length of the variable-length fields of the packet in bytes
     Length(u8), // Fixed size, variable value
+    // Unstructured bytes of unknown length.
+    Blob,
     // Payload bytes that we forward through our tunnel are supplied by the caller.
     Payload, // Variable size, variable value
 }
@@ -24,6 +26,7 @@ impl Field {
         match &self.kind {
             FieldKind::Fixed(b) => b.len(),
             FieldKind::Length(l) => usize::from(*l),
+            FieldKind::Blob => 0,
             FieldKind::Payload => 0,
         }
     }

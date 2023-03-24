@@ -371,7 +371,10 @@ mod tests {
         let key = ClientKey::TOR_PT_CLIENT_TRANSPORTS.to_string();
 
         env::remove_var(key.clone());
-        assert_eq!(parse_is_proteus_client(), Err(ParseEnvError::VariableMissing));
+        assert_eq!(
+            parse_is_proteus_client(),
+            Err(ParseEnvError::VariableMissing)
+        );
 
         for val in ["obfs3,obfs4,proteus", "proteus,proteus", "proteus"] {
             env::set_var(key.clone(), val);
@@ -389,7 +392,10 @@ mod tests {
         let key = ServerKey::TOR_PT_SERVER_TRANSPORTS.to_string();
 
         env::remove_var(key.clone());
-        assert_eq!(parse_is_proteus_server(), Err(ParseEnvError::VariableMissing));
+        assert_eq!(
+            parse_is_proteus_server(),
+            Err(ParseEnvError::VariableMissing)
+        );
 
         for val in ["obfs3,obfs4,proteus", "proteus,proteus", "proteus"] {
             env::set_var(key.clone(), val);

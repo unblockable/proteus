@@ -5,5 +5,9 @@ pub enum Role {
 
 pub struct LengthBounds {
     min: u64,
-    max: u64
+    max: u64,
+}
+
+pub struct VertexId {
+    value: usize,
 }

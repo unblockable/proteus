@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 
 use crate::{
-    lang::spec::ProteusSpecification,
+    lang::spec::proteus::ProteusSpecification,
     net::{
         proto::proteus::{
             self,
@@ -19,6 +19,7 @@ impl InitState for ProteusProtocol<Init> {
         net_conn: Connection,
         spec: ProteusSpecification,
     ) -> ProteusProtocol<Init> {
+        // TODO create cryptoprotocol here
         Init {
             app_conn,
             net_conn,

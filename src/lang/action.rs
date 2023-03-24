@@ -1,12 +1,17 @@
-use crate::lang::{common::LengthBounds, format::Format};
+use crate::lang::{
+    common::{LengthBounds, VertexId},
+    format::Format,
+};
 
 pub struct Action {
     pub kind: ActionKind,
+    from: VertexId,
+    to: VertexId,
 }
 
 pub enum ActionKind {
     NetworkAction(NetworkAction),
-    CryptoAction(CryptoAction)
+    CryptoAction(CryptoAction),
 }
 
 pub struct NetworkAction {
