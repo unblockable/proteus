@@ -13,20 +13,33 @@ enum NumericType {
 }
 
 #[derive(Copy, Clone, Debug)]
-enum DataType {
-    NumericType(NumericType),
+enum PrimitiveType {
+    Numeric(NumericType),
     Bool,
     Char,
 }
 
 #[derive(Copy, Clone, Debug)]
-struct ArrayType(DataType, usize);
+enum CompoundType {
+    // Non-primitive types needed for the interpreter
+    Message,
+    MessageSpec,
+}
 
-trait Sizeable {
+enum DataType {
+    Primitive(PrimitiveType),
+    Compound(CompoundType),
+}
+
+
+#[derive(Copy, Clone, Debug)]
+struct PrimitiveArray(PrimitiveType, usize);
+
+trait StaticallySized {
     fn size_of(&self) -> usize;
 }
 
-impl Sizeable for NumericType {
+impl StaticallySized for NumericType {
     fn size_of(&self) -> usize {
         match self {
             NumericType::U8 => std::mem::size_of::<u8>(),
@@ -41,17 +54,17 @@ impl Sizeable for NumericType {
     }
 }
 
-impl Sizeable for DataType {
+impl StaticallySized for PrimitiveType {
     fn size_of(&self) -> usize {
         match self {
-            DataType::NumericType(x) => x.size_of(),
-            DataType::Bool => std::mem::size_of::<bool>(),
-            DataType::Char => std::mem::size_of::<char>(),
+            PrimitiveType::Numeric(t) => t.size_of(),
+            PrimitiveType::Bool => std::mem::size_of::<bool>(),
+            PrimitiveType::Char => std::mem::size_of::<char>(),
         }
     }
 }
 
-impl Sizeable for ArrayType {
+impl StaticallySized for PrimitiveArray {
     fn size_of(&self) -> usize {
         self.0.size_of() * self.1
     }
