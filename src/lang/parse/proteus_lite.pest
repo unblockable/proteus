@@ -1,0 +1,36 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+
+identifier = @{ ASCII_ALPHA~ASCII_ALPHANUMERIC* }
+name_value = { "NAME" ~ ":" ~ identifier }
+type_value = { "TYPE" ~ ":" ~ flexible_type }
+
+field = { "{" ~ name_value ~ ";" ~ type_value ~ ";" ~ "}" }
+
+size_expr = {  (ASCII_DIGIT+ | sizeof_attr | value_attr) ~ (binary_arith_op ~ size_expr)* }
+binary_arith_op = { "+" | "-" | "*" }
+
+sizeof_attr = @{ identifier~".sizeof" }
+value_attr = @{ identifier~".value" }
+
+flexible_type = { dynamic_array | primitive_type }
+data_type = { fixed_array | primitive_type }
+
+dynamic_array = { primitive_type ~ "[" ~ size_expr ~ "]" }
+fixed_array = { primitive_type ~ "[" ~ positive_numeric_literal ~ "]" }
+
+numeric_type = { "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" }
+primitive_type = { numeric_type | "bool" | "char" }
+
+numeric_literal = @{ "-"?~positive_numeric_literal }
+positive_numeric_literal = @{ ASCII_DIGIT+ }
+typed_numeric_literal = @{ numeric_literal~numeric_type }
+
+string_literal = ${ "\"" ~ inner ~ "\"" }
+inner = @{ char* }
+char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+
+frame_spec = { "DEFINE" ~ identifier ~ field+ ~ ";" } 

@@ -3,6 +3,7 @@ use std::fmt;
 use crate::lang::{common::Role, parse, spec::proteus::ProteusSpecification};
 
 pub mod proteus;
+mod implementation;
 
 #[derive(Debug)]
 pub enum Error {

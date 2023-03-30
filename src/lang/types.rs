@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-#[derive(Copy, Clone, Debug)]
-enum NumericType {
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum NumericType {
     U8,
     U16,
     U32,
@@ -12,30 +12,29 @@ enum NumericType {
     I64,
 }
 
-#[derive(Copy, Clone, Debug)]
-enum PrimitiveType {
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum PrimitiveType {
     Numeric(NumericType),
     Bool,
     Char,
 }
 
-#[derive(Copy, Clone, Debug)]
-enum CompoundType {
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum CompoundType {
     // Non-primitive types needed for the interpreter
     Message,
     MessageSpec,
 }
 
-enum DataType {
+pub enum DataType {
     Primitive(PrimitiveType),
     Compound(CompoundType),
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PrimitiveArray(PrimitiveType, usize);
 
-#[derive(Copy, Clone, Debug)]
-struct PrimitiveArray(PrimitiveType, usize);
-
-trait StaticallySized {
+pub trait StaticallySized {
     fn size_of(&self) -> usize;
 }
 
