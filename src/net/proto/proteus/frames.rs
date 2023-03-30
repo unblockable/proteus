@@ -1,30 +1,35 @@
-use std::io::Cursor;
+use bytes::Bytes;
 
-use bytes::{Buf, Bytes, BytesMut};
+use crate::net::Serialize;
 
-use crate::net::{Deserialize, Serialize};
-
-pub struct CovertPayload {
-    pub data: Bytes,
+// Data that we read from a connection.
+pub struct NetworkData {
+    bytes: Bytes,
 }
 
-pub struct OvertMessage {
-    pub data: Bytes,
-}
-
-impl Serialize<OvertMessage> for OvertMessage {
-    fn serialize(&self) -> Bytes {
-        self.data.clone()
+impl NetworkData {
+    pub fn len(&self) -> usize {
+        self.bytes.len()
     }
 }
 
-impl Deserialize<OvertMessage> for OvertMessage {
-    fn deserialize(buf: &mut Cursor<&BytesMut>) -> Option<OvertMessage> {
-        match buf.remaining() > 0 {
-            true => Some(OvertMessage {
-                data: buf.copy_to_bytes(buf.remaining()),
-            }),
-            false => None,
-        }
+impl From<Bytes> for NetworkData {
+    fn from(bytes: Bytes) -> Self {
+        NetworkData { bytes }
+    }
+}
+
+impl From<NetworkData> for Bytes {
+    fn from(data: NetworkData) -> Self {
+        data.bytes
+    }
+}
+
+// We can serialize a `NetworkData` directly, but we can't deserialize in
+// isolation because we need to know how many bytes to read, so we leave that to
+// the formatter.
+impl Serialize<NetworkData> for NetworkData {
+    fn serialize(&self) -> Bytes {
+        self.bytes.clone()
     }
 }

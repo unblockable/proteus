@@ -1,7 +1,7 @@
 use crate::lang::{
     common::Role,
     parse::{self, Parse},
-    spec::proteus::ProteusSpecification,
+    spec::proteus::ProteusSpec,
 };
 
 pub struct ProteusParser {
@@ -15,11 +15,7 @@ impl ProteusParser {
 }
 
 impl Parse for ProteusParser {
-    fn parse(
-        &mut self,
-        psf_filename: &str,
-        role: Role,
-    ) -> Result<ProteusSpecification, parse::Error> {
-        Ok(ProteusSpecification::default())
+    fn parse(&mut self, psf_filename: &str, role: Role) -> Result<ProteusSpec, parse::Error> {
+        todo!()
     }
 }

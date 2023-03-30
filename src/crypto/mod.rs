@@ -6,6 +6,7 @@ use crate::crypto;
 use crate::lang::spec::crypto::CryptoSpec;
 
 mod chacha;
+mod null;
 
 #[derive(Debug)]
 pub enum Error {

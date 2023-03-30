@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::lang::{common::Role, parse, spec::proteus::ProteusSpecification};
+use crate::lang::{common::Role, parse, spec::proteus::ProteusSpec};
 
 pub mod proteus;
 mod implementation;
@@ -19,9 +19,5 @@ impl fmt::Display for Error {
 }
 
 pub trait Parse {
-    fn parse(
-        &mut self,
-        psf_filename: &str,
-        role: Role,
-    ) -> Result<ProteusSpecification, parse::Error>;
+    fn parse(&mut self, psf_filename: &str, role: Role) -> Result<ProteusSpec, parse::Error>;
 }

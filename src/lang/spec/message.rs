@@ -1,35 +1,39 @@
-use std::ops::Range;
-
-use crate::lang::format::Format;
-
-pub enum MessageOperationKind {
-    Add,
-}
-
-pub struct MessageOperation {
-    kind: MessageOperationKind,
-    output_fmt_range: Range<usize>,
+struct MessageField {
+    size: Option<u64>,
 }
 
 pub struct MessageSpec {
-    fmt: Format,
-    operations: Vec<MessageOperation>,
+    fields: Vec<MessageField>,
 }
 
 impl MessageSpec {
-    pub fn new(fmt: Format) -> Self {
-        Self {
-            fmt,
-            operations: Vec::new(),
+    // pub fn add_operation(&mut self, op: MessageOperation) { // TODO: do range
+    //     checks and panic if out of range based on input and output formats
+    //     self.operations.push(op) }
+
+    // pub fn get_operations(&self) -> &Vec<MessageOperation> {
+    //     &self.operations
+    // }
+}
+
+pub struct MessageSpecBuilder {
+    fields: Vec<MessageField>,
+}
+
+impl MessageSpecBuilder {
+    pub fn new() -> Self {
+        Self { fields: vec![] }
+    }
+
+    pub fn add_field(&mut self, size: Option<u64>) {
+        self.fields.push(MessageField { size })
+    }
+}
+
+impl From<MessageSpecBuilder> for MessageSpec {
+    fn from(builder: MessageSpecBuilder) -> Self {
+        MessageSpec {
+            fields: builder.fields,
         }
-    }
-
-    pub fn add_operation(&mut self, op: MessageOperation) {
-        // TODO: do range checks and panic if out of range based on input and output formats
-        self.operations.push(op)
-    }
-
-    pub fn get_operations(&self) -> &Vec<MessageOperation> {
-        &self.operations
     }
 }

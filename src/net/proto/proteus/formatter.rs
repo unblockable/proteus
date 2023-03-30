@@ -1,29 +1,30 @@
-use bytes::{Bytes, BytesMut};
+use std::ops::Range;
 
-use crate::net::{
-    proto::proteus::frames::OvertMessage, Deserialize, Deserializer, Serialize, Serializer,
-};
+use bytes::{Buf, Bytes, BytesMut};
 
-#[derive(Clone, Copy)]
+use crate::net::{proto::proteus::frames::NetworkData, Deserializer, Serialize, Serializer};
+
 pub struct Formatter {
-    // The proteus message is just bytes and can be formatted without extra state.
-    // Do we want to specify the min and max lengths here, and set for each read?
+    valid_read_range: Range<usize>,
 }
 
 impl Formatter {
-    pub fn new() -> Formatter {
-        Formatter {}
+    pub fn new(valid_read_range: Range<usize>) -> Formatter {
+        Formatter { valid_read_range }
     }
 }
 
-impl Serializer<OvertMessage> for Formatter {
-    fn serialize_frame(&mut self, src: OvertMessage) -> Bytes {
+impl Serializer<NetworkData> for Formatter {
+    fn serialize_frame(&mut self, src: NetworkData) -> Bytes {
         src.serialize()
     }
 }
 
-impl Deserializer<OvertMessage> for Formatter {
-    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<OvertMessage> {
-        OvertMessage::deserialize(src)
+impl Deserializer<NetworkData> for Formatter {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<NetworkData> {
+        match self.valid_read_range.contains(&src.remaining()) {
+            true => Some(NetworkData::from(src.copy_to_bytes(src.remaining()))),
+            false => None,
+        }
     }
 }

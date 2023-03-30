@@ -2,9 +2,9 @@ use typestate::typestate;
 
 #[typestate]
 pub mod proteus {
-    use crate::lang::spec::proteus::ProteusSpecification;
+    use crate::lang::interpreter::Interpreter;
+    use crate::lang::spec::proteus::ProteusSpec;
     use crate::net::proto::proteus;
-    use crate::net::proto::proteus::formatter::Formatter;
     use crate::net::Connection;
 
     use async_trait::async_trait;
@@ -16,11 +16,10 @@ pub mod proteus {
     pub struct Init {
         pub app_conn: Connection,
         pub net_conn: Connection,
-        pub spec: ProteusSpecification,
-        pub fmt: Formatter,
+        pub int: Interpreter,
     }
     pub trait Init {
-        fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpecification) -> Init;
+        fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpec) -> Init;
         fn start(self) -> Run;
     }
 
@@ -28,8 +27,7 @@ pub mod proteus {
     pub struct Run {
         pub app_conn: Connection,
         pub net_conn: Connection,
-        pub spec: ProteusSpecification,
-        pub fmt: Formatter,
+        pub int: Interpreter,
     }
     #[async_trait]
     pub trait Run {
@@ -72,9 +70,11 @@ pub mod proteus {
         }
     }
 
-    impl From<Error> for ProteusProtocol<Error> {
-        fn from(state: Error) -> Self {
-            ProteusProtocol::<Error> { state: state }
+    impl From<proteus::Error> for ProteusProtocol<Error> {
+        fn from(error: proteus::Error) -> Self {
+            ProteusProtocol::<Error> {
+                state: Error { error },
+            }
         }
     }
 }

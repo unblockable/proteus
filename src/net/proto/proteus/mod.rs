@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    lang::spec::proteus::ProteusSpecification,
+    lang::spec::proteus::ProteusSpec,
     net::{
         self,
         proto::proteus::{self, spec::proteus::*},
@@ -10,7 +10,7 @@ use crate::{
 };
 
 mod formatter;
-mod frames;
+pub mod frames;
 mod spec;
 mod states;
 
@@ -41,7 +41,7 @@ pub async fn run_proteus(
     proteus_conn: Connection,
     other_conn: Connection,
     options: HashMap<String, String>,
-    spec: ProteusSpecification,
+    spec: ProteusSpec,
 ) -> Result<(), proteus::Error> {
     let proto = ProteusProtocol::new(other_conn, proteus_conn, spec).start();
 
