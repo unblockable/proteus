@@ -4,7 +4,7 @@ identifier = @{ ASCII_ALPHA~ASCII_ALPHANUMERIC* }
 name_value = { "NAME" ~ ":" ~ identifier }
 type_value = { "TYPE" ~ ":" ~ (primitive_type | array) }
 
-field = { "{" ~ name_value ~ ";" ~ type_value ~ ";" ~ "}" }
+field = { "{" ~ name_value ~ ";" ~ type_value ~ "}" }
 
 size_of_op = ${ identifier~".size_of" }
 

@@ -54,8 +54,8 @@ pub enum Array {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Field {
-    name: Identifier,
-    dtype: Array,
+    pub name: Identifier,
+    pub dtype: Array,
 }
 
 pub trait StaticallySized {
