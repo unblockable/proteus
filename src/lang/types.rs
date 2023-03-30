@@ -26,13 +26,37 @@ pub enum CompoundType {
     MessageSpec,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DataType {
     Primitive(PrimitiveType),
     Compound(CompoundType),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Identifier(pub String);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnaryOp {
+    SizeOf(Identifier),
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct PrimitiveArray(PrimitiveType, usize);
+pub struct PrimitiveArray(pub PrimitiveType, pub usize);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DynamicArray(pub PrimitiveType, pub UnaryOp);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Array {
+    Primitive(PrimitiveArray),
+    Dynamic(DynamicArray)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Field {
+    name: Identifier,
+    dtype: Array,
+}
 
 pub trait StaticallySized {
     fn size_of(&self) -> usize;

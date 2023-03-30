@@ -2,21 +2,15 @@ WHITESPACE = _{ " " | "\t" | NEWLINE }
 
 identifier = @{ ASCII_ALPHA~ASCII_ALPHANUMERIC* }
 name_value = { "NAME" ~ ":" ~ identifier }
-type_value = { "TYPE" ~ ":" ~ flexible_type }
+type_value = { "TYPE" ~ ":" ~ (primitive_type | array) }
 
 field = { "{" ~ name_value ~ ";" ~ type_value ~ ";" ~ "}" }
 
-size_expr = {  (ASCII_DIGIT+ | sizeof_attr | value_attr) ~ (binary_arith_op ~ size_expr)* }
-binary_arith_op = { "+" | "-" | "*" }
+size_of_op = ${ identifier~".size_of" }
 
-sizeof_attr = @{ identifier~".sizeof" }
-value_attr = @{ identifier~".value" }
-
-flexible_type = { dynamic_array | primitive_type }
-data_type = { fixed_array | primitive_type }
-
-dynamic_array = { primitive_type ~ "[" ~ size_expr ~ "]" }
-fixed_array = { primitive_type ~ "[" ~ positive_numeric_literal ~ "]" }
+primitive_array = { "[" ~ primitive_type ~ ";" ~ positive_numeric_literal ~ "]" }
+dynamic_array = { "[" ~ primitive_type ~ ";" ~ size_of_op ~ "]" }
+array = { primitive_array | dynamic_array }
 
 numeric_type = { "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" }
 primitive_type = { numeric_type | "bool" | "char" }
