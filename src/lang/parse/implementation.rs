@@ -15,7 +15,7 @@ fn print_type_of<T>(_: &T) {
     println!("{}", std::any::type_name::<T>())
 }
 
-fn parse_numeric_type(p: &mut RulePair) -> NumericType {
+fn parse_numeric_type(p: &RulePair) -> NumericType {
     match p.as_str() {
         "u8" => NumericType::U8,
         "u16" => NumericType::U16,
@@ -29,66 +29,67 @@ fn parse_numeric_type(p: &mut RulePair) -> NumericType {
     }
 }
 
-fn parse_primitive_type(p: &mut RulePair) -> PrimitiveType {
+fn parse_primitive_type(p: &RulePair) -> PrimitiveType {
     match p.as_str() {
         "bool" => PrimitiveType::Bool,
         "char" => PrimitiveType::Char,
         _ => {
             // Numeric type
-            PrimitiveType::Numeric(parse_numeric_type(
-                &mut p.clone().into_inner().next().unwrap(),
-            ))
+            PrimitiveType::Numeric(parse_numeric_type(p))
         }
     }
 }
 
-fn parse_positive_numeric_literal(p: &mut RulePair) -> usize {
+fn parse_positive_numeric_literal(p: &RulePair) -> usize {
     p.as_str().parse::<usize>().unwrap()
 }
 
-fn parse_identifier(p: &mut RulePair) -> Identifier {
-    Identifier(p.as_str().to_string())
+fn parse_identifier(p: &RulePair) -> Identifier {
+    Identifier(p.clone().into_inner().next().unwrap().as_str().to_string())
 }
 
-fn parse_primitive_array(p: &mut RulePairs) -> PrimitiveArray {
-    let mut p = p.next().unwrap().into_inner();
+fn parse_primitive_array(p: &RulePair) -> PrimitiveArray {
+    let mut p = p.clone().into_inner();
 
-    let mut pt = p.next().unwrap();
+    let pt = p.next().unwrap();
     assert!(pt.as_rule() == Rule::primitive_type);
-    let pt = parse_primitive_type(&mut pt);
+    let pt = parse_primitive_type(&pt);
 
-    let mut pnl = p.next().unwrap();
+    let pnl = p.next().unwrap();
     assert!(pnl.as_rule() == Rule::positive_numeric_literal);
-    let pnl = parse_positive_numeric_literal(&mut pnl);
+    let pnl = parse_positive_numeric_literal(&pnl);
 
     PrimitiveArray(pt, pnl)
 }
 
-fn parse_sizeof_op(p: &mut RulePair) -> UnaryOp {
-    UnaryOp::SizeOf(parse_identifier(
-        &mut p.clone().into_inner().next().unwrap(),
-    ))
+fn parse_sizeof_op(p: &RulePair) -> UnaryOp {
+    UnaryOp::SizeOf(parse_identifier(p))
 }
 
-fn parse_dynamic_array(p: &mut RulePairs) -> DynamicArray {
-    let mut p = p.next().unwrap().into_inner();
+fn parse_dynamic_array(p: &RulePair) -> DynamicArray {
+    let mut p = p.clone().into_inner();
 
-    let mut pt = p.next().unwrap();
+    let pt = p.next().unwrap();
     assert!(pt.as_rule() == Rule::primitive_type);
-    let pt = parse_primitive_type(&mut pt);
+    let pt = parse_primitive_type(&pt);
 
-    let mut soo = p.next().unwrap();
+    let soo = p.next().unwrap();
     assert!(soo.as_rule() == Rule::size_of_op);
-    let soo = parse_sizeof_op(&mut soo);
+    let soo = parse_sizeof_op(&soo);
 
     DynamicArray(pt, soo)
 }
 
-fn parse_array(p: &mut RulePair) -> Array {
-    match p.clone().into_inner().next().unwrap().as_rule() {
-        Rule::primitive_array => Array::Primitive(parse_primitive_array(&mut p.clone().into_inner())),
-        Rule::dynamic_array => Array::Dynamic(parse_dynamic_array(&mut p.clone().into_inner())),
-        _ => panic!()
+fn parse_array(p: &RulePair) -> Array {
+
+    let p = p.clone().into_inner().next().unwrap();
+
+    match p.as_rule() {
+        Rule::primitive_array => {
+            Array::Primitive(parse_primitive_array(&p))
+        }
+        Rule::dynamic_array => Array::Dynamic(parse_dynamic_array(&p)),
+        _ => panic!(),
     }
 }
 
@@ -105,7 +106,7 @@ mod tests {
     >(
         test_cases: T,
         rule: Rule,
-        parse_function: fn(&mut RulePair) -> V,
+        parse_function: fn(&RulePair) -> V,
     ) {
         for test_case in test_cases {
             let (input, expected_output) = test_case;
@@ -127,14 +128,14 @@ mod tests {
     >(
         test_cases: T,
         rule: Rule,
-        parse_function: fn(&mut RulePairs) -> V,
+        parse_function: fn(RulePairs) -> V,
     ) {
         for test_case in test_cases {
             let (input, expected_output) = test_case;
 
-            let mut p = ProteusLiteParser::parse(rule, &input).expect("Unsuccessful parse");
+            let p = ProteusLiteParser::parse(rule, &input).expect("Unsuccessful parse");
 
-            let output = parse_function(&mut p);
+            let output = parse_function(p);
 
             assert_eq!(&output, expected_output);
         }
@@ -189,7 +190,7 @@ mod tests {
             PrimitiveArray(PrimitiveType::Numeric(NumericType::U8), 10),
         )];
 
-        test_rule_pairs(
+        test_rule_pair(
             test_cases.iter(),
             Rule::primitive_array,
             parse_primitive_array,
@@ -213,7 +214,7 @@ mod tests {
             ),
         )];
 
-        test_rule_pairs(test_cases.iter(), Rule::dynamic_array, parse_dynamic_array);
+        test_rule_pair(test_cases.iter(), Rule::dynamic_array, parse_dynamic_array);
     }
 
     #[test]
