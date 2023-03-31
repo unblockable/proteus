@@ -17,35 +17,25 @@ use crate::{
     },
 };
 
+#[async_trait]
 impl InitState for ProteusProtocol<Init> {
     fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpec) -> ProteusProtocol<Init> {
         Init {
             app_conn,
             net_conn,
-            int: Interpreter::new(spec),
+            spec,
         }
         .into()
     }
 
-    fn start(self) -> ProteusProtocol<Run> {
-        Run {
-            app_conn: self.state.app_conn,
-            net_conn: self.state.net_conn,
-            int: self.state.int,
-        }
-        .into()
-    }
-}
-
-#[async_trait]
-impl RunState for ProteusProtocol<Run> {
     async fn run(mut self) -> RunResult {
         // Get the source and sink ends so we can forward data in both
         // directions concurrently.
         let (net_source, net_sink) = self.state.net_conn.into_split();
         let (app_source, app_sink) = self.state.app_conn.into_split();
 
-        let mut shared_int1 = SharedInterpreter::new(self.state.int);
+        let int = Interpreter::new(self.state.spec);
+        let mut shared_int1 = SharedInterpreter::new(int);
         let mut shared_int2 = shared_int1.clone();
 
         match tokio::try_join!(

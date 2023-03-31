@@ -2,7 +2,6 @@ use typestate::typestate;
 
 #[typestate]
 pub mod proteus {
-    use crate::lang::interpreter::Interpreter;
     use crate::lang::spec::proteus::ProteusSpec;
     use crate::net::proto::proteus;
     use crate::net::Connection;
@@ -16,21 +15,11 @@ pub mod proteus {
     pub struct Init {
         pub app_conn: Connection,
         pub net_conn: Connection,
-        pub int: Interpreter,
-    }
-    pub trait Init {
-        fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpec) -> Init;
-        fn start(self) -> Run;
-    }
-
-    #[state]
-    pub struct Run {
-        pub app_conn: Connection,
-        pub net_conn: Connection,
-        pub int: Interpreter,
+        pub spec: ProteusSpec,
     }
     #[async_trait]
-    pub trait Run {
+    pub trait Init {
+        fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpec) -> Init;
         async fn run(self) -> RunResult;
     }
     pub enum RunResult {
@@ -55,12 +44,6 @@ pub mod proteus {
     impl From<Init> for ProteusProtocol<Init> {
         fn from(state: Init) -> Self {
             ProteusProtocol::<Init> { state: state }
-        }
-    }
-
-    impl From<Run> for ProteusProtocol<Run> {
-        fn from(state: Run) -> Self {
-            ProteusProtocol::<Run> { state: state }
         }
     }
 

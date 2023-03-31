@@ -10,7 +10,7 @@ use crate::{
 };
 
 mod formatter;
-pub mod frames;
+mod frames;
 mod spec;
 mod states;
 
@@ -43,9 +43,7 @@ pub async fn run_proteus(
     options: HashMap<String, String>,
     spec: ProteusSpec,
 ) -> Result<(), proteus::Error> {
-    let proto = ProteusProtocol::new(other_conn, proteus_conn, spec).start();
-
-    match proto.run().await {
+    match ProteusProtocol::new(other_conn, proteus_conn, spec).run().await {
         RunResult::Success(s) => Ok(s.finish()),
         RunResult::Error(e) => Err(e.finish()),
     }
