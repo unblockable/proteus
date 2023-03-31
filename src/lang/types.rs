@@ -49,7 +49,7 @@ pub struct DynamicArray(pub PrimitiveType, pub UnaryOp);
 #[derive(Clone, Debug, PartialEq)]
 pub enum Array {
     Primitive(PrimitiveArray),
-    Dynamic(DynamicArray)
+    Dynamic(DynamicArray),
 }
 
 #[derive(Clone, Debug, PartialEq)]

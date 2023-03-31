@@ -1,23 +1,17 @@
-struct MessageField {
-    size: Option<u64>,
-}
+use crate::lang::field::Field;
 
 pub struct MessageSpec {
-    fields: Vec<MessageField>,
+    fields: Vec<Field>,
 }
 
 impl MessageSpec {
-    // pub fn add_operation(&mut self, op: MessageOperation) { // TODO: do range
-    //     checks and panic if out of range based on input and output formats
-    //     self.operations.push(op) }
-
-    // pub fn get_operations(&self) -> &Vec<MessageOperation> {
-    //     &self.operations
-    // }
+    pub fn get_field(&self, index: usize) -> &Field {
+        &self.fields.get(index).unwrap()
+    }
 }
 
 pub struct MessageSpecBuilder {
-    fields: Vec<MessageField>,
+    fields: Vec<Field>,
 }
 
 impl MessageSpecBuilder {
@@ -25,8 +19,8 @@ impl MessageSpecBuilder {
         Self { fields: vec![] }
     }
 
-    pub fn add_field(&mut self, size: Option<u64>) {
-        self.fields.push(MessageField { size })
+    pub fn add_field(&mut self, field: Field) {
+        self.fields.push(field)
     }
 }
 

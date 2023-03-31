@@ -24,11 +24,11 @@ impl Interpreter {
         }
     }
 
-    pub async fn next_net_cmd_out(&mut self) -> NetCommandOut {
+    pub async fn next_net_cmd_out(&mut self) -> NetCmdOut {
         todo!()
     }
 
-    pub async fn next_net_cmd_in(&mut self) -> NetCommandIn {
+    pub async fn next_net_cmd_in(&mut self) -> NetCmdIn {
         todo!()
     }
 }
@@ -46,11 +46,11 @@ impl SharedInterpreter {
         }
     }
 
-    pub async fn next_net_cmd_out(&mut self) -> NetCommandOut {
+    pub async fn next_net_cmd_out(&mut self) -> NetCmdOut {
         todo!()
     }
 
-    pub async fn next_net_cmd_in(&mut self) -> NetCommandIn {
+    pub async fn next_net_cmd_in(&mut self) -> NetCmdIn {
         todo!()
     }
 

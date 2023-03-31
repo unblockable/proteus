@@ -43,7 +43,10 @@ pub async fn run_proteus(
     options: HashMap<String, String>,
     spec: ProteusSpec,
 ) -> Result<(), proteus::Error> {
-    match ProteusProtocol::new(other_conn, proteus_conn, spec).run().await {
+    match ProteusProtocol::new(other_conn, proteus_conn, spec)
+        .run()
+        .await
+    {
         RunResult::Success(s) => Ok(s.finish()),
         RunResult::Error(e) => Err(e.finish()),
     }

@@ -16,13 +16,13 @@ pub struct ReadCmdArgs {
     pub store_addr: HeapAddr,
 }
 
-pub enum NetCommandOut {
+pub enum NetCmdOut {
     ReadApp(ReadCmdArgs),
     WriteNet(WriteCmdArgs),
     Close,
 }
 
-pub enum NetCommandIn {
+pub enum NetCmdIn {
     ReadNet(ReadCmdArgs),
     WriteApp(WriteCmdArgs),
     Close,

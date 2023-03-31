@@ -1,17 +1,14 @@
 use crate::lang::{
+    command::{Command, NetCmdIn, ReadCmdArgs},
     common::Role,
+    field::{LengthField, LengthFieldKind},
     parse::{self, Parse},
-    spec::proteus::ProteusSpecification,
+    spec::proteus::{ProteusSpec, ProteusSpecBuilder},
 };
 
-use crate::lang::{
-    action::Action,
-    format::{Field, FieldKind, Format},
-    spec::{crypto::{CryptoSpec, CryptoOperation, CryptoOperationKind}, message::MessageSpec}
-};
+use crate::lang::field::{Field, FieldKind};
 
-pub struct NullParser {
-}
+pub struct NullParser {}
 
 impl NullParser {
     pub fn new() -> Self {
@@ -20,33 +17,18 @@ impl NullParser {
 }
 
 impl Parse for NullParser {
-    fn parse(
-        &mut self,
-        psf_filename: &str,
-        role: Role,
-    ) -> Result<ProteusSpecification, parse::Error> {
-        let mut format = Format::new();
-        format.push_field(Field::new(FieldKind::Fixed(Bytes::from(
-            "Proteus v0.0.1 Default",
-        ))));
-        format.push_field(Field::new(FieldKind::Length(2)));
-        format.push_field(Field::new(FieldKind::Payload));
+    fn parse(&mut self, psf_filename: &str, role: Role) -> Result<ProteusSpec, parse::Error> {
+        // Set up a minimal functional protocol.
+        let mut builder = ProteusSpecBuilder::new();
 
-        let mut crypto = CryptoSpec::new(format.clone(), format);
-        // Encrypt the payload field.
-        crypto.add_operation(CryptoOperation{kind: CryptoOperationKind::Encrypt, input_fmt_range: 2..3, output_fmt_range: 2..3});
+        let len = LengthField::new(LengthFieldKind::Payload, 2u8);
+        let field = Field::new(FieldKind::Length(len));
+        builder.add_in_field(field.clone());
+        builder.add_out_field(field);
 
-        // let send = Action::new(ActionKind::NetworkAction(NetworkAction{kind: NetworkActionKind::}), format.clone());
-        // let recv = Action::new(ActionKind::Receive, format);
+        builder.add_in_field(Field::new(FieldKind::Payload));
+        builder.add_out_field(Field::new(FieldKind::Payload));
 
-        // MessageSpec is as follows, contains a MessageFormat which is just a chain of Byte objects
-        // Copy(Bytes), field_num=0
-        // ReadApp(Range), field_num=2
-        // Encrypt(CryptoSpec), field_range(2..3)
-        // WriteLength, field_num=1
-        // 
-
-        // Self { actions: vec![] }
-        todo!()
+        Ok(builder.into())
     }
 }

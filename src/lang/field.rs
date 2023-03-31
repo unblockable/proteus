@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 #[derive(Clone)]
-enum LengthFieldKind {
+pub enum LengthFieldKind {
     // Length field covers payload data only.
     Payload,
     // Length field covers all variable-length fields.
@@ -11,12 +11,18 @@ enum LengthFieldKind {
 }
 
 #[derive(Clone)]
-struct LengthField {
+pub struct LengthField {
     // Tells us how to compute the value to write into the length field.
     kind: LengthFieldKind,
     // Tells us the number of bytes that are used to store the length,
     // which constrains the total message size.
     size: u8,
+}
+
+impl LengthField {
+    pub fn new(kind: LengthFieldKind, size: u8) -> LengthField {
+        LengthField { kind, size }
+    }
 }
 
 #[derive(Clone)]

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::{
     lang::{
-        command::{NetCommandIn, NetCommandOut},
+        command::{NetCmdIn, NetCmdOut},
         interpreter::{Interpreter, SharedInterpreter},
         spec::proteus::ProteusSpec,
     },
@@ -79,7 +79,7 @@ async fn obfuscate(
     loop {
         // TODO: refactor the read/write here and in deobfuscate are identical.
         match shared_int.next_net_cmd_out().await {
-            NetCommandOut::ReadApp(args) => {
+            NetCmdOut::ReadApp(args) => {
                 let mut fmt = Formatter::new(args.read_len);
 
                 let net_data = match source.read_frame(&mut fmt).await {
@@ -95,7 +95,7 @@ async fn obfuscate(
 
                 shared_int.store(args.store_addr, net_data.into());
             }
-            NetCommandOut::WriteNet(args) => {
+            NetCmdOut::WriteNet(args) => {
                 let num_written = match sink.write_bytes(&args.bytes).await {
                     Ok(num) => num,
                     Err(e) => return Err(proteus::Error::from(e)),
@@ -104,7 +104,7 @@ async fn obfuscate(
                 total_num_written += num_written;
                 log::trace!("obfuscate: wrote {} net bytes", num_written);
             }
-            NetCommandOut::Close => {
+            NetCmdOut::Close => {
                 break;
             }
         };
@@ -136,7 +136,7 @@ async fn deobfuscate(
 
     loop {
         match shared_int.next_net_cmd_in().await {
-            NetCommandIn::ReadNet(args) => {
+            NetCmdIn::ReadNet(args) => {
                 let mut fmt = Formatter::new(args.read_len);
 
                 let net_data = match source.read_frame(&mut fmt).await {
@@ -152,7 +152,7 @@ async fn deobfuscate(
 
                 shared_int.store(args.store_addr, net_data.into());
             }
-            NetCommandIn::WriteApp(args) => {
+            NetCmdIn::WriteApp(args) => {
                 let num_written = match sink.write_bytes(&args.bytes).await {
                     Ok(num) => num,
                     Err(e) => return Err(proteus::Error::from(e)),
@@ -161,7 +161,7 @@ async fn deobfuscate(
                 total_num_written += num_written;
                 log::trace!("deobfuscate: wrote {} app bytes", num_written);
             }
-            NetCommandIn::Close => {
+            NetCmdIn::Close => {
                 break;
             }
         };
