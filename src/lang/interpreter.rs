@@ -1,6 +1,7 @@
 use std::{
     ops::Range,
     sync::{Arc, Mutex},
+    task::Poll,
 };
 
 use bytes::Bytes;
@@ -11,52 +12,90 @@ use crate::lang::{
     spec::proteus::ProteusSpec,
 };
 
-pub struct Interpreter {
+struct Interpreter {
     spec: ProteusSpec,
     heap: Heap,
 }
 
 impl Interpreter {
-    pub fn new(spec: ProteusSpec) -> Self {
+    fn new(spec: ProteusSpec) -> Self {
         Self {
             spec,
             heap: Heap::new(),
         }
     }
 
-    pub async fn next_net_cmd_out(&mut self) -> NetCmdOut {
+    /// Return the next outgoing (app->net) command we want the network protocol
+    /// to run, or an error if the app->net direction should block for now.
+    fn next_net_cmd_out(&mut self) -> Result<NetCmdOut, ()> {
         todo!()
     }
 
-    pub async fn next_net_cmd_in(&mut self) -> NetCmdIn {
+    /// Return the next incoming (app<-net) command we want the network protocol
+    /// to run, or an error if the app<-net direction should block for now.
+    fn next_net_cmd_in(&mut self) -> Result<NetCmdIn, ()> {
+        todo!()
+    }
+
+    /// Store the given bytes on the heap at the given address.
+    fn store(&mut self, addr: HeapAddr, data: Bytes) {
         todo!()
     }
 }
 
-/// Wraps the ionterpreter allowing us to share it across threads.
+/// Wraps the interpreter allowing us to safely share the internal interpreter
+/// state across threads while concurrently running network commands.
 #[derive(Clone)]
-pub struct SharedInterpreter {
+pub struct SharedAsyncInterpreter {
     inner: Arc<Mutex<Interpreter>>,
 }
 
-impl SharedInterpreter {
-    pub fn new(int: Interpreter) -> SharedInterpreter {
-        SharedInterpreter {
-            inner: Arc::new(Mutex::new(int)),
+impl SharedAsyncInterpreter {
+    pub fn new(spec: ProteusSpec) -> SharedAsyncInterpreter {
+        SharedAsyncInterpreter {
+            inner: Arc::new(Mutex::new(Interpreter::new(spec))),
         }
     }
 
     pub async fn next_net_cmd_out(&mut self) -> NetCmdOut {
-        todo!()
+        // Yield to the async runtime if we can't get the lock, or if the
+        // interpreter is not wanting to execute a command yet.
+        std::future::poll_fn(move |_| {
+            let mut inner = match self.inner.try_lock() {
+                Ok(inner) => inner,
+                Err(_) => return Poll::Pending,
+            };
+            match inner.next_net_cmd_out() {
+                Ok(cmd) => Poll::Ready(cmd),
+                Err(_) => Poll::Pending,
+            }
+        })
+        .await
     }
 
     pub async fn next_net_cmd_in(&mut self) -> NetCmdIn {
-        todo!()
+        // Yield to the async runtime if we can't get the lock, or if the
+        // interpreter is not wanting to execute a command yet.
+        std::future::poll_fn(move |_| {
+            let mut inner = match self.inner.try_lock() {
+                Ok(inner) => inner,
+                Err(_) => return Poll::Pending,
+            };
+            match inner.next_net_cmd_in() {
+                Ok(cmd) => Poll::Ready(cmd),
+                Err(_) => Poll::Pending,
+            }
+        })
+        .await
     }
 
-    pub fn store(&mut self, addr: HeapAddr, data: Bytes) {
-        // TODO need to build a Data object to write below.
-        // self.inner.lock().unwrap().heap.write(addr, data);
-        todo!()
+    pub async fn store(&mut self, addr: HeapAddr, data: Bytes) {
+        // Yield to the async runtime if we can't get the lock, or if the
+        // interpreter is not wanting to execute a command yet.
+        std::future::poll_fn(move |_| match self.inner.try_lock() {
+            Ok(mut inner) => Poll::Ready(inner.store(addr.clone(), data.clone())),
+            Err(_) => Poll::Pending,
+        })
+        .await
     }
 }

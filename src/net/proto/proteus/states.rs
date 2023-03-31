@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::{
     lang::{
         command::{NetCmdIn, NetCmdOut},
-        interpreter::{Interpreter, SharedInterpreter},
+        interpreter::SharedAsyncInterpreter,
         spec::proteus::ProteusSpec,
     },
     net::{
@@ -34,8 +34,7 @@ impl InitState for ProteusProtocol<Init> {
         let (net_source, net_sink) = self.state.net_conn.into_split();
         let (app_source, app_sink) = self.state.app_conn.into_split();
 
-        let int = Interpreter::new(self.state.spec);
-        let mut shared_int1 = SharedInterpreter::new(int);
+        let mut shared_int1 = SharedAsyncInterpreter::new(self.state.spec);
         let mut shared_int2 = shared_int1.clone();
 
         match tokio::try_join!(
@@ -71,7 +70,7 @@ impl ErrorState for ProteusProtocol<spec::proteus::Error> {
 async fn obfuscate(
     mut source: NetSource,
     mut sink: NetSink,
-    shared_int: &mut SharedInterpreter,
+    shared_int: &mut SharedAsyncInterpreter,
 ) -> Result<(usize, usize), proteus::Error> {
     let mut total_num_read: usize = 0;
     let mut total_num_written: usize = 0;
@@ -93,7 +92,7 @@ async fn obfuscate(
                 total_num_read += net_data.len();
                 log::trace!("obfuscate: read {} app bytes", net_data.len());
 
-                shared_int.store(args.store_addr, net_data.into());
+                shared_int.store(args.store_addr, net_data.into()).await;
             }
             NetCmdOut::WriteNet(args) => {
                 let num_written = match sink.write_bytes(&args.bytes).await {
@@ -129,7 +128,7 @@ async fn obfuscate(
 async fn deobfuscate(
     mut source: NetSource,
     mut sink: NetSink,
-    shared_int: &mut SharedInterpreter,
+    shared_int: &mut SharedAsyncInterpreter,
 ) -> Result<(usize, usize), proteus::Error> {
     let mut total_num_read: usize = 0;
     let mut total_num_written: usize = 0;
@@ -150,7 +149,7 @@ async fn deobfuscate(
                 total_num_read += net_data.len();
                 log::trace!("deobfuscate: read {} net bytes", net_data.len());
 
-                shared_int.store(args.store_addr, net_data.into());
+                shared_int.store(args.store_addr, net_data.into()).await;
             }
             NetCmdIn::WriteApp(args) => {
                 let num_written = match sink.write_bytes(&args.bytes).await {

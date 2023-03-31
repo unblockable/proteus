@@ -7,7 +7,7 @@ pub struct Data {
     data: Vec<u8>,
 }
 
-#[derive(Eq, Hash, PartialEq)]
+#[derive(Eq, Hash, PartialEq, Clone)]
 pub struct HeapAddr {
     addr: String,
 }
