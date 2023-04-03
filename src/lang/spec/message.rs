@@ -8,6 +8,10 @@ impl MessageSpec {
     pub fn get_field(&self, index: usize) -> &Field {
         &self.fields.get(index).unwrap()
     }
+
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
 }
 
 pub struct MessageSpecBuilder {

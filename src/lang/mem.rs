@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
+
 use crate::lang::types::DataType;
 
 pub struct Data {
-    kind: DataType,
-    data: Vec<u8>,
+    pub kind: DataType,
+    // pub data: Vec<u8>,
+    pub data: Bytes // TODO we don't want this, just using it to start
 }
 
 #[derive(Eq, Hash, PartialEq, Clone)]
