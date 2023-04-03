@@ -69,7 +69,9 @@ impl From<ParseEnvError> for ConfigError {
 
 impl Config {
     pub fn from_env() -> Result<Config, ConfigError> {
-        env::log_env_vars();
+        // TODO: sometimes env variables can contain bytes that fail to decode.
+        // This can cause errors in the python ptadapter module used for testing.
+        //env::log_env_vars();
 
         if Ok(true) != env::parse_is_version_supported() {
             return Err(ConfigError::VersionError(String::from(

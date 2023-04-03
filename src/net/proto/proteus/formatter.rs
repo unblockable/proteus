@@ -22,8 +22,11 @@ impl Serializer<NetworkData> for Formatter {
 
 impl Deserializer<NetworkData> for Formatter {
     fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<NetworkData> {
-        match self.valid_read_range.contains(&src.remaining()) {
-            true => Some(NetworkData::from(src.copy_to_bytes(src.remaining()))),
+        match src.remaining() >= self.valid_read_range.start {
+            true => {
+                let num = std::cmp::min(src.remaining(), self.valid_read_range.end-1);
+                Some(NetworkData::from(src.copy_to_bytes(num)))
+            },
             false => None,
         }
     }
