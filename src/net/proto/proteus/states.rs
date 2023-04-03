@@ -79,7 +79,10 @@ async fn obfuscate(
         // TODO: refactor the read/write here and in deobfuscate are identical.
         match shared_int.next_net_cmd_out().await {
             NetCmdOut::ReadApp(args) => {
-                log::trace!("obfuscate: trying to read frame of size {:?} from app", args.read_len);
+                log::trace!(
+                    "obfuscate: trying to read frame of size {:?} from app",
+                    args.read_len
+                );
                 let mut fmt = Formatter::new(args.read_len);
 
                 let net_data = match source.read_frame(&mut fmt).await {
@@ -139,7 +142,10 @@ async fn deobfuscate(
     loop {
         match shared_int.next_net_cmd_in().await {
             NetCmdIn::ReadNet(args) => {
-                log::trace!("deobfuscate: trying to read frame of size {:?} from app", args.read_len);
+                log::trace!(
+                    "deobfuscate: trying to read frame of size {:?} from app",
+                    args.read_len
+                );
                 let mut fmt = Formatter::new(args.read_len);
 
                 let net_data = match source.read_frame(&mut fmt).await {

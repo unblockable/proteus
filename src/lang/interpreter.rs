@@ -206,7 +206,7 @@ mod tests {
 
         let args = match int.next_net_cmd_out().unwrap() {
             NetCmdOut::ReadApp(args) => args,
-            _ => panic!("Unexpected interpreter command")
+            _ => panic!("Unexpected interpreter command"),
         };
 
         let payload = Bytes::from("Attack at dawn");
@@ -216,7 +216,7 @@ mod tests {
 
         let args = match int.next_net_cmd_out().unwrap() {
             NetCmdOut::WriteNet(args) => args,
-            _ => panic!("Unexpected interpreter command")
+            _ => panic!("Unexpected interpreter command"),
         };
 
         let mut msg = args.bytes;
@@ -234,7 +234,7 @@ mod tests {
 
         let args = match int.next_net_cmd_in().unwrap() {
             NetCmdIn::ReadNet(args) => args,
-            _ => panic!("Unexpected interpreter command")
+            _ => panic!("Unexpected interpreter command"),
         };
 
         assert!(args.read_len.contains(&2));
@@ -245,7 +245,7 @@ mod tests {
 
         let args = match int.next_net_cmd_in().unwrap() {
             NetCmdIn::ReadNet(args) => args,
-            _ => panic!("Unexpected interpreter command")
+            _ => panic!("Unexpected interpreter command"),
         };
 
         assert!(args.read_len.contains(&payload.len()));
@@ -253,7 +253,7 @@ mod tests {
 
         let args = match int.next_net_cmd_in().unwrap() {
             NetCmdIn::WriteApp(args) => args,
-            _ => panic!("Unexpected interpreter command")
+            _ => panic!("Unexpected interpreter command"),
         };
 
         assert_eq!(args.bytes.len(), payload.len());

@@ -37,7 +37,7 @@ impl FromStr for NumericType {
             "i16" => Ok(NumericType::I16),
             "i32" => Ok(NumericType::I32),
             "i64" => Ok(NumericType::I64),
-            _ => Err(ParseError{}),
+            _ => Err(ParseError {}),
         }
     }
 }
@@ -59,7 +59,7 @@ impl FromStr for PrimitiveType {
             _ => match s.parse::<NumericType>() {
                 Ok(n) => Ok(n.into()),
                 Err(e) => Err(e),
-            }
+            },
         }
     }
 }

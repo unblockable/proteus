@@ -7,7 +7,7 @@ use crate::lang::types::DataType;
 pub struct Data {
     pub kind: DataType,
     // pub data: Vec<u8>,
-    pub data: Bytes // TODO we don't want this, just using it to start
+    pub data: Bytes, // TODO we don't want this, just using it to start
 }
 
 #[derive(Eq, Hash, PartialEq, Clone)]

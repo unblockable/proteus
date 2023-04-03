@@ -133,10 +133,7 @@ fn parse_format(p: &RulePair) -> Format {
         fields.push(parse_field(&f));
     }
 
-    Format {
-        name: id,
-        fields,
-    }
+    Format { name: id, fields }
 }
 
 #[cfg(test)]
@@ -270,10 +267,7 @@ mod tests {
     #[test]
     fn test_type_value() {
         let test_cases = vec![
-            (
-                "TYPE: u8",
-                PrimitiveArray(NumericType::U8.into(), 1).into(),
-            ),
+            ("TYPE: u8", PrimitiveArray(NumericType::U8.into(), 1).into()),
             (
                 "TYPE: [i8; 10]",
                 PrimitiveArray(NumericType::I8.into(), 10).into(),
@@ -302,7 +296,7 @@ mod tests {
             "DEFINE Handshake FIELDS \
             {NAME: Foo; TYPE: u8}, \
             {NAME: Bar; TYPE: [u32; 10]};",
-            Format{
+            Format {
                 name: "Handshake".parse().unwrap(),
                 fields: vec![
                     Field {
@@ -312,9 +306,9 @@ mod tests {
                     Field {
                         name: "Bar".parse().unwrap(),
                         dtype: PrimitiveArray(NumericType::U32.into(), 10).into(),
-                    }
-                ]
-            }
+                    },
+                ],
+            },
         )];
 
         test_rule_pair(test_cases.iter(), Rule::format, parse_format);
