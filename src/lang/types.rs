@@ -331,6 +331,27 @@ pub struct AbstractFormat {
 }
 
 impl AbstractFormat {
+    pub fn get_dynamic_arrays(&self) -> Vec<Identifier> {
+        self.format
+            .fields
+            .iter()
+            .filter_map(|f| f.maybe_size_of().is_none().then(|| f.name.clone()))
+            .collect()
+    }
+
+    pub fn concretize(mut self, sizes: Vec<(Identifier, usize)>) -> ConcreteFormat {
+        for (id, size) in sizes {
+            for field in self.format.fields.iter_mut() {
+                if id == field.name {
+                    if let Array::Dynamic(d) = &field.dtype {
+                        field.dtype = PrimitiveArray(d.0, size).into()
+                    }
+                }
+            }
+        }
+        self.format.try_into().unwrap()
+    }
+
     pub fn into_inner(self) -> Format {
         self.format
     }
@@ -442,5 +463,30 @@ pub mod tests {
     fn test_unsized_format() {
         let format = make_unsized_format();
         format.maybe_size_of().unwrap();
+    }
+
+    #[test]
+    fn test_dynamic_arrays() {
+        let format = make_unsized_format();
+        let v = format.get_dynamic_arrays();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0], "Bar".parse().unwrap())
+    }
+
+    #[test]
+    fn test_concretize() {
+        let mut con_fmt = make_sized_format();
+        con_fmt.format.fields[1].dtype = PrimitiveArray(NumericType::U8.into(), 40).into();
+        let abs_fmt = make_unsized_format();
+        let sizes = vec![("Bar".parse().unwrap(), 40)];
+        assert_eq!(abs_fmt.concretize(sizes), con_fmt);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_concretize_panic() {
+        let format = make_unsized_format();
+        let sizes = vec![("Foo".parse().unwrap(), 40)];
+        format.concretize(sizes);
     }
 }
