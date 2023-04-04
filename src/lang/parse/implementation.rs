@@ -311,6 +311,8 @@ mod tests {
             },
         )];
 
+        println!("{:?}", test_cases[0].1.maybe_size_of().unwrap());
+
         test_rule_pair(test_cases.iter(), Rule::format, parse_format);
     }
 }

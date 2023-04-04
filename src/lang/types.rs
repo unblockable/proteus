@@ -1,7 +1,103 @@
 #![allow(dead_code)]
 
-use std::convert::From;
+use std::convert::{From, TryFrom};
 use std::str::FromStr;
+
+pub trait StaticallySized {
+    fn size_of(&self) -> usize;
+}
+
+// Trait for types that may have a concrete size, but might not yet
+// (e.g., a dynamic array does not have a size).
+pub trait MaybeSized {
+    fn maybe_size_of(&self) -> Option<usize>;
+}
+
+// All statically sized objects are maybe sized.
+impl<T> MaybeSized for T
+where
+    T: StaticallySized,
+{
+    fn maybe_size_of(&self) -> Option<usize> {
+        Some(self.size_of())
+    }
+}
+
+pub trait ArrayCoorespondence {
+    fn corresponded_array_type() -> Array;
+}
+
+impl ArrayCoorespondence for u8 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::U8.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for u16 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::U16.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for u32 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::U32.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for u64 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::U64.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for i8 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::I8.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for i16 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::I16.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for i32 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::I32.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for i64 {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(NumericType::I64.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for bool {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(PrimitiveType::Bool.into(), 1).into()
+    }
+}
+
+impl ArrayCoorespondence for char {
+    fn corresponded_array_type() -> Array {
+        PrimitiveArray(PrimitiveType::Char.into(), 1).into()
+    }
+}
+
+impl<T> ArrayCoorespondence for [T]
+where
+    T: ArrayCoorespondence,
+{
+    fn corresponded_array_type() -> Array {
+        match T::corresponded_array_type() {
+            Array::Primitive(x) => Array::PrimitiveSlice(x.0),
+            _ => panic!(),
+        }
+    }
+}
 
 /*
  * No error is possible. No way to construct an empty enum.
@@ -11,6 +107,9 @@ pub enum NeverError {}
 
 #[derive(Debug)]
 pub struct ParseError;
+
+#[derive(Debug)]
+pub struct DowncastError;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum NumericType {
@@ -22,6 +121,21 @@ pub enum NumericType {
     I16,
     I32,
     I64,
+}
+
+impl StaticallySized for NumericType {
+    fn size_of(&self) -> usize {
+        match self {
+            NumericType::U8 => std::mem::size_of::<u8>(),
+            NumericType::U16 => std::mem::size_of::<u16>(),
+            NumericType::U32 => std::mem::size_of::<u32>(),
+            NumericType::U64 => std::mem::size_of::<u64>(),
+            NumericType::I8 => std::mem::size_of::<i8>(),
+            NumericType::I16 => std::mem::size_of::<i16>(),
+            NumericType::I32 => std::mem::size_of::<i32>(),
+            NumericType::I64 => std::mem::size_of::<i64>(),
+        }
+    }
 }
 
 impl FromStr for NumericType {
@@ -47,6 +161,16 @@ pub enum PrimitiveType {
     Numeric(NumericType),
     Bool,
     Char,
+}
+
+impl StaticallySized for PrimitiveType {
+    fn size_of(&self) -> usize {
+        match self {
+            PrimitiveType::Numeric(t) => t.size_of(),
+            PrimitiveType::Bool => std::mem::size_of::<bool>(),
+            PrimitiveType::Char => std::mem::size_of::<char>(),
+        }
+    }
 }
 
 impl FromStr for PrimitiveType {
@@ -102,13 +226,61 @@ pub enum UnaryOp {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PrimitiveArray(pub PrimitiveType, pub usize);
 
+impl StaticallySized for PrimitiveArray {
+    fn size_of(&self) -> usize {
+        self.0.size_of() * self.1
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DynamicArray(pub PrimitiveType, pub UnaryOp);
+
+// Dynamic arrays do not have a size defined.
+impl MaybeSized for DynamicArray {
+    fn maybe_size_of(&self) -> Option<usize> {
+        None
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Array {
     Primitive(PrimitiveArray),
     Dynamic(DynamicArray),
+    PrimitiveSlice(PrimitiveType), // Used for arrays with size only at runtime
+}
+
+impl TryFrom<Array> for PrimitiveArray {
+    type Error = DowncastError;
+
+    fn try_from(value: Array) -> Result<Self, Self::Error> {
+        if let Array::Primitive(x) = value {
+            Ok(x)
+        } else {
+            Err(DowncastError {})
+        }
+    }
+}
+
+impl TryFrom<Array> for DynamicArray {
+    type Error = DowncastError;
+
+    fn try_from(value: Array) -> Result<Self, Self::Error> {
+        if let Array::Dynamic(x) = value {
+            Ok(x)
+        } else {
+            Err(DowncastError {})
+        }
+    }
+}
+
+impl MaybeSized for Array {
+    fn maybe_size_of(&self) -> Option<usize> {
+        match *self {
+            Array::Primitive(ref a) => a.maybe_size_of(),
+            Array::Dynamic(ref a) => a.maybe_size_of(),
+            Array::PrimitiveSlice(_) => None,
+        }
+    }
 }
 
 impl From<PrimitiveArray> for Array {
@@ -129,43 +301,80 @@ pub struct Field {
     pub dtype: Array,
 }
 
+impl MaybeSized for Field {
+    fn maybe_size_of(&self) -> Option<usize> {
+        self.dtype.maybe_size_of()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Format {
     pub name: Identifier,
     pub fields: Vec<Field>,
 }
 
-pub trait StaticallySized {
-    fn size_of(&self) -> usize;
-}
-
-impl StaticallySized for NumericType {
-    fn size_of(&self) -> usize {
-        match self {
-            NumericType::U8 => std::mem::size_of::<u8>(),
-            NumericType::U16 => std::mem::size_of::<u16>(),
-            NumericType::U32 => std::mem::size_of::<u32>(),
-            NumericType::U64 => std::mem::size_of::<u64>(),
-            NumericType::I8 => std::mem::size_of::<i8>(),
-            NumericType::I16 => std::mem::size_of::<i16>(),
-            NumericType::I32 => std::mem::size_of::<i32>(),
-            NumericType::I64 => std::mem::size_of::<i64>(),
-        }
+impl MaybeSized for Format {
+    fn maybe_size_of(&self) -> Option<usize> {
+        self.fields.iter().fold(Some(0), |acc, field| {
+            if let Some(x) = field.maybe_size_of() {
+                acc.map(|y| x + y)
+            } else {
+                None
+            }
+        })
     }
 }
 
-impl StaticallySized for PrimitiveType {
-    fn size_of(&self) -> usize {
-        match self {
-            PrimitiveType::Numeric(t) => t.size_of(),
-            PrimitiveType::Bool => std::mem::size_of::<bool>(),
-            PrimitiveType::Char => std::mem::size_of::<char>(),
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    pub fn make_sized_format() -> Format {
+        Format {
+            name: "Handshake".parse().unwrap(),
+            fields: vec![
+                Field {
+                    name: "Foo".parse().unwrap(),
+                    dtype: PrimitiveArray(NumericType::U8.into(), 1).into(),
+                },
+                Field {
+                    name: "Bar".parse().unwrap(),
+                    dtype: PrimitiveArray(NumericType::U32.into(), 10).into(),
+                },
+            ],
         }
     }
-}
 
-impl StaticallySized for PrimitiveArray {
-    fn size_of(&self) -> usize {
-        self.0.size_of() * self.1
+    pub fn make_unsized_format() -> Format {
+        Format {
+            name: "Handshake".parse().unwrap(),
+            fields: vec![
+                Field {
+                    name: "Foo".parse().unwrap(),
+                    dtype: PrimitiveArray(NumericType::U8.into(), 1).into(),
+                },
+                Field {
+                    name: "Bar".parse().unwrap(),
+                    dtype: DynamicArray(
+                        NumericType::U8.into(),
+                        UnaryOp::SizeOf("Foo".parse().unwrap()),
+                    )
+                    .into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_sized_format() {
+        let format = make_sized_format();
+        assert_eq!(format.maybe_size_of().unwrap(), 41);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_unsized_format() {
+        let format = make_unsized_format();
+        format.maybe_size_of().unwrap();
     }
 }
