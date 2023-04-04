@@ -111,11 +111,12 @@ async fn obfuscate(
             NetOpOut::Close => {
                 break;
             }
+            NetOpOut::Error(s) => return Err(proteus::Error::Protocol(s)),
         };
     }
 
     log::info!(
-        "obfuscate: done! read {} total bytes, wrote {} total bytes",
+        "obfuscate: success! read {} total bytes, wrote {} total bytes",
         total_num_read,
         total_num_written
     );
@@ -173,11 +174,12 @@ async fn deobfuscate(
             NetOpIn::Close => {
                 break;
             }
+            NetOpIn::Error(s) => return Err(proteus::Error::Protocol(s)),
         };
     }
 
     log::info!(
-        "deobfuscate: done! read {} total bytes, wrote {} total bytes",
+        "deobfuscate: success! read {} total bytes, wrote {} total bytes",
         total_num_read,
         total_num_written
     );

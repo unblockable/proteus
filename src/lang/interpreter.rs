@@ -28,12 +28,14 @@ pub enum NetOpOut {
     RecvApp(RecvArgs),
     SendNet(SendArgs),
     Close,
+    Error(String),
 }
 
 pub enum NetOpIn {
     RecvNet(RecvArgs),
     SendApp(SendArgs),
     Close,
+    Error(String),
 }
 
 enum NetState {
