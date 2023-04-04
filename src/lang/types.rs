@@ -299,12 +299,12 @@ impl MaybeSized for Field {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FormatImpl {
+pub struct Format {
     pub name: Identifier,
     pub fields: Vec<Field>,
 }
 
-impl FormatImpl {
+impl Format {
     pub fn try_get_field_type_offset_and_size(
         &self,
         field_name: &Identifier,
@@ -327,24 +327,24 @@ impl FormatImpl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AbstractFormat {
-    pub format: FormatImpl,
+    pub format: Format,
 }
 
 impl AbstractFormat {
-    pub fn into_inner(self) -> FormatImpl {
+    pub fn into_inner(self) -> Format {
         self.format
     }
 }
 
 impl ConcreteFormat {
-    pub fn into_inner(self) -> FormatImpl {
+    pub fn into_inner(self) -> Format {
         self.format
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConcreteFormat {
-    pub format: FormatImpl,
+    pub format: Format,
 }
 
 impl MaybeSized for AbstractFormat {
@@ -359,16 +359,16 @@ impl MaybeSized for ConcreteFormat {
     }
 }
 
-impl From<FormatImpl> for AbstractFormat {
-    fn from(item: FormatImpl) -> AbstractFormat {
+impl From<Format> for AbstractFormat {
+    fn from(item: Format) -> AbstractFormat {
         AbstractFormat { format: item }
     }
 }
 
-impl TryFrom<FormatImpl> for ConcreteFormat {
+impl TryFrom<Format> for ConcreteFormat {
     type Error = ConversionError;
 
-    fn try_from(value: FormatImpl) -> Result<Self, Self::Error> {
+    fn try_from(value: Format) -> Result<Self, Self::Error> {
         match value.maybe_size_of() {
             Some(_) => Ok(ConcreteFormat { format: value }),
             None => Err(Self::Error {}),
@@ -376,7 +376,7 @@ impl TryFrom<FormatImpl> for ConcreteFormat {
     }
 }
 
-impl MaybeSized for FormatImpl {
+impl MaybeSized for Format {
     fn maybe_size_of(&self) -> Option<usize> {
         self.fields.iter().fold(Some(0), |acc, field| {
             if let Some(x) = field.maybe_size_of() {
@@ -393,7 +393,7 @@ pub mod tests {
     use super::*;
 
     pub fn make_sized_format() -> ConcreteFormat {
-        FormatImpl {
+        Format {
             name: "Handshake".parse().unwrap(),
             fields: vec![
                 Field {
@@ -411,7 +411,7 @@ pub mod tests {
     }
 
     pub fn make_unsized_format() -> AbstractFormat {
-        FormatImpl {
+        Format {
             name: "Handshake".parse().unwrap(),
             fields: vec![
                 Field {

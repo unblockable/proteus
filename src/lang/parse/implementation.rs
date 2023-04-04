@@ -116,7 +116,7 @@ fn parse_field(p: &RulePair) -> Field {
     }
 }
 
-fn parse_format(p: &RulePair) -> FormatImpl {
+fn parse_format(p: &RulePair) -> Format {
     assert!(p.as_rule() == Rule::format);
 
     let mut p = p.clone().into_inner();
@@ -133,7 +133,7 @@ fn parse_format(p: &RulePair) -> FormatImpl {
         fields.push(parse_field(&f));
     }
 
-    FormatImpl { name: id, fields }
+    Format { name: id, fields }
 }
 
 #[cfg(test)]
@@ -296,7 +296,7 @@ mod tests {
             "DEFINE Handshake FIELDS \
             {NAME: Foo; TYPE: u8}, \
             {NAME: Bar; TYPE: [u32; 10]};",
-            FormatImpl {
+            Format {
                 name: "Handshake".parse().unwrap(),
                 fields: vec![
                     Field {
