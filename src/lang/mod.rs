@@ -1,4 +1,3 @@
-pub mod command;
 pub mod common;
 pub mod field;
 pub mod interpreter;

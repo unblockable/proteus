@@ -2,8 +2,7 @@ use async_trait::async_trait;
 
 use crate::{
     lang::{
-        command::{NetCmdIn, NetCmdOut},
-        interpreter::SharedAsyncInterpreter,
+        interpreter::{NetOpIn, NetOpOut, SharedAsyncInterpreter},
         spec::proteus::ProteusSpec,
     },
     net::{
@@ -78,12 +77,12 @@ async fn obfuscate(
     loop {
         // TODO: refactor the read/write here and in deobfuscate are identical.
         match shared_int.next_net_cmd_out().await {
-            NetCmdOut::ReadApp(args) => {
+            NetOpOut::RecvApp(args) => {
                 log::trace!(
                     "obfuscate: trying to read frame of size {:?} from app",
-                    args.read_len
+                    args.len
                 );
-                let mut fmt = Formatter::new(args.read_len);
+                let mut fmt = Formatter::new(args.len);
 
                 let net_data = match source.read_frame(&mut fmt).await {
                     Ok(data) => data,
@@ -96,9 +95,9 @@ async fn obfuscate(
                 total_num_read += net_data.len();
                 log::trace!("obfuscate: read {} app bytes", net_data.len());
 
-                shared_int.store(args.store_addr, net_data.into()).await;
+                shared_int.store(args.addr, net_data.into()).await;
             }
-            NetCmdOut::WriteNet(args) => {
+            NetOpOut::SendNet(args) => {
                 log::trace!("obfuscate: trying to write bytes to net");
 
                 let num_written = match sink.write_bytes(&args.bytes).await {
@@ -109,7 +108,7 @@ async fn obfuscate(
                 total_num_written += num_written;
                 log::trace!("obfuscate: wrote {} net bytes", num_written);
             }
-            NetCmdOut::Close => {
+            NetOpOut::Close => {
                 break;
             }
         };
@@ -141,12 +140,12 @@ async fn deobfuscate(
 
     loop {
         match shared_int.next_net_cmd_in().await {
-            NetCmdIn::ReadNet(args) => {
+            NetOpIn::RecvNet(args) => {
                 log::trace!(
                     "deobfuscate: trying to read frame of size {:?} from app",
-                    args.read_len
+                    args.len
                 );
-                let mut fmt = Formatter::new(args.read_len);
+                let mut fmt = Formatter::new(args.len);
 
                 let net_data = match source.read_frame(&mut fmt).await {
                     Ok(data) => data,
@@ -159,9 +158,9 @@ async fn deobfuscate(
                 total_num_read += net_data.len();
                 log::trace!("deobfuscate: read {} net bytes", net_data.len());
 
-                shared_int.store(args.store_addr, net_data.into()).await;
+                shared_int.store(args.addr, net_data.into()).await;
             }
-            NetCmdIn::WriteApp(args) => {
+            NetOpIn::SendApp(args) => {
                 log::trace!("deobfuscate: trying to write bytes to app");
                 let num_written = match sink.write_bytes(&args.bytes).await {
                     Ok(num) => num,
@@ -171,7 +170,7 @@ async fn deobfuscate(
                 total_num_written += num_written;
                 log::trace!("deobfuscate: wrote {} app bytes", num_written);
             }
-            NetCmdIn::Close => {
+            NetOpIn::Close => {
                 break;
             }
         };

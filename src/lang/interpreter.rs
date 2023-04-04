@@ -1,4 +1,5 @@
 use std::{
+    ops::Range,
     sync::{Arc, Mutex},
     task::Poll,
 };
@@ -6,11 +7,34 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::lang::{
-    command::*,
     mem::{Data, Heap, HeapAddr},
     spec::proteus::ProteusSpec,
     types::{DataType, NumericType, PrimitiveType},
 };
+
+pub struct SendArgs {
+    // Send these bytes.
+    pub bytes: Bytes,
+}
+
+pub struct RecvArgs {
+    // Receive this many bytes.
+    pub len: Range<usize>,
+    // Store the bytes at this addr on the heap.
+    pub addr: HeapAddr,
+}
+
+pub enum NetOpOut {
+    RecvApp(RecvArgs),
+    SendNet(SendArgs),
+    Close,
+}
+
+pub enum NetOpIn {
+    RecvNet(RecvArgs),
+    SendApp(SendArgs),
+    Close,
+}
 
 enum NetState {
     Read(Option<HeapAddr>),
@@ -36,16 +60,16 @@ impl Interpreter {
 
     /// Return the next outgoing (app->net) command we want the network protocol
     /// to run, or an error if the app->net direction should block for now.
-    fn next_net_cmd_out(&mut self) -> Result<NetCmdOut, ()> {
+    fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
         // TODO this should look through the spec to figure out what to do.
         let cmd = match &self.next_net_state_out {
             NetState::Read(_) => {
                 // Read from the app and store the bytes on the heap.
                 let addr = self.heap.alloc();
                 self.next_net_state_out = NetState::Write(addr.clone());
-                NetCmdOut::ReadApp(ReadCmdArgs {
-                    read_len: 1..65536, // TODO: set based on size of length field
-                    store_addr: addr,
+                NetOpOut::RecvApp(RecvArgs {
+                    len: 1..65536, // TODO: set based on size of length field
+                    addr,
                 })
             }
             NetState::Write(addr) => {
@@ -64,7 +88,7 @@ impl Interpreter {
                 self.next_net_state_out = NetState::Read(None);
 
                 // Now hand the message bytes back to the network for sending.
-                NetCmdOut::WriteNet(WriteCmdArgs {
+                NetOpOut::SendNet(SendArgs {
                     bytes: msg_buf.freeze(),
                 })
             }
@@ -74,7 +98,7 @@ impl Interpreter {
 
     /// Return the next incoming (app<-net) command we want the network protocol
     /// to run, or an error if the app<-net direction should block for now.
-    fn next_net_cmd_in(&mut self) -> Result<NetCmdIn, ()> {
+    fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
         let cmd = match &self.next_net_state_in {
             NetState::Read(maybe_addr) => {
                 match maybe_addr {
@@ -82,9 +106,9 @@ impl Interpreter {
                         // Need to do a partial read to get the msg len.
                         let addr = self.heap.alloc();
                         self.next_net_state_in = NetState::Read(Some(addr.clone()));
-                        NetCmdIn::ReadNet(ReadCmdArgs {
-                            read_len: 2..3, // TODO: set based on spec
-                            store_addr: addr,
+                        NetOpIn::RecvNet(RecvArgs {
+                            len: 2..3, // TODO: set based on spec
+                            addr,
                         })
                     }
                     Some(addr) => {
@@ -99,9 +123,9 @@ impl Interpreter {
                         let addr = self.heap.alloc();
                         self.next_net_state_in = NetState::Write(addr.clone());
 
-                        NetCmdIn::ReadNet(ReadCmdArgs {
-                            read_len: 1..((payload_len as usize) + 1), // TODO: set based on spec
-                            store_addr: addr,
+                        NetOpIn::RecvNet(RecvArgs {
+                            len: 1..((payload_len as usize) + 1), // TODO: set based on spec
+                            addr,
                         })
                     }
                 }
@@ -118,7 +142,7 @@ impl Interpreter {
                 self.next_net_state_in = NetState::Read(None);
 
                 // Now hand the app bytes back for sending.
-                NetCmdIn::WriteApp(WriteCmdArgs { bytes: data.data })
+                NetOpIn::SendApp(SendArgs { bytes: data.data })
             }
         };
         Ok(cmd)
@@ -150,7 +174,7 @@ impl SharedAsyncInterpreter {
         }
     }
 
-    pub async fn next_net_cmd_out(&mut self) -> NetCmdOut {
+    pub async fn next_net_cmd_out(&mut self) -> NetOpOut {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
         std::future::poll_fn(move |_| {
@@ -166,7 +190,7 @@ impl SharedAsyncInterpreter {
         .await
     }
 
-    pub async fn next_net_cmd_in(&mut self) -> NetCmdIn {
+    pub async fn next_net_cmd_in(&mut self) -> NetOpIn {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
         std::future::poll_fn(move |_| {
@@ -205,17 +229,17 @@ mod tests {
         let mut int = Interpreter::new(spec);
 
         let args = match int.next_net_cmd_out().unwrap() {
-            NetCmdOut::ReadApp(args) => args,
+            NetOpOut::RecvApp(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
         let payload = Bytes::from("Attack at dawn");
-        assert!(args.read_len.contains(&payload.len()));
+        assert!(args.len.contains(&payload.len()));
 
-        int.store(args.store_addr, payload.clone());
+        int.store(args.addr, payload.clone());
 
         let args = match int.next_net_cmd_out().unwrap() {
-            NetCmdOut::WriteNet(args) => args,
+            NetOpOut::SendNet(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
@@ -233,26 +257,26 @@ mod tests {
         let mut int = Interpreter::new(spec);
 
         let args = match int.next_net_cmd_in().unwrap() {
-            NetCmdIn::ReadNet(args) => args,
+            NetOpIn::RecvNet(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
-        assert!(args.read_len.contains(&2));
+        assert!(args.len.contains(&2));
         let payload = Bytes::from("Attack at dawn");
         let mut buf = BytesMut::new();
         buf.put_u16(payload.len() as u16);
-        int.store(args.store_addr, buf.freeze());
+        int.store(args.addr, buf.freeze());
 
         let args = match int.next_net_cmd_in().unwrap() {
-            NetCmdIn::ReadNet(args) => args,
+            NetOpIn::RecvNet(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
-        assert!(args.read_len.contains(&payload.len()));
-        int.store(args.store_addr, payload.clone());
+        assert!(args.len.contains(&payload.len()));
+        int.store(args.addr, payload.clone());
 
         let args = match int.next_net_cmd_in().unwrap() {
-            NetCmdIn::WriteApp(args) => args,
+            NetOpIn::SendApp(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
