@@ -1,4 +1,8 @@
-use crate::lang::{field::Field, spec::message::MessageSpec};
+use crate::lang::{
+    field::Field,
+    spec::message::MessageSpec,
+    task::{Task, TaskID},
+};
 
 use super::message::MessageSpecBuilder;
 
@@ -20,6 +24,10 @@ impl ProteusSpec {
 
     pub fn get_out_fmt(&self) -> &MessageSpec {
         &self.out_fmt
+    }
+
+    pub fn get_next_tasks(&self, last_task: &TaskID) -> Vec<Task> {
+        todo!()
     }
 }
 

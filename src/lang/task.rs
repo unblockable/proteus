@@ -1,13 +1,19 @@
 #![allow(dead_code)]
 
+use crate::lang::types::{AbstractFormat, Identifier};
 use std::ops::Range;
-use crate::lang::types::{Identifier, AbstractFormat};
 
 use std::convert::From;
 
-struct TaskID {}
+pub struct TaskID {}
 
-struct Task {
+impl TaskID {
+    fn default() -> TaskID {
+        TaskID {}
+    }
+}
+
+pub struct Task {
     ins: Vec<Instruction>,
     id: TaskID,
 }
@@ -32,7 +38,7 @@ impl From<ReadArgs> for Instruction {
 
 pub struct ConcretizeFormatArgs {
     pub name: Identifier,
-    pub aformat: AbstractFormat
+    pub aformat: AbstractFormat,
 }
 
 impl From<ConcretizeFormatArgs> for Instruction {
