@@ -87,18 +87,6 @@ impl ArrayCoorespondence for char {
     }
 }
 
-impl<T> ArrayCoorespondence for [T]
-where
-    T: ArrayCoorespondence,
-{
-    fn corresponded_array_type() -> Array {
-        match T::corresponded_array_type() {
-            Array::Primitive(x) => Array::PrimitiveSlice(x.0),
-            _ => panic!(),
-        }
-    }
-}
-
 /*
  * No error is possible. No way to construct an empty enum.
  */
@@ -110,6 +98,9 @@ pub struct ParseError;
 
 #[derive(Debug)]
 pub struct DowncastError;
+
+#[derive(Debug)]
+pub struct ConversionError;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum NumericType {
@@ -308,12 +299,84 @@ impl MaybeSized for Field {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Format {
+pub struct FormatImpl {
     pub name: Identifier,
     pub fields: Vec<Field>,
 }
 
-impl MaybeSized for Format {
+impl FormatImpl {
+    pub fn try_get_field_type_offset_and_size(
+        &self,
+        field_name: &Identifier,
+    ) -> Option<(Array, usize, usize)> {
+        let mut acc: usize = 0;
+
+        for field in &self.fields {
+            let size = field.dtype.maybe_size_of().unwrap();
+
+            if &field.name == field_name {
+                return Some((field.dtype.clone(), acc, size));
+            } else {
+                acc += size;
+            }
+        }
+
+        None
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AbstractFormat {
+    pub format: FormatImpl,
+}
+
+impl AbstractFormat {
+    pub fn into_inner(self) -> FormatImpl {
+        self.format
+    }
+}
+
+impl ConcreteFormat {
+    pub fn into_inner(self) -> FormatImpl {
+        self.format
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConcreteFormat {
+    pub format: FormatImpl,
+}
+
+impl MaybeSized for AbstractFormat {
+    fn maybe_size_of(&self) -> Option<usize> {
+        self.format.maybe_size_of()
+    }
+}
+
+impl MaybeSized for ConcreteFormat {
+    fn maybe_size_of(&self) -> Option<usize> {
+        self.format.maybe_size_of()
+    }
+}
+
+impl From<FormatImpl> for AbstractFormat {
+    fn from(item: FormatImpl) -> AbstractFormat {
+        AbstractFormat { format: item }
+    }
+}
+
+impl TryFrom<FormatImpl> for ConcreteFormat {
+    type Error = ConversionError;
+
+    fn try_from(value: FormatImpl) -> Result<Self, Self::Error> {
+        match value.maybe_size_of() {
+            Some(_) => Ok(ConcreteFormat { format: value }),
+            None => Err(Self::Error {}),
+        }
+    }
+}
+
+impl MaybeSized for FormatImpl {
     fn maybe_size_of(&self) -> Option<usize> {
         self.fields.iter().fold(Some(0), |acc, field| {
             if let Some(x) = field.maybe_size_of() {
@@ -329,8 +392,8 @@ impl MaybeSized for Format {
 pub mod tests {
     use super::*;
 
-    pub fn make_sized_format() -> Format {
-        Format {
+    pub fn make_sized_format() -> ConcreteFormat {
+        FormatImpl {
             name: "Handshake".parse().unwrap(),
             fields: vec![
                 Field {
@@ -343,10 +406,12 @@ pub mod tests {
                 },
             ],
         }
+        .try_into()
+        .unwrap()
     }
 
-    pub fn make_unsized_format() -> Format {
-        Format {
+    pub fn make_unsized_format() -> AbstractFormat {
+        FormatImpl {
             name: "Handshake".parse().unwrap(),
             fields: vec![
                 Field {
@@ -363,6 +428,7 @@ pub mod tests {
                 },
             ],
         }
+        .into()
     }
 
     #[test]
