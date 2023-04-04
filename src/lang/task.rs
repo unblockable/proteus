@@ -19,20 +19,31 @@ pub struct Task {
 }
 
 enum Instruction {
-    ReadApp(ReadArgs),
-    ReadNet(ReadArgs),
+    ReadApp(ReadAppArgs),
+    ReadNet(ReadNetArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
     GenUniformRandom(GenUniformRandomArgs),
 }
 
-pub struct ReadArgs {
+pub struct ReadAppArgs {
     pub name: Identifier,
     pub range: Range<usize>,
 }
 
-impl From<ReadArgs> for Instruction {
-    fn from(value: ReadArgs) -> Self {
+impl From<ReadAppArgs> for Instruction {
+    fn from(value: ReadAppArgs) -> Self {
         Instruction::ReadApp(value)
+    }
+}
+
+pub struct ReadNetArgs {
+    pub name: Identifier,
+    pub range: Range<usize>,
+}
+
+impl From<ReadNetArgs> for Instruction {
+    fn from(value: ReadNetArgs) -> Self {
+        Instruction::ReadNet(value)
     }
 }
 
