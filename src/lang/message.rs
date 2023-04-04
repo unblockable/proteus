@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::lang::types::*;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 #[derive(Debug)]
 pub struct Message {
@@ -79,8 +79,8 @@ impl Message {
         }
     }
 
-    pub fn into_inner(self) -> BytesMut {
-        self.data
+    pub fn into_inner(self) -> Bytes {
+        self.data.freeze()
     }
 }
 

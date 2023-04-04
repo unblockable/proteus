@@ -1,3 +1,3 @@
-pub mod crypto;
-pub mod message;
+mod crypto;
+mod message;
 pub mod proteus;
