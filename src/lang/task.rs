@@ -5,6 +5,10 @@ use std::ops::Range;
 
 use std::convert::From;
 
+pub trait TaskProvider {
+    fn get_next_tasks(&self, last_task: &TaskID) -> Vec<Task>;
+}
+
 pub struct TaskID {}
 
 impl TaskID {

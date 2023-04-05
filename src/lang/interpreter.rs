@@ -222,7 +222,7 @@ impl SharedAsyncInterpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::spec::proteus::{ProteusSpecBuilder, TaskProvider};
+    use crate::lang::spec::proteus::ProteusSpecBuilder;
     use crate::lang::task::*;
     use crate::lang::types::*;
 
