@@ -223,8 +223,9 @@ impl StaticallySized for PrimitiveArray {
     }
 }
 
+/// A dynamic array is always an array of U8 (bytes).
 #[derive(Clone, Debug, PartialEq)]
-pub struct DynamicArray(pub PrimitiveType, pub UnaryOp);
+pub struct DynamicArray(pub UnaryOp);
 
 // Dynamic arrays do not have a size defined.
 impl MaybeSized for DynamicArray {
@@ -339,12 +340,15 @@ impl AbstractFormat {
             .collect()
     }
 
-    pub fn concretize(mut self, sizes: Vec<(Identifier, usize)>) -> ConcreteFormat {
+    /// Sizes is a vector of (id, size) pairs where the size is given in bytes.
+    /// This function will calculate the number of elements required to equal that number of bytes.
+    pub fn concretize(mut self, sizes: &Vec<(Identifier, usize)>) -> ConcreteFormat {
         for (id, size) in sizes {
             for field in self.format.fields.iter_mut() {
-                if id == field.name {
+                if id == &field.name {
                     if let Array::Dynamic(d) = &field.dtype {
-                        field.dtype = PrimitiveArray(d.0, size).into()
+                        field.dtype =
+                            PrimitiveArray(PrimitiveType::Numeric(NumericType::U8), *size).into()
                     }
                 }
             }
@@ -374,9 +378,9 @@ impl MaybeSized for AbstractFormat {
     }
 }
 
-impl MaybeSized for ConcreteFormat {
-    fn maybe_size_of(&self) -> Option<usize> {
-        self.format.maybe_size_of()
+impl StaticallySized for ConcreteFormat {
+    fn size_of(&self) -> usize {
+        self.format.maybe_size_of().unwrap()
     }
 }
 
@@ -441,11 +445,7 @@ pub mod tests {
                 },
                 Field {
                     name: "Bar".parse().unwrap(),
-                    dtype: DynamicArray(
-                        NumericType::U8.into(),
-                        UnaryOp::SizeOf("Foo".parse().unwrap()),
-                    )
-                    .into(),
+                    dtype: DynamicArray(UnaryOp::SizeOf("Foo".parse().unwrap())).into(),
                 },
             ],
         }
@@ -479,7 +479,12 @@ pub mod tests {
         con_fmt.format.fields[1].dtype = PrimitiveArray(NumericType::U8.into(), 40).into();
         let abs_fmt = make_unsized_format();
         let sizes = vec![("Bar".parse().unwrap(), 40)];
-        assert_eq!(abs_fmt.concretize(sizes), con_fmt);
+        let abs_fmt_conretized = abs_fmt.concretize(&sizes);
+        assert_eq!(
+            abs_fmt_conretized.maybe_size_of().unwrap(),
+            con_fmt.maybe_size_of().unwrap()
+        );
+        assert_eq!(abs_fmt_conretized, con_fmt);
     }
 
     #[test]
@@ -487,6 +492,6 @@ pub mod tests {
     fn test_concretize_panic() {
         let format = make_unsized_format();
         let sizes = vec![("Foo".parse().unwrap(), 40)];
-        format.concretize(sizes);
+        format.concretize(&sizes);
     }
 }

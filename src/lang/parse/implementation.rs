@@ -61,13 +61,15 @@ fn parse_dynamic_array(p: &RulePair) -> DynamicArray {
 
     let mut p = p.clone().into_inner();
 
+    // TODO: ryan, fix the grammar and parser because dynamic arrays are now
+    // always u8
     let pt = p.next().unwrap();
     let pt = parse_primitive_type(&pt);
 
     let soo = p.next().unwrap();
     let soo = parse_sizeof_op(&soo);
 
-    DynamicArray(pt, soo)
+    DynamicArray(soo)
 }
 
 fn parse_array(p: &RulePair) -> Array {
@@ -228,10 +230,7 @@ mod tests {
     fn test_parse_dynamic_array() {
         let test_cases = vec![(
             "[u8; x.size_of]",
-            DynamicArray(
-                NumericType::U8.into(),
-                UnaryOp::SizeOf("x".parse().unwrap()),
-            ),
+            DynamicArray(UnaryOp::SizeOf("x".parse().unwrap())),
         )];
 
         test_rule_pair(test_cases.iter(), Rule::dynamic_array, parse_dynamic_array);
@@ -246,11 +245,7 @@ mod tests {
             ),
             (
                 "[u8; x.size_of]",
-                DynamicArray(
-                    NumericType::U8.into(),
-                    UnaryOp::SizeOf("x".parse().unwrap()),
-                )
-                .into(),
+                DynamicArray(UnaryOp::SizeOf("x".parse().unwrap())).into(),
             ),
         ];
 
