@@ -3,7 +3,6 @@ use std::fmt;
 use crate::lang::{common::Role, parse, spec::proteus::ProteusSpec};
 
 mod implementation;
-pub mod null;
 pub mod proteus;
 
 #[derive(Debug)]

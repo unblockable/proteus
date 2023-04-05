@@ -4,7 +4,7 @@ use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::lang::common::Role;
-use crate::lang::parse::null::NullParser;
+use crate::lang::parse::proteus::ProteusParser;
 use crate::lang::parse::Parse;
 use crate::net::proto::{proteus, socks};
 use crate::net::Connection;
@@ -125,7 +125,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
 
             // TODO double check, I think the PSF path can change for every Tor
             // Browser connection, so we have to parse the PSF here on every connection.
-            let mut parser = NullParser::new();
+            let mut parser = ProteusParser::new();
             // TODO replace with path to PSF, which will be in the options.
             let spec = parser.parse(" ", Role::Client).unwrap();
 
@@ -212,7 +212,7 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
     }
 
     // TODO: Only load the supported PSF once for all proteus clients.
-    let mut parser = NullParser::new();
+    let mut parser = ProteusParser::new();
     // TODO replace with path to PSF, which will be in the options
     let spec = parser.parse(" ", Role::Server).unwrap();
 
