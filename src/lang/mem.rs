@@ -1,15 +1,5 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
-
-use crate::lang::types::DataType;
-
-pub struct Data {
-    pub kind: DataType,
-    // pub data: Vec<u8>,
-    pub data: Bytes, // TODO we don't want this, just using it to start
-}
-
 #[derive(Eq, Hash, PartialEq, Clone)]
 pub struct HeapAddr {
     addr: String,
@@ -23,12 +13,12 @@ impl From<&str> for HeapAddr {
     }
 }
 
-pub struct Heap {
+pub struct Heap<T> {
     addr_counter: u64,
-    mem: HashMap<HeapAddr, Data>,
+    mem: HashMap<HeapAddr, T>,
 }
 
-impl Heap {
+impl<T> Heap<T> {
     pub fn new() -> Self {
         Self {
             addr_counter: 0,
@@ -42,15 +32,15 @@ impl Heap {
         HeapAddr { addr }
     }
 
-    pub fn write(&mut self, addr: HeapAddr, data: Data) -> Option<Data> {
+    pub fn write(&mut self, addr: HeapAddr, data: T) -> Option<T> {
         self.mem.insert(addr, data)
     }
 
-    pub fn read(&self, addr: &HeapAddr) -> Option<&Data> {
+    pub fn read(&self, addr: &HeapAddr) -> Option<&T> {
         self.mem.get(addr)
     }
 
-    pub fn free(&mut self, addr: &HeapAddr) -> Option<Data> {
+    pub fn free(&mut self, addr: &HeapAddr) -> Option<T> {
         self.mem.remove(addr)
     }
 }

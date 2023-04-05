@@ -1,7 +1,7 @@
 use crate::lang::{
     field::Field,
     spec::message::MessageSpec,
-    task::{Task, TaskID, TaskProvider},
+    task::{Task, TaskID, TaskProvider, TaskSet},
 };
 
 use super::message::MessageSpecBuilder;
@@ -28,7 +28,7 @@ impl ProteusSpec {
 }
 
 impl TaskProvider for ProteusSpec {
-    fn get_next_tasks(&self, last_task: &TaskID) -> Vec<Task> {
+    fn get_next_tasks(&self, last_task: &TaskID) -> TaskSet {
         todo!()
     }
 }

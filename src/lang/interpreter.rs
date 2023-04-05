@@ -7,9 +7,11 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::lang::{
-    mem::{Data, Heap, HeapAddr},
+    mem::{Heap, HeapAddr},
+    message::Message,
     spec::proteus::ProteusSpec,
-    types::{DataType, NumericType, PrimitiveType},
+    task::{Task, TaskID, TaskProvider},
+    types::ConcreteFormat,
 };
 
 pub struct SendArgs {
@@ -38,126 +40,49 @@ pub enum NetOpIn {
     Error(String),
 }
 
-enum NetState {
-    Read(Option<HeapAddr>),
-    Write(HeapAddr),
-}
-
 struct Interpreter {
-    spec: ProteusSpec,
-    heap: Heap,
-    next_net_state_out: NetState,
-    next_net_state_in: NetState,
+    spec: Box<dyn TaskProvider + Send + 'static>,
+    bytes_heap: Heap<Bytes>,
+    format_heap: Heap<ConcreteFormat>,
+    message_heap: Heap<Message>,
+    next_net_op_out: Option<NetOpOut>,
+    next_net_op_in: Option<NetOpIn>,
 }
 
 impl Interpreter {
-    fn new(spec: ProteusSpec) -> Self {
+    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
         Self {
-            spec,
-            heap: Heap::new(),
-            next_net_state_in: NetState::Read(None),
-            next_net_state_out: NetState::Read(None),
+            spec: Box::new(spec),
+            bytes_heap: Heap::new(),
+            format_heap: Heap::new(),
+            message_heap: Heap::new(),
+            next_net_op_out: None,
+            next_net_op_in: None,
         }
+    }
+
+    fn execute_instructions_until_blocked(&mut self) {
+        let taskset = self.spec.get_next_tasks(&TaskID::default());
+        todo!()
     }
 
     /// Return the next outgoing (app->net) command we want the network protocol
     /// to run, or an error if the app->net direction should block for now.
     fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
-        // TODO this should look through the spec to figure out what to do.
-        let cmd = match &self.next_net_state_out {
-            NetState::Read(_) => {
-                // Read from the app and store the bytes on the heap.
-                let addr = self.heap.alloc();
-                self.next_net_state_out = NetState::Write(addr.clone());
-                NetOpOut::RecvApp(RecvArgs {
-                    len: 1..65536, // TODO: set based on size of length field
-                    addr,
-                })
-            }
-            NetState::Write(addr) => {
-                // Read the app payload stored on the heap.
-                let data = self.heap.free(&addr).unwrap();
-                let len = data.data.len();
-                assert!(len > 0 && len <= 65536);
-
-                // Construct the outgoing proteus message.
-                // TODO: for now just use length+payload fields.
-                let mut msg_buf = BytesMut::new();
-                msg_buf.put_u16(len as u16);
-                msg_buf.put_slice(&data.data);
-
-                // Next we'll want to read more payload from the app again.
-                self.next_net_state_out = NetState::Read(None);
-
-                // Now hand the message bytes back to the network for sending.
-                NetOpOut::SendNet(SendArgs {
-                    bytes: msg_buf.freeze(),
-                })
-            }
-        };
-        Ok(cmd)
+        self.execute_instructions_until_blocked();
+        self.next_net_op_out.take().ok_or(())
     }
 
     /// Return the next incoming (app<-net) command we want the network protocol
     /// to run, or an error if the app<-net direction should block for now.
     fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
-        let cmd = match &self.next_net_state_in {
-            NetState::Read(maybe_addr) => {
-                match maybe_addr {
-                    None => {
-                        // Need to do a partial read to get the msg len.
-                        let addr = self.heap.alloc();
-                        self.next_net_state_in = NetState::Read(Some(addr.clone()));
-                        NetOpIn::RecvNet(RecvArgs {
-                            len: 2..3, // TODO: set based on spec
-                            addr,
-                        })
-                    }
-                    Some(addr) => {
-                        // Already read the length, but not the payload.
-                        let mut data = self.heap.free(&addr).unwrap();
-                        let len = data.data.len();
-                        assert!(len == 2);
-
-                        let payload_len = data.data.get_u16();
-                        assert!(payload_len > 0);
-
-                        let addr = self.heap.alloc();
-                        self.next_net_state_in = NetState::Write(addr.clone());
-
-                        NetOpIn::RecvNet(RecvArgs {
-                            len: 1..((payload_len as usize) + 1), // TODO: set based on spec
-                            addr,
-                        })
-                    }
-                }
-                // Need to read an incoming proteus message, but we don't know the
-                // total message size yet until we first read the length field.
-            }
-            NetState::Write(addr) => {
-                // Read the message payload stored on the heap.
-                let data = self.heap.free(&addr).unwrap();
-                let len = data.data.len();
-                assert!(len > 0 && len <= 65536);
-
-                // Next we'll want to read another message from the net.
-                self.next_net_state_in = NetState::Read(None);
-
-                // Now hand the app bytes back for sending.
-                NetOpIn::SendApp(SendArgs { bytes: data.data })
-            }
-        };
-        Ok(cmd)
+        self.execute_instructions_until_blocked();
+        self.next_net_op_in.take().ok_or(())
     }
 
     /// Store the given bytes on the heap at the given address.
     fn store(&mut self, addr: HeapAddr, bytes: Bytes) {
-        // Convert to Data that can be pushed onto the heap.
-        let data = Data {
-            kind: DataType::Primitive(PrimitiveType::Numeric(NumericType::U8)),
-            data: bytes,
-        };
-        self.heap.write(addr, data);
+        self.bytes_heap.write(addr, bytes);
     }
 }
 
@@ -226,10 +151,10 @@ mod tests {
     use crate::lang::task::*;
     use crate::lang::types::*;
 
-    struct TestSpec {}
+    struct LengthPayloadSpec {}
 
-    impl TaskProvider for TestSpec {
-        fn get_next_tasks(&self, _last_task: &TaskID) -> Vec<Task> {
+    impl TaskProvider for LengthPayloadSpec {
+        fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
             let abs_format_out: AbstractFormat = Format {
                 name: "DataMessageOut".parse().unwrap(),
                 fields: vec![
@@ -263,81 +188,83 @@ mod tests {
             }
             .into();
 
-            vec![
-                // Outgoing data forwarding direction.
-                Task {
-                    ins: vec![
-                        ReadAppArgs {
-                            name: "payload".parse().unwrap(),
-                            len: 1..u16::MAX as usize,
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            name: "cformat".parse().unwrap(),
-                            aformat: abs_format_out,
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            name: "message".parse().unwrap(),
-                            fmt_name: "cformat".parse().unwrap(),
-                            field_names: vec!["payload".parse().unwrap()],
-                        }
-                        .into(),
-                        WriteNetArgs {
-                            msg_name: "message".parse().unwrap(),
-                        }
-                        .into(),
-                    ],
-                    id: TaskID::default(),
-                },
-                // Incoming data forwarding direction.
-                Task {
-                    ins: vec![
-                        ReadNetArgs {
-                            name: "length".parse().unwrap(),
-                            len: ReadNetLength::Range(2..3 as usize),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            name: "cformat1".parse().unwrap(),
-                            aformat: abs_format_in1,
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            name: "message_length_part".parse().unwrap(),
-                            fmt_name: "cformat1".parse().unwrap(),
-                            field_names: vec!["length".parse().unwrap()],
-                        }
-                        .into(),
-                        ComputeLengthArgs {
-                            name: "num_payload_bytes".parse().unwrap(),
-                            msg_name: "message_length_part".parse().unwrap(),
-                        }
-                        .into(),
-                        ReadNetArgs {
-                            name: "payload".parse().unwrap(),
-                            len: ReadNetLength::Identifier("num_payload_bytes".parse().unwrap()),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            name: "cformat2".parse().unwrap(),
-                            aformat: abs_format_in2,
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            name: "message_payload_part".parse().unwrap(),
-                            fmt_name: "cformat2".parse().unwrap(),
-                            field_names: vec!["payload".parse().unwrap()],
-                        }
-                        .into(),
-                        WriteAppArgs {
-                            msg_name: "message_payload_part".parse().unwrap(),
-                        }
-                        .into(),
-                    ],
-                    id: TaskID::default(),
-                },
-            ]
+            // Outgoing data forwarding direction.
+            let out_task = Task {
+                ins: vec![
+                    ReadAppArgs {
+                        name: "payload".parse().unwrap(),
+                        len: 1..u16::MAX as usize,
+                    }
+                    .into(),
+                    ConcretizeFormatArgs {
+                        name: "cformat".parse().unwrap(),
+                        aformat: abs_format_out,
+                    }
+                    .into(),
+                    CreateMessageArgs {
+                        name: "message".parse().unwrap(),
+                        fmt_name: "cformat".parse().unwrap(),
+                        field_names: vec!["payload".parse().unwrap()],
+                    }
+                    .into(),
+                    WriteNetArgs {
+                        msg_name: "message".parse().unwrap(),
+                    }
+                    .into(),
+                ],
+                id: TaskID::default(),
+            };
+
+            // Incoming data forwarding direction.
+            let in_task = Task {
+                ins: vec![
+                    ReadNetArgs {
+                        name: "length".parse().unwrap(),
+                        len: ReadNetLength::Range(2..3 as usize),
+                    }
+                    .into(),
+                    ConcretizeFormatArgs {
+                        name: "cformat1".parse().unwrap(),
+                        aformat: abs_format_in1,
+                    }
+                    .into(),
+                    CreateMessageArgs {
+                        name: "message_length_part".parse().unwrap(),
+                        fmt_name: "cformat1".parse().unwrap(),
+                        field_names: vec!["length".parse().unwrap()],
+                    }
+                    .into(),
+                    ComputeLengthArgs {
+                        name: "num_payload_bytes".parse().unwrap(),
+                        msg_name: "message_length_part".parse().unwrap(),
+                    }
+                    .into(),
+                    ReadNetArgs {
+                        name: "payload".parse().unwrap(),
+                        len: ReadNetLength::Identifier("num_payload_bytes".parse().unwrap()),
+                    }
+                    .into(),
+                    ConcretizeFormatArgs {
+                        name: "cformat2".parse().unwrap(),
+                        aformat: abs_format_in2,
+                    }
+                    .into(),
+                    CreateMessageArgs {
+                        name: "message_payload_part".parse().unwrap(),
+                        fmt_name: "cformat2".parse().unwrap(),
+                        field_names: vec!["payload".parse().unwrap()],
+                    }
+                    .into(),
+                    WriteAppArgs {
+                        msg_name: "message_payload_part".parse().unwrap(),
+                    }
+                    .into(),
+                ],
+                id: TaskID::default(),
+            };
+
+            // Concurrently execute tasks for both data forwarding directions.
+            TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
         }
     }
 
