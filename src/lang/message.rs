@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
+use std::io::Cursor;
+
 use crate::lang::types::*;
-use bytes::{Bytes, BytesMut};
+use bytes::{buf::Limit, BufMut, Bytes, BytesMut};
 
 #[derive(Debug)]
 pub struct Message {
@@ -25,6 +27,12 @@ impl Message {
             .format
             .try_get_field_type_offset_and_size(field_name)
             .map(|(_, offset, size)| &mut self.data.as_mut()[offset..offset + size])
+    }
+
+    pub fn try_get_field_writer(&self, field_name: &Identifier) -> Cursor<Limit<&BytesMut>> {
+        // let mut write_cursor = Cursor::new(&self.data.limit(size));
+        // write_cursor.set_position(offset);
+        todo!()
     }
 
     pub fn try_get_field_typed<T: ArrayCoorespondence>(

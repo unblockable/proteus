@@ -8,42 +8,36 @@ use std::convert::From;
 pub struct TaskID {}
 
 impl TaskID {
-    fn default() -> TaskID {
+    pub fn default() -> TaskID {
         TaskID {}
     }
 }
 
 pub struct Task {
-    ins: Vec<Instruction>,
-    id: TaskID,
+    pub ins: Vec<Instruction>,
+    pub id: TaskID,
 }
 
-enum Instruction {
+pub enum Instruction {
     ReadApp(ReadAppArgs),
-    ReadNet(ReadNetArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
-    GenUniformRandom(GenUniformRandomArgs),
+    /// Not cryptographically secure.
+    GenRandomBytes(GenRandomBytesArgs),
+    CreateMessage(CreateMessageArgs),
+    WriteNet(WriteNetArgs),
+    ReadNet(ReadNetArgs),
+    ComputeLength(ComputeLengthArgs),
+    WriteApp(WriteAppArgs),
 }
 
 pub struct ReadAppArgs {
     pub name: Identifier,
-    pub range: Range<usize>,
+    pub len: Range<usize>,
 }
 
 impl From<ReadAppArgs> for Instruction {
     fn from(value: ReadAppArgs) -> Self {
         Instruction::ReadApp(value)
-    }
-}
-
-pub struct ReadNetArgs {
-    pub name: Identifier,
-    pub range: Range<usize>,
-}
-
-impl From<ReadNetArgs> for Instruction {
-    fn from(value: ReadNetArgs) -> Self {
-        Instruction::ReadNet(value)
     }
 }
 
@@ -58,13 +52,76 @@ impl From<ConcretizeFormatArgs> for Instruction {
     }
 }
 
-pub struct GenUniformRandomArgs {
+pub struct GenRandomBytesArgs {
     pub name: Identifier,
-    pub range: Range<usize>,
+    pub len: Range<usize>,
 }
 
-impl From<GenUniformRandomArgs> for Instruction {
-    fn from(value: GenUniformRandomArgs) -> Self {
-        Instruction::GenUniformRandom(value)
+impl From<GenRandomBytesArgs> for Instruction {
+    fn from(value: GenRandomBytesArgs) -> Self {
+        Instruction::GenRandomBytes(value)
+    }
+}
+
+pub struct CreateMessageArgs {
+    pub name: Identifier,
+    /// Specifies the location of the format object on the heap.
+    pub fmt_name: Identifier,
+    /// Specifies the locations of heap data and field names into which to copy
+    /// the data.
+    pub field_names: Vec<Identifier>,
+}
+
+impl From<CreateMessageArgs> for Instruction {
+    fn from(value: CreateMessageArgs) -> Self {
+        Instruction::CreateMessage(value)
+    }
+}
+
+pub struct WriteNetArgs {
+    pub msg_name: Identifier,
+}
+
+impl From<WriteNetArgs> for Instruction {
+    fn from(value: WriteNetArgs) -> Self {
+        Instruction::WriteNet(value)
+    }
+}
+
+pub enum ReadNetLength {
+    /// Amount to read specified in this heap variable.
+    Identifier(Identifier),
+    /// Amount to read specified by this range.
+    Range(Range<usize>),
+}
+
+pub struct ReadNetArgs {
+    pub name: Identifier,
+    pub len: ReadNetLength,
+}
+
+impl From<ReadNetArgs> for Instruction {
+    fn from(value: ReadNetArgs) -> Self {
+        Instruction::ReadNet(value)
+    }
+}
+
+pub struct ComputeLengthArgs {
+    pub name: Identifier,
+    pub msg_name: Identifier,
+}
+
+impl From<ComputeLengthArgs> for Instruction {
+    fn from(value: ComputeLengthArgs) -> Self {
+        Instruction::ComputeLength(value)
+    }
+}
+pub struct WriteAppArgs {
+    pub msg_name: Identifier,
+}
+
+impl From<WriteAppArgs> for Instruction {
+    fn from(value: WriteAppArgs) -> Self {
+        Instruction::WriteApp(value)
     }
 }

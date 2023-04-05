@@ -221,9 +221,125 @@ impl SharedAsyncInterpreter {
 
 #[cfg(test)]
 mod tests {
-    use crate::lang::spec::proteus::ProteusSpecBuilder;
-
     use super::*;
+    use crate::lang::spec::proteus::{ProteusSpecBuilder, TaskProvider};
+    use crate::lang::task::*;
+    use crate::lang::types::*;
+
+    struct TestSpec {}
+
+    impl TaskProvider for TestSpec {
+        fn get_next_tasks(&self, _last_task: &TaskID) -> Vec<Task> {
+            let abs_format_out: AbstractFormat = Format {
+                name: "DataMessageOut".parse().unwrap(),
+                fields: vec![
+                    Field {
+                        name: "length".parse().unwrap(),
+                        dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
+                    },
+                    Field {
+                        name: "payload".parse().unwrap(),
+                        dtype: DynamicArray(UnaryOp::SizeOf("length".parse().unwrap())).into(),
+                    },
+                ],
+            }
+            .into();
+
+            let abs_format_in1: AbstractFormat = Format {
+                name: "DataMessageIn1".parse().unwrap(),
+                fields: vec![Field {
+                    name: "length".parse().unwrap(),
+                    dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
+                }],
+            }
+            .into();
+
+            let abs_format_in2: AbstractFormat = Format {
+                name: "DataMessageIn2".parse().unwrap(),
+                fields: vec![Field {
+                    name: "payload".parse().unwrap(),
+                    dtype: DynamicArray(UnaryOp::SizeOf("length".parse().unwrap())).into(),
+                }],
+            }
+            .into();
+
+            vec![
+                // Outgoing data forwarding direction.
+                Task {
+                    ins: vec![
+                        ReadAppArgs {
+                            name: "payload".parse().unwrap(),
+                            len: 1..u16::MAX as usize,
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            name: "cformat".parse().unwrap(),
+                            aformat: abs_format_out,
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            name: "message".parse().unwrap(),
+                            fmt_name: "cformat".parse().unwrap(),
+                            field_names: vec!["payload".parse().unwrap()],
+                        }
+                        .into(),
+                        WriteNetArgs {
+                            msg_name: "message".parse().unwrap(),
+                        }
+                        .into(),
+                    ],
+                    id: TaskID::default(),
+                },
+                // Incoming data forwarding direction.
+                Task {
+                    ins: vec![
+                        ReadNetArgs {
+                            name: "length".parse().unwrap(),
+                            len: ReadNetLength::Range(2..3 as usize),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            name: "cformat1".parse().unwrap(),
+                            aformat: abs_format_in1,
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            name: "message_length_part".parse().unwrap(),
+                            fmt_name: "cformat1".parse().unwrap(),
+                            field_names: vec!["length".parse().unwrap()],
+                        }
+                        .into(),
+                        ComputeLengthArgs {
+                            name: "num_payload_bytes".parse().unwrap(),
+                            msg_name: "message_length_part".parse().unwrap(),
+                        }
+                        .into(),
+                        ReadNetArgs {
+                            name: "payload".parse().unwrap(),
+                            len: ReadNetLength::Identifier("num_payload_bytes".parse().unwrap()),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            name: "cformat2".parse().unwrap(),
+                            aformat: abs_format_in2,
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            name: "message_payload_part".parse().unwrap(),
+                            fmt_name: "cformat2".parse().unwrap(),
+                            field_names: vec!["payload".parse().unwrap()],
+                        }
+                        .into(),
+                        WriteAppArgs {
+                            msg_name: "message_payload_part".parse().unwrap(),
+                        }
+                        .into(),
+                    ],
+                    id: TaskID::default(),
+                },
+            ]
+        }
+    }
 
     #[test]
     fn read_app_write_net() {

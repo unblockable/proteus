@@ -6,6 +6,10 @@ use crate::lang::{
 
 use super::message::MessageSpecBuilder;
 
+pub trait TaskProvider {
+    fn get_next_tasks(&self, last_task: &TaskID) -> Vec<Task>;
+}
+
 // Holds the immutable part of a proteus protocol as parsed from a PSF. This is
 // used as input to a ProteusProtocol, which is newly created for each
 // connection and holds mutable state.
@@ -25,8 +29,10 @@ impl ProteusSpec {
     pub fn get_out_fmt(&self) -> &MessageSpec {
         &self.out_fmt
     }
+}
 
-    pub fn get_next_tasks(&self, last_task: &TaskID) -> Vec<Task> {
+impl TaskProvider for ProteusSpec {
+    fn get_next_tasks(&self, last_task: &TaskID) -> Vec<Task> {
         todo!()
     }
 }
