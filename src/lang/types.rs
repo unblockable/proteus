@@ -209,6 +209,16 @@ impl FromStr for Identifier {
     }
 }
 
+pub trait ToIdentifier {
+    fn id(&self) -> Identifier;
+}
+
+impl ToIdentifier for &str {
+    fn id(&self) -> Identifier {
+        self.parse().unwrap()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum UnaryOp {
     SizeOf(Identifier),
@@ -238,7 +248,6 @@ impl MaybeSized for DynamicArray {
 pub enum Array {
     Primitive(PrimitiveArray),
     Dynamic(DynamicArray),
-    PrimitiveSlice(PrimitiveType), // Used for arrays with size only at runtime
 }
 
 impl TryFrom<Array> for PrimitiveArray {
@@ -270,7 +279,6 @@ impl MaybeSized for Array {
         match *self {
             Array::Primitive(ref a) => a.maybe_size_of(),
             Array::Dynamic(ref a) => a.maybe_size_of(),
-            Array::PrimitiveSlice(_) => None,
         }
     }
 }
