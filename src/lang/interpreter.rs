@@ -10,7 +10,7 @@ use crate::lang::{
     mem::{Heap, HeapAddr},
     message::Message,
     spec::proteus::ProteusSpec,
-    task::{Task, TaskID, TaskProvider},
+    task::{Instruction, Task, TaskID, TaskProvider, TaskSet},
     types::ConcreteFormat,
 };
 
@@ -40,13 +40,22 @@ pub enum NetOpIn {
     Error(String),
 }
 
+struct TaskOp {
+    task: Task,
+    next_ins_index: usize
+}
+
 struct Interpreter {
     spec: Box<dyn TaskProvider + Send + 'static>,
     bytes_heap: Heap<Bytes>,
     format_heap: Heap<ConcreteFormat>,
     message_heap: Heap<Message>,
-    next_net_op_out: Option<NetOpOut>,
-    next_net_op_in: Option<NetOpIn>,
+    next_netop_out: Option<NetOpOut>,
+    next_netop_in: Option<NetOpIn>,
+    current_taskop_out: Option<TaskOp>,
+    current_taskop_in: Option<TaskOp>,
+    wants_tasks: bool,
+    last_task_id: TaskID,
 }
 
 impl Interpreter {
@@ -56,28 +65,94 @@ impl Interpreter {
             bytes_heap: Heap::new(),
             format_heap: Heap::new(),
             message_heap: Heap::new(),
-            next_net_op_out: None,
-            next_net_op_in: None,
+            next_netop_out: None,
+            next_netop_in: None,
+            current_taskop_out: None,
+            current_taskop_in: None,
+            wants_tasks: true,
+            last_task_id: TaskID::default(),
         }
     }
 
-    fn execute_instructions_until_blocked(&mut self) {
-        let taskset = self.spec.get_next_tasks(&TaskID::default());
-        todo!()
+    /// Inserts the given new task into the old Option. Panics if the option
+    /// is Some and its task id does not match the new task id.
+    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
+        match opt {
+            Some(op) => if op.task.id != new.id {panic!("Cannot overwrite task")},
+            None => *opt = Some(TaskOp { task: new, next_ins_index: 0 })
+        };
+    }
+
+    /// Loads task from the task provider. Panics if we already have a current
+    /// task in/out, we receive another one from the provider, and the ID of the
+    /// new task does not match that of the existing task.
+    fn load_tasks(&mut self) {
+        match self.spec.get_next_tasks(&self.last_task_id) {
+            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
+            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
+            TaskSet::InAndOutTasks(pair) => {
+                Self::set_task(&mut self.current_taskop_in, pair.in_task);
+                Self::set_task(&mut self.current_taskop_out, pair.out_task);
+            },
+        };
+        self.wants_tasks = false;
+    }
+
+    fn execute_instruction(&mut self, ins: &Instruction) -> Result<(), ()> {
+        match ins {
+            Instruction::ComputeLength(args) => todo!(),
+            Instruction::ConcretizeFormat(args) => todo!(),
+            Instruction::CreateMessage(args) => todo!(),
+            Instruction::GenRandomBytes(args) => todo!(),
+            Instruction::ReadApp(args) => todo!(),
+            Instruction::ReadNet(args) => todo!(),
+            Instruction::WriteApp(args) => todo!(),
+            Instruction::WriteNet(args) => todo!(),
+        }
+    }
+
+    fn execute_instructions_until_blocked(&mut self, mut op: TaskOp) -> Option<TaskOp> {
+        while op.next_ins_index < op.task.ins.len() {
+            match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
+                Ok(_) => op.next_ins_index += 1,
+                Err(_) => break
+            };
+        }
+
+        if op.next_ins_index < op.task.ins.len() {
+            Some(op)
+        } else {
+            self.wants_tasks = true;
+            None
+        }
+    }
+
+    fn execute_until_blocked(&mut self) {
+        if self.wants_tasks {
+            self.load_tasks();
+        }
+
+        if let Some(op) = self.current_taskop_out.take() {
+            self.current_taskop_out = self.execute_instructions_until_blocked(op);
+        }
+
+        if let Some(op) = self.current_taskop_in.take() {
+            self.current_taskop_in = self.execute_instructions_until_blocked(op);
+        }
     }
 
     /// Return the next outgoing (app->net) command we want the network protocol
     /// to run, or an error if the app->net direction should block for now.
     fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
-        self.execute_instructions_until_blocked();
-        self.next_net_op_out.take().ok_or(())
+        self.execute_until_blocked();
+        self.next_netop_out.take().ok_or(())
     }
 
     /// Return the next incoming (app<-net) command we want the network protocol
     /// to run, or an error if the app<-net direction should block for now.
     fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
-        self.execute_instructions_until_blocked();
-        self.next_net_op_in.take().ok_or(())
+        self.execute_until_blocked();
+        self.next_netop_in.take().ok_or(())
     }
 
     /// Store the given bytes on the heap at the given address.
@@ -156,34 +231,34 @@ mod tests {
     impl TaskProvider for LengthPayloadSpec {
         fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
             let abs_format_out: AbstractFormat = Format {
-                name: "DataMessageOut".parse().unwrap(),
+                name: "DataMessageOut".id(),
                 fields: vec![
                     Field {
-                        name: "length".parse().unwrap(),
+                        name: "length".id(),
                         dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
                     },
                     Field {
-                        name: "payload".parse().unwrap(),
-                        dtype: DynamicArray(UnaryOp::SizeOf("length".parse().unwrap())).into(),
+                        name: "payload".id(),
+                        dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
                     },
                 ],
             }
             .into();
 
             let abs_format_in1: AbstractFormat = Format {
-                name: "DataMessageIn1".parse().unwrap(),
+                name: "DataMessageIn1".id(),
                 fields: vec![Field {
-                    name: "length".parse().unwrap(),
+                    name: "length".id(),
                     dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
                 }],
             }
             .into();
 
             let abs_format_in2: AbstractFormat = Format {
-                name: "DataMessageIn2".parse().unwrap(),
+                name: "DataMessageIn2".id(),
                 fields: vec![Field {
-                    name: "payload".parse().unwrap(),
-                    dtype: DynamicArray(UnaryOp::SizeOf("length".parse().unwrap())).into(),
+                    name: "payload".id(),
+                    dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
                 }],
             }
             .into();
@@ -192,23 +267,23 @@ mod tests {
             let out_task = Task {
                 ins: vec![
                     ReadAppArgs {
-                        name: "payload".parse().unwrap(),
+                        name: "payload".id(),
                         len: 1..u16::MAX as usize,
                     }
                     .into(),
                     ConcretizeFormatArgs {
-                        name: "cformat".parse().unwrap(),
+                        name: "cformat".id(),
                         aformat: abs_format_out,
                     }
                     .into(),
                     CreateMessageArgs {
-                        name: "message".parse().unwrap(),
-                        fmt_name: "cformat".parse().unwrap(),
-                        field_names: vec!["payload".parse().unwrap()],
+                        name: "message".id(),
+                        fmt_name: "cformat".id(),
+                        field_names: vec!["payload".id()],
                     }
                     .into(),
                     WriteNetArgs {
-                        msg_name: "message".parse().unwrap(),
+                        msg_name: "message".id(),
                     }
                     .into(),
                 ],
@@ -219,44 +294,44 @@ mod tests {
             let in_task = Task {
                 ins: vec![
                     ReadNetArgs {
-                        name: "length".parse().unwrap(),
+                        name: "length".id(),
                         len: ReadNetLength::Range(2..3 as usize),
                     }
                     .into(),
                     ConcretizeFormatArgs {
-                        name: "cformat1".parse().unwrap(),
+                        name: "cformat1".id(),
                         aformat: abs_format_in1,
                     }
                     .into(),
                     CreateMessageArgs {
-                        name: "message_length_part".parse().unwrap(),
-                        fmt_name: "cformat1".parse().unwrap(),
-                        field_names: vec!["length".parse().unwrap()],
+                        name: "message_length_part".id(),
+                        fmt_name: "cformat1".id(),
+                        field_names: vec!["length".id()],
                     }
                     .into(),
                     ComputeLengthArgs {
-                        name: "num_payload_bytes".parse().unwrap(),
-                        msg_name: "message_length_part".parse().unwrap(),
+                        name: "num_payload_bytes".id(),
+                        msg_name: "message_length_part".id(),
                     }
                     .into(),
                     ReadNetArgs {
-                        name: "payload".parse().unwrap(),
-                        len: ReadNetLength::Identifier("num_payload_bytes".parse().unwrap()),
+                        name: "payload".id(),
+                        len: ReadNetLength::Identifier("num_payload_bytes".id()),
                     }
                     .into(),
                     ConcretizeFormatArgs {
-                        name: "cformat2".parse().unwrap(),
+                        name: "cformat2".id(),
                         aformat: abs_format_in2,
                     }
                     .into(),
                     CreateMessageArgs {
-                        name: "message_payload_part".parse().unwrap(),
-                        fmt_name: "cformat2".parse().unwrap(),
-                        field_names: vec!["payload".parse().unwrap()],
+                        name: "message_payload_part".id(),
+                        fmt_name: "cformat2".id(),
+                        field_names: vec!["payload".id()],
                     }
                     .into(),
                     WriteAppArgs {
-                        msg_name: "message_payload_part".parse().unwrap(),
+                        msg_name: "message_payload_part".id(),
                     }
                     .into(),
                 ],

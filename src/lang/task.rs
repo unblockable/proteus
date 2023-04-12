@@ -20,6 +20,7 @@ pub enum TaskSet {
     InAndOutTasks(TaskPair),
 }
 
+#[derive(Eq, PartialEq)]
 pub struct TaskID {}
 
 impl TaskID {

@@ -299,7 +299,7 @@ mod tests {
     fn command() {
         let frame = Command {
             command: EXTOR_COMMAND_TRANSPORT,
-            body: String::from("upgen"),
+            body: String::from("proteus"),
         };
 
         let mut buf = BytesMut::new();
