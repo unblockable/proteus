@@ -23,6 +23,14 @@ pub struct Message {
 }
 
 impl Message {
+    /// A message is constructed from a format with a concrete size.
+    pub fn new(format: ConcreteFormat) -> Option<Self> {
+        format.maybe_size_of().map(|size| Message {
+            format,
+            data: BytesMut::zeroed(size),
+        })
+    }
+
     fn get_field_bytes_mut(&mut self, offset: usize, size: usize) -> &mut [u8] {
         assert!(offset < self.data.len() && offset + size <= self.data.len());
         &mut self.data.as_mut()[offset..offset + size]
@@ -31,16 +39,6 @@ impl Message {
     fn get_field_bytes(&self, offset: usize, size: usize) -> &[u8] {
         assert!(offset < self.data.len() && offset + size <= self.data.len());
         &self.data.as_ref()[offset..offset + size]
-    }
-
-    /*
-     * A message is constructed from a format with a concrete size.
-     */
-    pub fn new(format: ConcreteFormat) -> Option<Self> {
-        format.maybe_size_of().map(|size| Message {
-            format,
-            data: BytesMut::zeroed(size),
-        })
     }
 
     pub fn set_field_unsigned_numeric(
@@ -67,7 +65,7 @@ impl Message {
                             NumericType::U8 => {
                                 if let Ok(z) = u8::try_from(value) {
                                     field_bytes.put_u8(z);
-                                   Ok(())
+                                    Ok(())
                                 } else {
                                     Err(SetFieldError::DowncastError)
                                 }
@@ -156,6 +154,20 @@ impl Message {
             .expect("payload length too large for length field");
     }
 
+    /// Computes the sum of the length of all fields after the given field.
+    pub fn len_suffix(&self, field_name: &Identifier) -> usize {
+        let mut nbytes: usize = 0;
+        let mut do_sum = false;
+        for field in &self.format.format.fields {
+            if do_sum {
+                nbytes += field.maybe_size_of().unwrap();
+            } else if field.name.eq(field_name) {
+                do_sum = true;
+            }
+        }
+        nbytes
+    }
+
     pub fn try_get_field_bytes(&mut self, field_name: &Identifier) -> Option<&mut [u8]> {
         self.format
             .format
@@ -163,8 +175,38 @@ impl Message {
             .map(|(_, offset, size)| self.get_field_bytes_mut(offset, size))
     }
 
+    pub fn set_field_bytes(
+        &mut self,
+        field_name: &Identifier,
+        bytes: &Bytes,
+    ) -> Result<(), SetFieldError> {
+        match self.try_get_field_bytes(field_name) {
+            Some(slice) => {
+                if slice.len() == bytes.len() {
+                    slice.copy_from_slice(bytes);
+                    Ok(())
+                } else {
+                    Err(SetFieldError::TypeError)
+                }
+            }
+            None => Err(SetFieldError::NotDefined),
+        }
+    }
+
     pub fn into_inner(self) -> Bytes {
         self.data.freeze()
+    }
+
+    pub fn into_inner_field(mut self, field_name: &Identifier) -> Result<Bytes, GetFieldError> {
+        match self.try_get_field_bytes(field_name) {
+            Some(slice) => {
+                // FIXME does this alloc?
+                let mut b = BytesMut::new();
+                b.copy_from_slice(slice);
+                Ok(b.freeze())
+            }
+            None => Err(GetFieldError::NotDefined),
+        }
     }
 }
 
@@ -212,6 +254,11 @@ mod tests {
 
         message.set_length_field();
 
-        assert_eq!(40, message.get_field_unsigned_numeric(&"length".id()).expect(""));
+        assert_eq!(
+            40,
+            message
+                .get_field_unsigned_numeric(&"length".id())
+                .expect("")
+        );
     }
 }

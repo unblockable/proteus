@@ -35,15 +35,30 @@ pub struct Task {
 }
 
 pub enum Instruction {
-    ReadApp(ReadAppArgs),
+    ComputeLength(ComputeLengthArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
+    CreateMessage(CreateMessageArgs),
     /// Not cryptographically secure.
     GenRandomBytes(GenRandomBytesArgs),
-    CreateMessage(CreateMessageArgs),
-    WriteNet(WriteNetArgs),
+    GetNumericValue(GetNumericValueArgs),
+    ReadApp(ReadAppArgs),
     ReadNet(ReadNetArgs),
-    ComputeLength(ComputeLengthArgs),
+    SetNumericValue(SetNumericValueArgs),
     WriteApp(WriteAppArgs),
+    WriteNet(WriteNetArgs),
+}
+
+/// Compute the length of all msg fields after field and store in name.
+pub struct ComputeLengthArgs {
+    pub name: Identifier,
+    pub msg_name: Identifier,
+    pub field_name: Identifier,
+}
+
+impl From<ComputeLengthArgs> for Instruction {
+    fn from(value: ComputeLengthArgs) -> Self {
+        Instruction::ComputeLength(value)
+    }
 }
 
 pub struct ReadAppArgs {
@@ -122,18 +137,34 @@ impl From<ReadNetArgs> for Instruction {
     }
 }
 
-pub struct ComputeLengthArgs {
+// Get the numeric value from msg->field and store it in name.
+pub struct GetNumericValueArgs {
     pub name: Identifier,
     pub msg_name: Identifier,
+    pub field_name: Identifier,
 }
 
-impl From<ComputeLengthArgs> for Instruction {
-    fn from(value: ComputeLengthArgs) -> Self {
-        Instruction::ComputeLength(value)
+impl From<GetNumericValueArgs> for Instruction {
+    fn from(value: GetNumericValueArgs) -> Self {
+        Instruction::GetNumericValue(value)
     }
 }
+
+pub struct SetNumericValueArgs {
+    pub msg_name: Identifier,
+    pub field_name: Identifier,
+    pub name: Identifier,
+}
+
+impl From<SetNumericValueArgs> for Instruction {
+    fn from(value: SetNumericValueArgs) -> Self {
+        Instruction::SetNumericValue(value)
+    }
+}
+
 pub struct WriteAppArgs {
     pub msg_name: Identifier,
+    pub field_name: Identifier, // usually payload field
 }
 
 impl From<WriteAppArgs> for Instruction {

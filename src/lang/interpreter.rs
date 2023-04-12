@@ -7,11 +7,11 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::lang::{
-    mem::{Heap, HeapAddr},
+    mem::Heap,
     message::Message,
     spec::proteus::ProteusSpec,
-    task::{Instruction, Task, TaskID, TaskProvider, TaskSet},
-    types::ConcreteFormat,
+    task::{Instruction, ReadNetLength, Task, TaskID, TaskProvider, TaskSet},
+    types::{ConcreteFormat, Identifier},
 };
 
 pub struct SendArgs {
@@ -23,7 +23,7 @@ pub struct RecvArgs {
     // Receive this many bytes.
     pub len: Range<usize>,
     // Store the bytes at this addr on the heap.
-    pub addr: HeapAddr,
+    pub addr: Identifier,
 }
 
 pub enum NetOpOut {
@@ -41,8 +41,9 @@ pub enum NetOpIn {
 }
 
 struct TaskOp {
+    // FIXME each taskop gets its own heap(s)?
     task: Task,
-    next_ins_index: usize
+    next_ins_index: usize,
 }
 
 struct Interpreter {
@@ -50,6 +51,7 @@ struct Interpreter {
     bytes_heap: Heap<Bytes>,
     format_heap: Heap<ConcreteFormat>,
     message_heap: Heap<Message>,
+    number_heap: Heap<u128>,
     next_netop_out: Option<NetOpOut>,
     next_netop_in: Option<NetOpIn>,
     current_taskop_out: Option<TaskOp>,
@@ -59,55 +61,134 @@ struct Interpreter {
 }
 
 impl Interpreter {
-    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
-        Self {
-            spec: Box::new(spec),
-            bytes_heap: Heap::new(),
-            format_heap: Heap::new(),
-            message_heap: Heap::new(),
-            next_netop_out: None,
-            next_netop_in: None,
-            current_taskop_out: None,
-            current_taskop_in: None,
-            wants_tasks: true,
-            last_task_id: TaskID::default(),
-        }
-    }
-
-    /// Inserts the given new task into the old Option. Panics if the option
-    /// is Some and its task id does not match the new task id.
-    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
-        match opt {
-            Some(op) => if op.task.id != new.id {panic!("Cannot overwrite task")},
-            None => *opt = Some(TaskOp { task: new, next_ins_index: 0 })
-        };
-    }
-
-    /// Loads task from the task provider. Panics if we already have a current
-    /// task in/out, we receive another one from the provider, and the ID of the
-    /// new task does not match that of the existing task.
-    fn load_tasks(&mut self) {
-        match self.spec.get_next_tasks(&self.last_task_id) {
-            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
-            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
-            TaskSet::InAndOutTasks(pair) => {
-                Self::set_task(&mut self.current_taskop_in, pair.in_task);
-                Self::set_task(&mut self.current_taskop_out, pair.out_task);
-            },
-        };
-        self.wants_tasks = false;
-    }
-
+    /// Returns Ok if we consider the instruction complete, Err if we need to
+    /// block on net io.
     fn execute_instruction(&mut self, ins: &Instruction) -> Result<(), ()> {
         match ins {
-            Instruction::ComputeLength(args) => todo!(),
-            Instruction::ConcretizeFormat(args) => todo!(),
-            Instruction::CreateMessage(args) => todo!(),
-            Instruction::GenRandomBytes(args) => todo!(),
-            Instruction::ReadApp(args) => todo!(),
-            Instruction::ReadNet(args) => todo!(),
-            Instruction::WriteApp(args) => todo!(),
-            Instruction::WriteNet(args) => todo!(),
+            Instruction::GetNumericValue(args) => {
+                let msg = self.message_heap.get(&args.msg_name).unwrap();
+                let num = msg.get_field_unsigned_numeric(&args.field_name).unwrap();
+                self.number_heap.insert(args.name.clone(), num);
+                Ok(())
+            }
+            Instruction::ConcretizeFormat(args) => {
+                let aformat = args.aformat.clone();
+
+                // Get the fields that have dynamic lengths, and compute what the lengths
+                // will be now that we should have the data for each field on the heap.
+                let concrete_sizes: Vec<(Identifier, usize)> = aformat
+                    .get_dynamic_arrays()
+                    .iter()
+                    .map(|id| (id.clone(), self.bytes_heap.get(&id).unwrap().len()))
+                    .collect();
+
+                // Now that we know the total size, we can allocate the full format block.
+                let cformat = aformat.concretize(&concrete_sizes);
+
+                // Store it for use by later instructions.
+                self.format_heap.insert(args.name.clone(), cformat);
+                Ok(())
+            }
+            Instruction::CreateMessage(args) => {
+                // Create a message with an existing concrete format.
+                let cformat = self.format_heap.remove(&args.fmt_name).unwrap();
+                let mut msg = Message::new(cformat).unwrap();
+
+                // Copy the specified bytes over to the allocated message.
+                for id in args.field_names.iter() {
+                    msg.set_field_bytes(id, self.bytes_heap.get(&id).unwrap())
+                        .unwrap();
+                }
+
+                // Store the message for use in later instructions.
+                self.message_heap.insert(args.name.clone(), msg);
+
+                Ok(())
+            }
+            Instruction::GenRandomBytes(_args) => {
+                todo!()
+            }
+            Instruction::ReadApp(args) => {
+                // Need to block if we are waiting to recv previous bytes.
+                if self.next_netop_out.is_some() {
+                    return Err(());
+                }
+
+                let netop = NetOpOut::RecvApp(RecvArgs {
+                    len: args.len.clone(),
+                    addr: args.name.clone(),
+                });
+                self.next_netop_out = Some(netop);
+                Ok(())
+            }
+            Instruction::ReadNet(args) => {
+                // Need to block if we are waiting to recv a previous message.
+                if self.next_netop_in.is_some() {
+                    return Err(());
+                }
+
+                let len = match &args.len {
+                    ReadNetLength::Identifier(id) => {
+                        let num = self.number_heap.get(&id).unwrap();
+                        let val = *num as usize;
+                        Range {
+                            start: val,
+                            end: val + 1,
+                        }
+                    }
+                    ReadNetLength::Range(r) => r.clone(),
+                };
+
+                let netop = NetOpIn::RecvNet(RecvArgs {
+                    len,
+                    addr: args.name.clone(),
+                });
+                self.next_netop_in = Some(netop);
+
+                Ok(())
+            }
+            Instruction::ComputeLength(args) => {
+                let msg = self.message_heap.get(&args.msg_name).unwrap();
+                let len = msg.len_suffix(&args.field_name);
+                self.number_heap.insert(args.name.clone(), len as u128);
+                Ok(())
+            }
+            Instruction::SetNumericValue(args) => {
+                let val = self.number_heap.get(&args.name).unwrap().clone();
+                let mut msg = self.message_heap.remove(&args.msg_name).unwrap();
+                msg.set_field_unsigned_numeric(&args.field_name, val)
+                    .unwrap();
+                self.message_heap.insert(args.field_name.clone(), msg);
+                Ok(())
+            }
+            Instruction::WriteApp(args) => {
+                // Need to block if we are waiting to send previous bytes.
+                if self.next_netop_in.is_some() {
+                    return Err(());
+                }
+
+                let msg = self.message_heap.remove(&args.msg_name).unwrap();
+                let netop = NetOpIn::SendApp(SendArgs {
+                    bytes: msg.into_inner_field(&args.field_name).unwrap(),
+                });
+                self.next_netop_in = Some(netop);
+
+                Ok(())
+            }
+            Instruction::WriteNet(args) => {
+                // Need to block if we are waiting to send a previous message.
+                if self.next_netop_out.is_some() {
+                    return Err(());
+                }
+
+                let msg = self.message_heap.remove(&args.msg_name).unwrap();
+                let netop = NetOpOut::SendNet(SendArgs {
+                    bytes: msg.into_inner(),
+                });
+                self.next_netop_out = Some(netop);
+
+                Ok(())
+            }
         }
     }
 
@@ -115,7 +196,7 @@ impl Interpreter {
         while op.next_ins_index < op.task.ins.len() {
             match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
                 Ok(_) => op.next_ins_index += 1,
-                Err(_) => break
+                Err(_) => break,
             };
         }
 
@@ -141,11 +222,35 @@ impl Interpreter {
         }
     }
 
-    /// Return the next outgoing (app->net) command we want the network protocol
-    /// to run, or an error if the app->net direction should block for now.
-    fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
-        self.execute_until_blocked();
-        self.next_netop_out.take().ok_or(())
+    /// Loads task from the task provider. Panics if we already have a current
+    /// task in/out, we receive another one from the provider, and the ID of the
+    /// new task does not match that of the existing task.
+    fn load_tasks(&mut self) {
+        match self.spec.get_next_tasks(&self.last_task_id) {
+            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
+            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
+            TaskSet::InAndOutTasks(pair) => {
+                Self::set_task(&mut self.current_taskop_in, pair.in_task);
+                Self::set_task(&mut self.current_taskop_out, pair.out_task);
+            }
+        };
+        self.wants_tasks = false;
+    }
+
+    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
+        Self {
+            spec: Box::new(spec),
+            bytes_heap: Heap::new(),
+            format_heap: Heap::new(),
+            message_heap: Heap::new(),
+            number_heap: Heap::new(),
+            next_netop_out: None,
+            next_netop_in: None,
+            current_taskop_out: None,
+            current_taskop_in: None,
+            wants_tasks: true,
+            last_task_id: TaskID::default(),
+        }
     }
 
     /// Return the next incoming (app<-net) command we want the network protocol
@@ -155,9 +260,34 @@ impl Interpreter {
         self.next_netop_in.take().ok_or(())
     }
 
+    /// Return the next outgoing (app->net) command we want the network protocol
+    /// to run, or an error if the app->net direction should block for now.
+    fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
+        self.execute_until_blocked();
+        self.next_netop_out.take().ok_or(())
+    }
+
+    /// Inserts the given new task into the old Option. Panics if the option
+    /// is Some and its task id does not match the new task id.
+    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
+        match opt {
+            Some(op) => {
+                if op.task.id != new.id {
+                    panic!("Cannot overwrite task")
+                }
+            }
+            None => {
+                *opt = Some(TaskOp {
+                    task: new,
+                    next_ins_index: 0,
+                })
+            }
+        };
+    }
+
     /// Store the given bytes on the heap at the given address.
-    fn store(&mut self, addr: HeapAddr, bytes: Bytes) {
-        self.bytes_heap.write(addr, bytes);
+    fn store(&mut self, addr: Identifier, bytes: Bytes) {
+        self.bytes_heap.insert(addr, bytes);
     }
 }
 
@@ -208,7 +338,7 @@ impl SharedAsyncInterpreter {
         .await
     }
 
-    pub async fn store(&mut self, addr: HeapAddr, bytes: Bytes) {
+    pub async fn store(&mut self, addr: Identifier, bytes: Bytes) {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
         std::future::poll_fn(move |_| match self.inner.try_lock() {
@@ -282,6 +412,18 @@ mod tests {
                         field_names: vec!["payload".id()],
                     }
                     .into(),
+                    ComputeLengthArgs {
+                        name: "length_value_on_heap".id(),
+                        msg_name: "message".id(),
+                        field_name: "length".id(),
+                    }
+                    .into(),
+                    SetNumericValueArgs {
+                        msg_name: "message".id(),
+                        field_name: "length".id(),
+                        name: "length_value_on_heap".id(),
+                    }
+                    .into(),
                     WriteNetArgs {
                         msg_name: "message".id(),
                     }
@@ -309,9 +451,10 @@ mod tests {
                         field_names: vec!["length".id()],
                     }
                     .into(),
-                    ComputeLengthArgs {
+                    GetNumericValueArgs {
                         name: "num_payload_bytes".id(),
                         msg_name: "message_length_part".id(),
+                        field_name: "length".id(),
                     }
                     .into(),
                     ReadNetArgs {
@@ -332,6 +475,7 @@ mod tests {
                     .into(),
                     WriteAppArgs {
                         msg_name: "message_payload_part".id(),
+                        field_name: "payload".id(),
                     }
                     .into(),
                 ],

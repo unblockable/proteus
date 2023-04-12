@@ -198,7 +198,7 @@ pub enum DataType {
     Compound(CompoundType),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Identifier(pub String);
 
 impl FromStr for Identifier {
@@ -354,7 +354,7 @@ impl AbstractFormat {
         for (id, size) in sizes {
             for field in self.format.fields.iter_mut() {
                 if id == &field.name {
-                    if let Array::Dynamic(d) = &field.dtype {
+                    if let Array::Dynamic(_) = &field.dtype {
                         field.dtype =
                             PrimitiveArray(PrimitiveType::Numeric(NumericType::U8), *size).into()
                     }
