@@ -20,12 +20,32 @@ pub enum TaskSet {
     InAndOutTasks(TaskPair),
 }
 
-#[derive(Eq, PartialEq)]
-pub struct TaskID {}
+#[derive(Eq, PartialEq, Clone, Copy)]
+pub struct TaskID {
+    id: usize,
+}
 
 impl TaskID {
-    pub fn default() -> TaskID {
-        TaskID {}
+    pub fn into_inner(&self) -> usize {
+        self.id
+    }
+}
+
+impl From<TaskID> for usize {
+    fn from(value: TaskID) -> Self {
+        value.id
+    }
+}
+
+impl From<usize> for TaskID {
+    fn from(value: usize) -> Self {
+        TaskID { id: value }
+    }
+}
+
+impl std::default::Default for TaskID {
+    fn default() -> TaskID {
+        TaskID { id: 0 }
     }
 }
 

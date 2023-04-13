@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::lang::common::Role;
 use crate::lang::types::*;
 use core::str::FromStr;
 use pest::iterators::{Pair, Pairs};
@@ -224,7 +225,7 @@ fn parse_psf(p: &RulePair) -> PSF {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use pest::Parser;
     use std::fs;
@@ -462,8 +463,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_psf() {
+    pub fn parse_example_psf() -> PSF {
         let filepath = "src/lang/parse/example.psf";
         let input = fs::read_to_string(filepath).expect("cannot read example file");
 
@@ -471,7 +471,13 @@ mod tests {
 
         let mut p = ProteusLiteParser::parse(rule, &input).expect("Unsuccessful parse");
         let mut pair = p.next().unwrap();
-        let output = parse_psf(&mut pair);
-        println!("{:?}", output);
+        let psf = parse_psf(&mut pair);
+        assert!(psf.is_valid());
+        psf
+    }
+
+    #[test]
+    fn test_parse_psf() {
+        parse_example_psf();
     }
 }

@@ -1,4 +1,5 @@
 pub mod common;
+pub mod compiler;
 pub mod field;
 pub mod interpreter;
 pub mod mem;

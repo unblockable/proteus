@@ -3,6 +3,7 @@
 use std::collections::hash_map::HashMap;
 use std::convert::{From, TryFrom};
 use std::str::FromStr;
+use crate::lang::common::Role;
 
 pub trait StaticallySized {
     fn size_of(&self) -> usize;
@@ -199,7 +200,7 @@ pub enum DataType {
     Compound(CompoundType),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub struct Identifier(pub String);
 
 impl FromStr for Identifier {
@@ -442,12 +443,6 @@ impl FromStr for FieldSemantic {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Role {
-    Client,
-    Server,
-}
-
 impl FromStr for Role {
     type Err = ParseError;
 
@@ -511,6 +506,23 @@ pub struct SequenceSpecifier {
 pub struct PSF {
     pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
     pub sequence: Vec<SequenceSpecifier>,
+}
+
+impl PSF {
+    fn validate_seqs(&self) -> bool {
+        for s in &self.sequence[..] {
+            if !self.formats.contains_key(&s.format) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Run checks to ensure that the PSF is semantically valid
+    pub fn is_valid(&self) -> bool {
+        self.validate_seqs()
+    }
 }
 
 #[cfg(test)]

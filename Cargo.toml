@@ -13,6 +13,7 @@ tokio = { version = "1.17.0", features = ["macros", "rt", "rt-multi-thread", "io
 typestate = "0.8.0"
 pest = "2.0"
 pest_derive = "2.0"
+petgraph = "0.6.3"
 
 # Crypto dependencies
 x25519-dalek = "1" # ephemeral key exchange
