@@ -82,6 +82,55 @@ struct Interpreter {
 }
 
 impl Interpreter {
+    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
+        Self {
+            spec: Box::new(spec),
+            bytes_heap: Heap::new(),
+            format_heap: Heap::new(),
+            message_heap: Heap::new(),
+            number_heap: Heap::new(),
+            next_netop_out: None,
+            next_netop_in: None,
+            current_taskop_out: None,
+            current_taskop_in: None,
+            wants_tasks: true,
+            last_task_id: TaskID::default(),
+        }
+    }
+
+    /// Loads task from the task provider. Panics if we already have a current
+    /// task in/out, we receive another one from the provider, and the ID of the
+    /// new task does not match that of the existing task.
+    fn load_tasks(&mut self) {
+        match self.spec.get_next_tasks(&self.last_task_id) {
+            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
+            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
+            TaskSet::InAndOutTasks(pair) => {
+                Self::set_task(&mut self.current_taskop_in, pair.in_task);
+                Self::set_task(&mut self.current_taskop_out, pair.out_task);
+            }
+        };
+        self.wants_tasks = false;
+    }
+
+    /// Inserts the given new task into the old Option. Panics if the option
+    /// is Some and its task id does not match the new task id.
+    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
+        match opt {
+            Some(op) => {
+                if op.task.id != new.id {
+                    panic!("Cannot overwrite task")
+                }
+            }
+            None => {
+                *opt = Some(TaskOp {
+                    task: new,
+                    next_ins_index: 0,
+                })
+            }
+        };
+    }
+
     /// Returns Ok if we consider the instruction complete, Err if we need to
     /// block on net io.
     fn execute_instruction(&mut self, ins: &Instruction) -> Result<(), interpreter::Error> {
@@ -181,40 +230,10 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Loads task from the task provider. Panics if we already have a current
-    /// task in/out, we receive another one from the provider, and the ID of the
-    /// new task does not match that of the existing task.
-    fn load_tasks(&mut self) {
-        match self.spec.get_next_tasks(&self.last_task_id) {
-            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
-            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
-            TaskSet::InAndOutTasks(pair) => {
-                Self::set_task(&mut self.current_taskop_in, pair.in_task);
-                Self::set_task(&mut self.current_taskop_out, pair.out_task);
-            }
-        };
-        self.wants_tasks = false;
-    }
-
-    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
-        Self {
-            spec: Box::new(spec),
-            bytes_heap: Heap::new(),
-            format_heap: Heap::new(),
-            message_heap: Heap::new(),
-            number_heap: Heap::new(),
-            next_netop_out: None,
-            next_netop_in: None,
-            current_taskop_out: None,
-            current_taskop_in: None,
-            wants_tasks: true,
-            last_task_id: TaskID::default(),
-        }
-    }
-
     /// Return the next incoming (app<-net) command we want the network protocol
     /// to run, or an error if the app<-net direction should block for now.
     fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
+        // TODO: refactor this and next_net_cmd_out.
         loop {
             if self.wants_tasks {
                 self.load_tasks();
@@ -243,6 +262,7 @@ impl Interpreter {
     /// Return the next outgoing (app->net) command we want the network protocol
     /// to run, or an error if the app->net direction should block for now.
     fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
+        // TODO: refactor this and next_net_cmd_in.
         loop {
             if self.wants_tasks {
                 self.load_tasks();
@@ -266,24 +286,6 @@ impl Interpreter {
                 None => return Err(()),
             }
         }
-    }
-
-    /// Inserts the given new task into the old Option. Panics if the option
-    /// is Some and its task id does not match the new task id.
-    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
-        match opt {
-            Some(op) => {
-                if op.task.id != new.id {
-                    panic!("Cannot overwrite task")
-                }
-            }
-            None => {
-                *opt = Some(TaskOp {
-                    task: new,
-                    next_ins_index: 0,
-                })
-            }
-        };
     }
 
     /// Store the given bytes on the heap at the given address.
