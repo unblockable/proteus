@@ -54,6 +54,10 @@ pub struct Task {
     pub id: TaskID,
 }
 
+// Auto-generates from implementations like
+//   `impl From<WriteAppArgs> for Instruction`
+// so we can upcast from args to the instruction variant.
+#[enum_from::enum_from]
 pub enum Instruction {
     ComputeLength(ComputeLengthArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
@@ -75,21 +79,9 @@ pub struct ComputeLengthArgs {
     pub field_name: Identifier,
 }
 
-impl From<ComputeLengthArgs> for Instruction {
-    fn from(value: ComputeLengthArgs) -> Self {
-        Instruction::ComputeLength(value)
-    }
-}
-
 pub struct ReadAppArgs {
     pub name: Identifier,
     pub len: Range<usize>,
-}
-
-impl From<ReadAppArgs> for Instruction {
-    fn from(value: ReadAppArgs) -> Self {
-        Instruction::ReadApp(value)
-    }
 }
 
 pub struct ConcretizeFormatArgs {
@@ -97,21 +89,9 @@ pub struct ConcretizeFormatArgs {
     pub aformat: AbstractFormat,
 }
 
-impl From<ConcretizeFormatArgs> for Instruction {
-    fn from(value: ConcretizeFormatArgs) -> Self {
-        Instruction::ConcretizeFormat(value)
-    }
-}
-
 pub struct GenRandomBytesArgs {
     pub name: Identifier,
     pub len: Range<usize>,
-}
-
-impl From<GenRandomBytesArgs> for Instruction {
-    fn from(value: GenRandomBytesArgs) -> Self {
-        Instruction::GenRandomBytes(value)
-    }
 }
 
 pub struct CreateMessageArgs {
@@ -123,20 +103,8 @@ pub struct CreateMessageArgs {
     pub field_names: Vec<Identifier>,
 }
 
-impl From<CreateMessageArgs> for Instruction {
-    fn from(value: CreateMessageArgs) -> Self {
-        Instruction::CreateMessage(value)
-    }
-}
-
 pub struct WriteNetArgs {
     pub msg_name: Identifier,
-}
-
-impl From<WriteNetArgs> for Instruction {
-    fn from(value: WriteNetArgs) -> Self {
-        Instruction::WriteNet(value)
-    }
 }
 
 pub enum ReadNetLength {
@@ -151,23 +119,11 @@ pub struct ReadNetArgs {
     pub len: ReadNetLength,
 }
 
-impl From<ReadNetArgs> for Instruction {
-    fn from(value: ReadNetArgs) -> Self {
-        Instruction::ReadNet(value)
-    }
-}
-
 // Get the numeric value from msg->field and store it in name.
 pub struct GetNumericValueArgs {
     pub name: Identifier,
     pub msg_name: Identifier,
     pub field_name: Identifier,
-}
-
-impl From<GetNumericValueArgs> for Instruction {
-    fn from(value: GetNumericValueArgs) -> Self {
-        Instruction::GetNumericValue(value)
-    }
 }
 
 pub struct SetNumericValueArgs {
@@ -176,19 +132,7 @@ pub struct SetNumericValueArgs {
     pub name: Identifier,
 }
 
-impl From<SetNumericValueArgs> for Instruction {
-    fn from(value: SetNumericValueArgs) -> Self {
-        Instruction::SetNumericValue(value)
-    }
-}
-
 pub struct WriteAppArgs {
     pub msg_name: Identifier,
     pub field_name: Identifier, // usually payload field
-}
-
-impl From<WriteAppArgs> for Instruction {
-    fn from(value: WriteAppArgs) -> Self {
-        Instruction::WriteApp(value)
-    }
 }
