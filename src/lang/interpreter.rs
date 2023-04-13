@@ -61,7 +61,7 @@ pub enum NetOpIn {
     Error(String),
 }
 
-struct TaskOp {
+struct Program {
     task: Task,
     next_ins_index: usize,
     bytes_heap: Heap<Bytes>,
@@ -70,7 +70,7 @@ struct TaskOp {
     number_heap: Heap<u128>,
 }
 
-impl TaskOp {
+impl Program {
     fn new(task: Task) -> Self {
         Self {
             task,
@@ -198,8 +198,8 @@ struct Interpreter {
     spec: Box<dyn TaskProvider + Send + 'static>,
     next_netop_out: Option<NetOpOut>,
     next_netop_in: Option<NetOpIn>,
-    current_taskop_out: Option<TaskOp>,
-    current_taskop_in: Option<TaskOp>,
+    current_prog_out: Option<Program>,
+    current_prog_in: Option<Program>,
     wants_tasks: bool,
     last_task_id: TaskID,
 }
@@ -210,8 +210,8 @@ impl Interpreter {
             spec: Box::new(spec),
             next_netop_out: None,
             next_netop_in: None,
-            current_taskop_out: None,
-            current_taskop_in: None,
+            current_prog_out: None,
+            current_prog_in: None,
             wants_tasks: true,
             last_task_id: TaskID::default(),
         }
@@ -222,11 +222,11 @@ impl Interpreter {
     /// new task does not match that of the existing task.
     fn load_tasks(&mut self) {
         match self.spec.get_next_tasks(&self.last_task_id) {
-            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
-            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
+            TaskSet::InTask(task) => Self::set_task(&mut self.current_prog_in, task),
+            TaskSet::OutTask(task) => Self::set_task(&mut self.current_prog_out, task),
             TaskSet::InAndOutTasks(pair) => {
-                Self::set_task(&mut self.current_taskop_in, pair.in_task);
-                Self::set_task(&mut self.current_taskop_out, pair.out_task);
+                Self::set_task(&mut self.current_prog_in, pair.in_task);
+                Self::set_task(&mut self.current_prog_out, pair.out_task);
             }
         };
         self.wants_tasks = false;
@@ -234,14 +234,14 @@ impl Interpreter {
 
     /// Inserts the given new task into the old Option. Panics if the option
     /// is Some and its task id does not match the new task id.
-    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
+    fn set_task(opt: &mut Option<Program>, new: Task) {
         match opt {
             Some(op) => {
                 if op.task.id != new.id {
                     panic!("Cannot overwrite task")
                 }
             }
-            None => *opt = Some(TaskOp::new(new)),
+            None => *opt = Some(Program::new(new)),
         };
     }
 
@@ -254,15 +254,15 @@ impl Interpreter {
                 self.load_tasks();
             }
 
-            match self.current_taskop_in.take() {
-                Some(mut op) => {
-                    while op.has_next_instruction() {
-                        if let Err(e) = op.execute_next_instruction(self) {
+            match self.current_prog_in.take() {
+                Some(mut program) => {
+                    while program.has_next_instruction() {
+                        if let Err(e) = program.execute_next_instruction(self) {
                             self.next_netop_in = Some(NetOpIn::Error(e.into()));
                         };
 
                         if let Some(netop) = self.next_netop_in.take() {
-                            self.current_taskop_in = Some(op);
+                            self.current_prog_in = Some(program);
                             return Ok(netop);
                         }
                     }
@@ -282,15 +282,15 @@ impl Interpreter {
                 self.load_tasks();
             }
 
-            match self.current_taskop_out.take() {
-                Some(mut op) => {
-                    while op.has_next_instruction() {
-                        if let Err(e) = op.execute_next_instruction(self) {
+            match self.current_prog_out.take() {
+                Some(mut program) => {
+                    while program.has_next_instruction() {
+                        if let Err(e) = program.execute_next_instruction(self) {
                             self.next_netop_out = Some(NetOpOut::Error(e.into()));
                         };
 
                         if let Some(netop) = self.next_netop_out.take() {
-                            self.current_taskop_out = Some(op);
+                            self.current_prog_out = Some(program);
                             return Ok(netop);
                         }
                     }
@@ -303,13 +303,13 @@ impl Interpreter {
 
     /// Store the given bytes on the heap at the given address.
     fn store_in(&mut self, addr: Identifier, bytes: Bytes) {
-        if let Some(t) = self.current_taskop_in.as_mut() {
+        if let Some(t) = self.current_prog_in.as_mut() {
             t.store_bytes(addr, bytes);
         }
     }
 
     fn store_out(&mut self, addr: Identifier, bytes: Bytes) {
-        if let Some(t) = self.current_taskop_out.as_mut() {
+        if let Some(t) = self.current_prog_out.as_mut() {
             t.store_bytes(addr, bytes);
         }
     }
@@ -532,8 +532,8 @@ mod tests {
     fn load_tasks() {
         let mut int = Interpreter::new(LengthPayloadSpec::new());
         int.load_tasks();
-        assert!(int.current_taskop_in.is_some());
-        assert!(int.current_taskop_out.is_some());
+        assert!(int.current_prog_in.is_some());
+        assert!(int.current_prog_out.is_some());
     }
 
     fn read_app(int: &mut Interpreter) -> Bytes {
