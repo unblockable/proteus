@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 
-use std::fs;
-
 use crate::lang::types::*;
+use core::str::FromStr;
 use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
+use std::collections::hash_map::HashMap;
+use std::fmt::Debug;
 
 #[derive(Parser)]
 #[grammar = "lang/parse/proteus_lite.pest"]
@@ -17,14 +18,21 @@ fn print_type_of<T>(_: &T) {
     println!("{}", std::any::type_name::<T>())
 }
 
+fn parse_simple<T: FromStr>(p: &RulePair) -> T
+where
+    <T as std::str::FromStr>::Err: Debug,
+{
+    p.as_str().parse().unwrap()
+}
+
 fn parse_numeric_type(p: &RulePair) -> NumericType {
     assert!(p.as_rule() == Rule::numeric_type);
-    p.as_str().parse().unwrap()
+    parse_simple(&p)
 }
 
 fn parse_primitive_type(p: &RulePair) -> PrimitiveType {
     assert!(p.as_rule() == Rule::primitive_type);
-    p.as_str().parse().unwrap()
+    parse_simple(&p)
 }
 
 fn parse_positive_numeric_literal(p: &RulePair) -> usize {
@@ -34,8 +42,7 @@ fn parse_positive_numeric_literal(p: &RulePair) -> usize {
 
 fn parse_identifier(p: &RulePair) -> Identifier {
     assert!(p.as_rule() == Rule::identifier);
-
-    p.as_str().parse().unwrap()
+    parse_simple(&p)
 }
 
 fn parse_primitive_array(p: &RulePair) -> PrimitiveArray {
@@ -135,29 +142,92 @@ fn parse_format(p: &RulePair) -> Format {
     Format { name: id, fields }
 }
 
-fn parse_psf(p: &RulePair) -> PSF {
-    assert!(p.as_rule() == Rule::psf);
+fn parse_field_semantic(p: &RulePair) -> FieldSemantic {
+    assert!(p.as_rule() == Rule::field_semantic);
+    parse_simple(&p)
+}
 
-    let mut formats: std::collections::HashMap<Identifier, AbstractFormat> = Default::default();
+fn parse_semantic_binding(p: &RulePair) -> SemanticBinding {
+    assert!(p.as_rule() == Rule::semantic_binding);
 
     let mut p = p.clone().into_inner();
 
-    while let Some(f) = p.next() {
-        println!("{:?}", p);
-        if f.as_rule() == Rule::format {
-            let format = parse_format(&f);
-            formats.insert(format.name.clone(), format.into());
+    let format = parse_identifier(&p.next().unwrap());
+    let field = parse_identifier(&p.next().unwrap());
+    let semantic = parse_field_semantic(&p.next().unwrap());
+
+    SemanticBinding {
+        format,
+        field,
+        semantic,
+    }
+}
+
+fn parse_role(p: &RulePair) -> Role {
+    assert!(p.as_rule() == Rule::role);
+    parse_simple(&p)
+}
+
+fn parse_phase(p: &RulePair) -> Phase {
+    assert!(p.as_rule() == Rule::phase);
+    parse_simple(&p)
+}
+
+fn parse_sequence_specifier(p: &RulePair) -> SequenceSpecifier {
+    assert!(p.as_rule() == Rule::sequence_specifier);
+
+    let mut p = p.clone().into_inner();
+
+    let role = parse_role(&p.next().unwrap());
+    let phase = parse_phase(&p.next().unwrap());
+    let format = parse_identifier(&p.next().unwrap());
+
+    SequenceSpecifier {
+        role,
+        phase,
+        format,
+    }
+}
+
+fn parse_psf(p: &RulePair) -> PSF {
+    assert!(p.as_rule() == Rule::psf);
+
+    let mut formats: HashMap<Identifier, AbstractFormatAndSemantics> = Default::default();
+    let mut sequence: Vec<SequenceSpecifier> = vec![];
+
+    let mut p = p.clone().into_inner();
+
+    while let Some(x) = p.next() {
+        match x.as_rule() {
+            Rule::format => {
+                let format: AbstractFormatAndSemantics =
+                    Into::<AbstractFormat>::into(parse_format(&x)).into();
+                formats.insert(format.format.format.name.clone(), format);
+            }
+            Rule::semantic_binding => {
+                let sem_binding = parse_semantic_binding(&x);
+                formats
+                    .get_mut(&sem_binding.format)
+                    .unwrap()
+                    .semantics
+                    .insert(sem_binding.field.clone(), sem_binding.semantic);
+            }
+            Rule::sequence_specifier => {
+                let seqspec = parse_sequence_specifier(&x);
+                sequence.push(seqspec);
+            }
+            _ => {}
         }
     }
 
-    PSF { formats }
+    PSF { formats, sequence }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use pest::Parser;
+    use std::fs;
     use std::iter::Iterator;
 
     fn test_rule_pair<
@@ -304,7 +374,7 @@ mod tests {
     #[test]
     fn test_format() {
         let test_cases = vec![(
-            "DEFINE Handshake FIELDS \
+            "DEFINE Handshake \
             {NAME: Foo; TYPE: u8}, \
             {NAME: Bar; TYPE: [u32; 10]};",
             Format {
@@ -325,6 +395,71 @@ mod tests {
         println!("{:?}", test_cases[0].1.maybe_size_of().unwrap());
 
         test_rule_pair(test_cases.iter(), Rule::format, parse_format);
+    }
+
+    #[test]
+    fn test_parse_field_semantic() {
+        let test_cases = vec![
+            ("PAYLOAD", FieldSemantic::Payload),
+            ("PADDING", FieldSemantic::Padding),
+            ("LENGTH", FieldSemantic::Length),
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::field_semantic,
+            parse_field_semantic,
+        );
+    }
+
+    #[test]
+    fn test_parse_semantic_binding() {
+        let s = "{ FORMAT: Foo; FIELD: Bar; SEMANTIC: PAYLOAD };";
+
+        let sb = SemanticBinding {
+            format: "Foo".id(),
+            field: "Bar".id(),
+            semantic: FieldSemantic::Payload,
+        };
+
+        let test_cases = vec![(s, sb)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::semantic_binding,
+            parse_semantic_binding,
+        );
+    }
+
+    #[test]
+    fn test_parse_role() {
+        let test_cases = vec![("CLIENT", Role::Client), ("SERVER", Role::Server)];
+        test_rule_pair(test_cases.iter(), Rule::role, parse_role);
+    }
+
+    #[test]
+    fn test_parse_phase() {
+        let test_cases = vec![("HANDSHAKE", Phase::Handshake), ("DATA", Phase::Data)];
+        test_rule_pair(test_cases.iter(), Rule::phase, parse_phase);
+    }
+
+    #[test]
+    fn test_parse_sequence_specifier() {
+        let s = "{ ROLE: CLIENT; PHASE: HANDSHAKE; FORMAT: Foo };";
+
+        let ss = SequenceSpecifier {
+            role: Role::Client,
+            phase: Phase::Handshake,
+            format: "Foo".id(),
+        };
+
+        let test_cases = vec![(s, ss)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::sequence_specifier,
+            parse_sequence_specifier,
+        );
     }
 
     #[test]

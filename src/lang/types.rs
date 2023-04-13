@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::hash_map::HashMap;
 use std::convert::{From, TryFrom};
 use std::str::FromStr;
 
@@ -433,17 +434,83 @@ impl FromStr for FieldSemantic {
 
     fn from_str(s: &str) -> Result<Self, ParseError> {
         match s {
-            "payload" => Ok(FieldSemantic::Payload),
-            "padding" => Ok(FieldSemantic::Padding),
-            "length" => Ok(FieldSemantic::Length),
+            "PAYLOAD" => Ok(FieldSemantic::Payload),
+            "PADDING" => Ok(FieldSemantic::Padding),
+            "LENGTH" => Ok(FieldSemantic::Length),
             _ => Err(ParseError {}),
         }
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Role {
+    Client,
+    Server,
+}
+
+impl FromStr for Role {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        match s {
+            "CLIENT" => Ok(Role::Client),
+            "SERVER" => Ok(Role::Server),
+            _ => Err(ParseError {}),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Phase {
+    Handshake,
+    Data,
+}
+
+impl FromStr for Phase {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        match s {
+            "HANDSHAKE" => Ok(Phase::Handshake),
+            "DATA" => Ok(Phase::Data),
+            _ => Err(ParseError {}),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticBinding {
+    pub format: Identifier,
+    pub field: Identifier,
+    pub semantic: FieldSemantic,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AbstractFormatAndSemantics {
+    pub format: AbstractFormat,
+    pub semantics: HashMap<Identifier, FieldSemantic>,
+}
+
+impl From<AbstractFormat> for AbstractFormatAndSemantics {
+    fn from(item: AbstractFormat) -> AbstractFormatAndSemantics {
+        AbstractFormatAndSemantics {
+            format: item,
+            semantics: Default::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SequenceSpecifier {
+    pub role: Role,
+    pub phase: Phase,
+    pub format: Identifier,
+}
+
 #[derive(Debug)]
 pub struct PSF {
-    pub formats: std::collections::HashMap<Identifier, AbstractFormat>,
+    pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
+    pub sequence: Vec<SequenceSpecifier>,
 }
 
 #[cfg(test)]

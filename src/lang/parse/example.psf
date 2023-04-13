@@ -1,6 +1,17 @@
 @SEGMENT FORMATS
 
-DEFINE DataMsg
-FIELDS
-  { NAME: Length ; TYPE: u32 },
-  { NAME: Payload ; TYPE: [u8; Length.size_of] };
+  DEFINE DataMsg
+    { NAME: Length  ; TYPE: u32 },
+    { NAME: Payload ; TYPE: [u8; Length.size_of] };
+
+@SEGMENT SEMANTICS
+
+  { FORMAT: DataMsg; FIELD: Length;  SEMANTIC: LENGTH };
+  { FORMAT: DataMsg; FIELD: Payload; SEMANTIC: PAYLOAD };
+
+@SEGMENT SEQUENCE
+
+  { ROLE: CLIENT; PHASE: HANDSHAKE; FORMAT: DataMsg };
+  { ROLE: SERVER; PHASE: HANDSHAKE; FORMAT: DataMsg };
+  { ROLE: CLIENT; PHASE: DATA;      FORMAT: DataMsg };
+  { ROLE: SERVER; PHASE: DATA;      FORMAT: DataMsg };
