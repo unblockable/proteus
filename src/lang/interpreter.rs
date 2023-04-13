@@ -62,79 +62,35 @@ pub enum NetOpIn {
 }
 
 struct TaskOp {
-    // FIXME each taskop gets its own heap(s)?
     task: Task,
     next_ins_index: usize,
-}
-
-struct Interpreter {
-    spec: Box<dyn TaskProvider + Send + 'static>,
     bytes_heap: Heap<Bytes>,
     format_heap: Heap<ConcreteFormat>,
     message_heap: Heap<Message>,
     number_heap: Heap<u128>,
-    next_netop_out: Option<NetOpOut>,
-    next_netop_in: Option<NetOpIn>,
-    current_taskop_out: Option<TaskOp>,
-    current_taskop_in: Option<TaskOp>,
-    wants_tasks: bool,
-    last_task_id: TaskID,
 }
 
-impl Interpreter {
-    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
+impl TaskOp {
+    fn new(task: Task) -> Self {
         Self {
-            spec: Box::new(spec),
+            task,
+            next_ins_index: 0,
             bytes_heap: Heap::new(),
             format_heap: Heap::new(),
             message_heap: Heap::new(),
             number_heap: Heap::new(),
-            next_netop_out: None,
-            next_netop_in: None,
-            current_taskop_out: None,
-            current_taskop_in: None,
-            wants_tasks: true,
-            last_task_id: TaskID::default(),
         }
     }
 
-    /// Loads task from the task provider. Panics if we already have a current
-    /// task in/out, we receive another one from the provider, and the ID of the
-    /// new task does not match that of the existing task.
-    fn load_tasks(&mut self) {
-        match self.spec.get_next_tasks(&self.last_task_id) {
-            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
-            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
-            TaskSet::InAndOutTasks(pair) => {
-                Self::set_task(&mut self.current_taskop_in, pair.in_task);
-                Self::set_task(&mut self.current_taskop_out, pair.out_task);
-            }
-        };
-        self.wants_tasks = false;
+    fn has_next_instruction(&self) -> bool {
+        self.next_ins_index < self.task.ins.len()
     }
 
-    /// Inserts the given new task into the old Option. Panics if the option
-    /// is Some and its task id does not match the new task id.
-    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
-        match opt {
-            Some(op) => {
-                if op.task.id != new.id {
-                    panic!("Cannot overwrite task")
-                }
-            }
-            None => {
-                *opt = Some(TaskOp {
-                    task: new,
-                    next_ins_index: 0,
-                })
-            }
-        };
-    }
-
-    /// Returns Ok if we consider the instruction complete, Err if we need to
-    /// block on net io.
-    fn execute_instruction(&mut self, ins: &Instruction) -> Result<(), interpreter::Error> {
-        match ins {
+    fn execute_next_instruction(
+        &mut self,
+        interpreter: &mut Interpreter,
+    ) -> Result<(), interpreter::Error> {
+        match &self.task.ins[self.next_ins_index] {
             Instruction::GetNumericValue(args) => {
                 let msg = self.message_heap.get(&args.msg_name).unwrap();
                 let num = msg.get_field_unsigned_numeric(&args.field_name).unwrap();
@@ -179,7 +135,7 @@ impl Interpreter {
                     len: args.len.clone(),
                     addr: args.name.clone(),
                 });
-                self.next_netop_out = Some(netop);
+                interpreter.next_netop_out = Some(netop);
             }
             Instruction::ReadNet(args) => {
                 let len = match &args.len {
@@ -198,7 +154,7 @@ impl Interpreter {
                     len,
                     addr: args.name.clone(),
                 });
-                self.next_netop_in = Some(netop);
+                interpreter.next_netop_in = Some(netop);
             }
             Instruction::ComputeLength(args) => {
                 let msg = self.message_heap.get(&args.msg_name).unwrap();
@@ -217,17 +173,76 @@ impl Interpreter {
                 let netop = NetOpIn::SendApp(SendArgs {
                     bytes: msg.into_inner_field(&args.field_name).unwrap(),
                 });
-                self.next_netop_in = Some(netop);
+                interpreter.next_netop_in = Some(netop);
             }
             Instruction::WriteNet(args) => {
                 let msg = self.message_heap.remove(&args.msg_name).unwrap();
                 let netop = NetOpOut::SendNet(SendArgs {
                     bytes: msg.into_inner(),
                 });
-                self.next_netop_out = Some(netop);
+                interpreter.next_netop_out = Some(netop);
             }
         };
+
+        self.next_ins_index += 1;
+
         Ok(())
+    }
+
+    fn store_bytes(&mut self, addr: Identifier, bytes: Bytes) {
+        self.bytes_heap.insert(addr, bytes);
+    }
+}
+
+struct Interpreter {
+    spec: Box<dyn TaskProvider + Send + 'static>,
+    next_netop_out: Option<NetOpOut>,
+    next_netop_in: Option<NetOpIn>,
+    current_taskop_out: Option<TaskOp>,
+    current_taskop_in: Option<TaskOp>,
+    wants_tasks: bool,
+    last_task_id: TaskID,
+}
+
+impl Interpreter {
+    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
+        Self {
+            spec: Box::new(spec),
+            next_netop_out: None,
+            next_netop_in: None,
+            current_taskop_out: None,
+            current_taskop_in: None,
+            wants_tasks: true,
+            last_task_id: TaskID::default(),
+        }
+    }
+
+    /// Loads task from the task provider. Panics if we already have a current
+    /// task in/out, we receive another one from the provider, and the ID of the
+    /// new task does not match that of the existing task.
+    fn load_tasks(&mut self) {
+        match self.spec.get_next_tasks(&self.last_task_id) {
+            TaskSet::InTask(task) => Self::set_task(&mut self.current_taskop_in, task),
+            TaskSet::OutTask(task) => Self::set_task(&mut self.current_taskop_out, task),
+            TaskSet::InAndOutTasks(pair) => {
+                Self::set_task(&mut self.current_taskop_in, pair.in_task);
+                Self::set_task(&mut self.current_taskop_out, pair.out_task);
+            }
+        };
+        self.wants_tasks = false;
+    }
+
+    /// Inserts the given new task into the old Option. Panics if the option
+    /// is Some and its task id does not match the new task id.
+    fn set_task(opt: &mut Option<TaskOp>, new: Task) {
+        match opt {
+            Some(op) => {
+                if op.task.id != new.id {
+                    panic!("Cannot overwrite task")
+                }
+            }
+            None => *opt = Some(TaskOp::new(new)),
+        };
     }
 
     /// Return the next incoming (app<-net) command we want the network protocol
@@ -241,10 +256,9 @@ impl Interpreter {
 
             match self.current_taskop_in.take() {
                 Some(mut op) => {
-                    while op.next_ins_index < op.task.ins.len() {
-                        match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
-                            Ok(_) => op.next_ins_index += 1,
-                            Err(e) => self.next_netop_in = Some(NetOpIn::Error(e.into())),
+                    while op.has_next_instruction() {
+                        if let Err(e) = op.execute_next_instruction(self) {
+                            self.next_netop_in = Some(NetOpIn::Error(e.into()));
                         };
 
                         if let Some(netop) = self.next_netop_in.take() {
@@ -270,10 +284,9 @@ impl Interpreter {
 
             match self.current_taskop_out.take() {
                 Some(mut op) => {
-                    while op.next_ins_index < op.task.ins.len() {
-                        match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
-                            Ok(_) => op.next_ins_index += 1,
-                            Err(e) => self.next_netop_out = Some(NetOpOut::Error(e.into())),
+                    while op.has_next_instruction() {
+                        if let Err(e) = op.execute_next_instruction(self) {
+                            self.next_netop_out = Some(NetOpOut::Error(e.into()));
                         };
 
                         if let Some(netop) = self.next_netop_out.take() {
@@ -289,8 +302,16 @@ impl Interpreter {
     }
 
     /// Store the given bytes on the heap at the given address.
-    fn store(&mut self, addr: Identifier, bytes: Bytes) {
-        self.bytes_heap.insert(addr, bytes);
+    fn store_in(&mut self, addr: Identifier, bytes: Bytes) {
+        if let Some(t) = self.current_taskop_in.as_mut() {
+            t.store_bytes(addr, bytes);
+        }
+    }
+
+    fn store_out(&mut self, addr: Identifier, bytes: Bytes) {
+        if let Some(t) = self.current_taskop_out.as_mut() {
+            t.store_bytes(addr, bytes);
+        }
     }
 }
 
@@ -341,11 +362,21 @@ impl SharedAsyncInterpreter {
         .await
     }
 
-    pub async fn store(&mut self, addr: Identifier, bytes: Bytes) {
+    pub async fn store_out(&mut self, addr: Identifier, bytes: Bytes) {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
         std::future::poll_fn(move |_| match self.inner.try_lock() {
-            Ok(mut inner) => Poll::Ready(inner.store(addr.clone(), bytes.clone())),
+            Ok(mut inner) => Poll::Ready(inner.store_out(addr.clone(), bytes.clone())),
+            Err(_) => Poll::Pending,
+        })
+        .await
+    }
+
+    pub async fn store_in(&mut self, addr: Identifier, bytes: Bytes) {
+        // Yield to the async runtime if we can't get the lock, or if the
+        // interpreter is not wanting to execute a command yet.
+        std::future::poll_fn(move |_| match self.inner.try_lock() {
+            Ok(mut inner) => Poll::Ready(inner.store_in(addr.clone(), bytes.clone())),
             Err(_) => Poll::Pending,
         })
         .await
@@ -505,7 +536,7 @@ mod tests {
         assert!(int.current_taskop_out.is_some());
     }
 
-    fn read_app_write_net_pipeline(int: &mut Interpreter) {
+    fn read_app(int: &mut Interpreter) -> Bytes {
         let args = match int.next_net_cmd_out().unwrap() {
             NetOpOut::RecvApp(args) => args,
             _ => panic!("Unexpected interpreter command"),
@@ -514,8 +545,11 @@ mod tests {
         let payload = Bytes::from("When should I attack?");
         assert!(args.len.contains(&payload.len()));
 
-        int.store(args.addr, payload.clone());
+        int.store_out(args.addr, payload.clone());
+        payload
+    }
 
+    fn write_net(int: &mut Interpreter, payload: Bytes) {
         let args = match int.next_net_cmd_out().unwrap() {
             NetOpOut::SendNet(args) => args,
             _ => panic!("Unexpected interpreter command"),
@@ -529,7 +563,7 @@ mod tests {
         assert_eq!(len as usize, payload.len());
     }
 
-    fn read_net_write_app_pipeline(int: &mut Interpreter) {
+    fn read_net(int: &mut Interpreter) -> Bytes {
         let args = match int.next_net_cmd_in().unwrap() {
             NetOpIn::RecvNet(args) => args,
             _ => panic!("Unexpected interpreter command"),
@@ -539,7 +573,7 @@ mod tests {
         let payload = Bytes::from("Attack at dawn!");
         let mut buf = BytesMut::new();
         buf.put_u16(payload.len() as u16);
-        int.store(args.addr, buf.freeze());
+        int.store_in(args.addr, buf.freeze());
 
         let args = match int.next_net_cmd_in().unwrap() {
             NetOpIn::RecvNet(args) => args,
@@ -547,8 +581,11 @@ mod tests {
         };
 
         assert!(args.len.contains(&payload.len()));
-        int.store(args.addr, payload.clone());
+        int.store_in(args.addr, payload.clone());
+        payload
+    }
 
+    fn write_app(int: &mut Interpreter, payload: Bytes) {
         let args = match int.next_net_cmd_in().unwrap() {
             NetOpIn::SendApp(args) => args,
             _ => panic!("Unexpected interpreter command"),
@@ -556,6 +593,11 @@ mod tests {
 
         assert_eq!(args.bytes.len(), payload.len());
         assert_eq!(args.bytes[..], payload[..]);
+    }
+
+    fn read_app_write_net_pipeline(int: &mut Interpreter) {
+        let payload = read_app(int);
+        write_net(int, payload);
     }
 
     #[test]
@@ -572,6 +614,11 @@ mod tests {
         }
     }
 
+    fn read_net_write_app_pipeline(int: &mut Interpreter) {
+        let payload = read_net(int);
+        write_app(int, payload);
+    }
+
     #[test]
     fn read_net_write_app_once() {
         let mut int = Interpreter::new(LengthPayloadSpec::new());
@@ -583,6 +630,50 @@ mod tests {
         let mut int = Interpreter::new(LengthPayloadSpec::new());
         for _ in 0..10 {
             read_net_write_app_pipeline(&mut int);
+        }
+    }
+
+    #[test]
+    fn interleaved_app_net_app_net() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        for _ in 0..10 {
+            let app_payload = read_app(&mut int);
+            let net_payload = read_net(&mut int);
+            write_app(&mut int, net_payload);
+            write_net(&mut int, app_payload);
+        }
+    }
+
+    #[test]
+    fn interleaved_net_app_net_app() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        for _ in 0..10 {
+            let net_payload = read_net(&mut int);
+            let app_payload = read_app(&mut int);
+            write_net(&mut int, app_payload);
+            write_app(&mut int, net_payload);
+        }
+    }
+
+    #[test]
+    fn interleaved_app_net_net_app() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        for _ in 0..10 {
+            let app_payload = read_app(&mut int);
+            let net_payload = read_net(&mut int);
+            write_net(&mut int, app_payload);
+            write_app(&mut int, net_payload);
+        }
+    }
+
+    #[test]
+    fn interleaved_net_app_app_net() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        for _ in 0..10 {
+            let net_payload = read_net(&mut int);
+            let app_payload = read_app(&mut int);
+            write_app(&mut int, net_payload);
+            write_net(&mut int, app_payload);
         }
     }
 }

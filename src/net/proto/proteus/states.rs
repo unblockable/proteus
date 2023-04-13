@@ -95,7 +95,7 @@ async fn obfuscate(
                 total_num_read += net_data.len();
                 log::trace!("obfuscate: read {} app bytes", net_data.len());
 
-                shared_int.store(args.addr, net_data.into()).await;
+                shared_int.store_out(args.addr, net_data.into()).await;
             }
             NetOpOut::SendNet(args) => {
                 log::trace!("obfuscate: trying to write bytes to net");
@@ -159,7 +159,7 @@ async fn deobfuscate(
                 total_num_read += net_data.len();
                 log::trace!("deobfuscate: read {} net bytes", net_data.len());
 
-                shared_int.store(args.addr, net_data.into()).await;
+                shared_int.store_in(args.addr, net_data.into()).await;
             }
             NetOpIn::SendApp(args) => {
                 log::trace!("deobfuscate: trying to write bytes to app");
