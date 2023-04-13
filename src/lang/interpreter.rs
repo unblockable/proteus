@@ -4,7 +4,7 @@ use std::{
     task::Poll,
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 
 use crate::lang::{
     mem::Heap,
@@ -109,43 +109,56 @@ impl Interpreter {
                 todo!()
             }
             Instruction::ReadApp(args) => {
-                // Need to block if we are waiting to recv previous bytes.
-                if self.next_netop_out.is_some() {
-                    return Err(());
-                }
+                let app_bytes_id = args.name.clone();
 
-                let netop = NetOpOut::RecvApp(RecvArgs {
-                    len: args.len.clone(),
-                    addr: args.name.clone(),
-                });
-                self.next_netop_out = Some(netop);
-                Ok(())
+                // We either get here the first time and need to queue the netop,
+                // or we get here the second time and already read the bytes.
+                match self.bytes_heap.get(&app_bytes_id) {
+                    Some(_) => Ok(()),
+                    None => {
+                        if self.next_netop_out.is_none() {
+                            let netop = NetOpOut::RecvApp(RecvArgs {
+                                len: args.len.clone(),
+                                addr: app_bytes_id,
+                            });
+                            self.next_netop_out = Some(netop);
+                        }
+                        // Block on netio
+                        Err(())
+                    }
+                }
             }
             Instruction::ReadNet(args) => {
-                // Need to block if we are waiting to recv a previous message.
-                if self.next_netop_in.is_some() {
-                    return Err(());
-                }
+                let net_bytes_id = args.name.clone();
 
-                let len = match &args.len {
-                    ReadNetLength::Identifier(id) => {
-                        let num = self.number_heap.get(&id).unwrap();
-                        let val = *num as usize;
-                        Range {
-                            start: val,
-                            end: val + 1,
+                // We either get here the first time and need to queue the netop,
+                // or we get here the second time and already read the bytes.
+                match self.bytes_heap.get(&net_bytes_id) {
+                    Some(_) => Ok(()),
+                    None => {
+                        if self.next_netop_in.is_none() {
+                            let len = match &args.len {
+                                ReadNetLength::Identifier(id) => {
+                                    let num = self.number_heap.get(&id).unwrap();
+                                    let val = *num as usize;
+                                    Range {
+                                        start: val,
+                                        end: val + 1,
+                                    }
+                                }
+                                ReadNetLength::Range(r) => r.clone(),
+                            };
+
+                            let netop = NetOpIn::RecvNet(RecvArgs {
+                                len,
+                                addr: net_bytes_id,
+                            });
+                            self.next_netop_in = Some(netop);
                         }
+                        // Block on netio
+                        Err(())
                     }
-                    ReadNetLength::Range(r) => r.clone(),
-                };
-
-                let netop = NetOpIn::RecvNet(RecvArgs {
-                    len,
-                    addr: args.name.clone(),
-                });
-                self.next_netop_in = Some(netop);
-
-                Ok(())
+                }
             }
             Instruction::ComputeLength(args) => {
                 let msg = self.message_heap.get(&args.msg_name).unwrap();
@@ -158,11 +171,11 @@ impl Interpreter {
                 let mut msg = self.message_heap.remove(&args.msg_name).unwrap();
                 msg.set_field_unsigned_numeric(&args.field_name, val)
                     .unwrap();
-                self.message_heap.insert(args.field_name.clone(), msg);
+                self.message_heap.insert(args.msg_name.clone(), msg);
                 Ok(())
             }
             Instruction::WriteApp(args) => {
-                // Need to block if we are waiting to send previous bytes.
+                // Need to block if we have a queued netop.
                 if self.next_netop_in.is_some() {
                     return Err(());
                 }
@@ -173,10 +186,11 @@ impl Interpreter {
                 });
                 self.next_netop_in = Some(netop);
 
+                // Assume it will get written and continue.
                 Ok(())
             }
             Instruction::WriteNet(args) => {
-                // Need to block if we are waiting to send a previous message.
+                // Need to block if we have a queued netop.
                 if self.next_netop_out.is_some() {
                     return Err(());
                 }
@@ -187,6 +201,7 @@ impl Interpreter {
                 });
                 self.next_netop_out = Some(netop);
 
+                // Assume it will get written and continue.
                 Ok(())
             }
         }
@@ -351,12 +366,19 @@ impl SharedAsyncInterpreter {
 
 #[cfg(test)]
 mod tests {
+    use bytes::{Buf, BufMut, BytesMut};
+
     use super::*;
-    use crate::lang::spec::proteus::ProteusSpecBuilder;
     use crate::lang::task::*;
     use crate::lang::types::*;
 
     struct LengthPayloadSpec {}
+
+    impl LengthPayloadSpec {
+        fn new() -> LengthPayloadSpec {
+            Self {}
+        }
+    }
 
     impl TaskProvider for LengthPayloadSpec {
         fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
@@ -488,9 +510,16 @@ mod tests {
     }
 
     #[test]
+    fn load_tasks() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        int.load_tasks();
+        assert!(int.current_taskop_in.is_some());
+        assert!(int.current_taskop_out.is_some());
+    }
+
+    #[test]
     fn read_app_write_net() {
-        let spec = ProteusSpec::from(ProteusSpecBuilder::new());
-        let mut int = Interpreter::new(spec);
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
 
         let args = match int.next_net_cmd_out().unwrap() {
             NetOpOut::RecvApp(args) => args,
@@ -517,8 +546,7 @@ mod tests {
 
     #[test]
     fn read_net_write_app() {
-        let spec = ProteusSpec::from(ProteusSpecBuilder::new());
-        let mut int = Interpreter::new(spec);
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
 
         let args = match int.next_net_cmd_in().unwrap() {
             NetOpIn::RecvNet(args) => args,

@@ -197,16 +197,11 @@ impl Message {
         self.data.freeze()
     }
 
-    pub fn into_inner_field(mut self, field_name: &Identifier) -> Result<Bytes, GetFieldError> {
-        match self.try_get_field_bytes(field_name) {
-            Some(slice) => {
-                // FIXME does this alloc?
-                let mut b = BytesMut::new();
-                b.copy_from_slice(slice);
-                Ok(b.freeze())
-            }
-            None => Err(GetFieldError::NotDefined),
-        }
+    pub fn into_inner_field(mut self, field_name: &Identifier) -> Option<Bytes> {
+        self.format
+            .format
+            .try_get_field_type_offset_and_size(field_name)
+            .map(|(_, offset, size)| self.data.split_off(offset).split_to(size).freeze())
     }
 }
 

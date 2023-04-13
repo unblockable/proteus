@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
+use crate::lang::common::Role;
 use std::collections::hash_map::HashMap;
 use std::convert::{From, TryFrom};
 use std::str::FromStr;
-use crate::lang::common::Role;
 
 pub trait StaticallySized {
     fn size_of(&self) -> usize;
@@ -427,7 +427,7 @@ impl MaybeSized for Format {
 pub enum FieldSemantic {
     Payload,
     Padding,
-    Length
+    Length,
 }
 
 impl FromStr for FieldSemantic {
@@ -490,7 +490,7 @@ impl From<AbstractFormat> for AbstractFormatAndSemantics {
     fn from(item: AbstractFormat) -> AbstractFormatAndSemantics {
         AbstractFormatAndSemantics {
             format: item,
-            semantics: Default::default()
+            semantics: Default::default(),
         }
     }
 }
