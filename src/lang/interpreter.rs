@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     ops::Range,
     sync::{Arc, Mutex},
     task::Poll,
@@ -7,12 +8,32 @@ use std::{
 use bytes::Bytes;
 
 use crate::lang::{
+    interpreter,
     mem::Heap,
     message::Message,
     spec::proteus::ProteusSpec,
     task::{Instruction, ReadNetLength, Task, TaskID, TaskProvider, TaskSet},
     types::{ConcreteFormat, Identifier},
 };
+
+#[derive(std::fmt::Debug)]
+pub enum Error {
+    ExecuteFailed,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::ExecuteFailed => write!(f, "Failed to execute instruction"),
+        }
+    }
+}
+
+impl From<interpreter::Error> for String {
+    fn from(e: interpreter::Error) -> Self {
+        e.to_string()
+    }
+}
 
 pub struct SendArgs {
     // Send these bytes.
@@ -63,13 +84,12 @@ struct Interpreter {
 impl Interpreter {
     /// Returns Ok if we consider the instruction complete, Err if we need to
     /// block on net io.
-    fn execute_instruction(&mut self, ins: &Instruction) -> Result<(), ()> {
+    fn execute_instruction(&mut self, ins: &Instruction) -> Result<(), interpreter::Error> {
         match ins {
             Instruction::GetNumericValue(args) => {
                 let msg = self.message_heap.get(&args.msg_name).unwrap();
                 let num = msg.get_field_unsigned_numeric(&args.field_name).unwrap();
                 self.number_heap.insert(args.name.clone(), num);
-                Ok(())
             }
             Instruction::ConcretizeFormat(args) => {
                 let aformat = args.aformat.clone();
@@ -87,7 +107,6 @@ impl Interpreter {
 
                 // Store it for use by later instructions.
                 self.format_heap.insert(args.name.clone(), cformat);
-                Ok(())
             }
             Instruction::CreateMessage(args) => {
                 // Create a message with an existing concrete format.
@@ -102,69 +121,40 @@ impl Interpreter {
 
                 // Store the message for use in later instructions.
                 self.message_heap.insert(args.name.clone(), msg);
-
-                Ok(())
             }
             Instruction::GenRandomBytes(_args) => {
                 todo!()
             }
             Instruction::ReadApp(args) => {
-                let app_bytes_id = args.name.clone();
-
-                // We either get here the first time and need to queue the netop,
-                // or we get here the second time and already read the bytes.
-                match self.bytes_heap.get(&app_bytes_id) {
-                    Some(_) => Ok(()),
-                    None => {
-                        if self.next_netop_out.is_none() {
-                            let netop = NetOpOut::RecvApp(RecvArgs {
-                                len: args.len.clone(),
-                                addr: app_bytes_id,
-                            });
-                            self.next_netop_out = Some(netop);
-                        }
-                        // Block on netio
-                        Err(())
-                    }
-                }
+                let netop = NetOpOut::RecvApp(RecvArgs {
+                    len: args.len.clone(),
+                    addr: args.name.clone(),
+                });
+                self.next_netop_out = Some(netop);
             }
             Instruction::ReadNet(args) => {
-                let net_bytes_id = args.name.clone();
-
-                // We either get here the first time and need to queue the netop,
-                // or we get here the second time and already read the bytes.
-                match self.bytes_heap.get(&net_bytes_id) {
-                    Some(_) => Ok(()),
-                    None => {
-                        if self.next_netop_in.is_none() {
-                            let len = match &args.len {
-                                ReadNetLength::Identifier(id) => {
-                                    let num = self.number_heap.get(&id).unwrap();
-                                    let val = *num as usize;
-                                    Range {
-                                        start: val,
-                                        end: val + 1,
-                                    }
-                                }
-                                ReadNetLength::Range(r) => r.clone(),
-                            };
-
-                            let netop = NetOpIn::RecvNet(RecvArgs {
-                                len,
-                                addr: net_bytes_id,
-                            });
-                            self.next_netop_in = Some(netop);
+                let len = match &args.len {
+                    ReadNetLength::Identifier(id) => {
+                        let num = self.number_heap.get(&id).unwrap();
+                        let val = *num as usize;
+                        Range {
+                            start: val,
+                            end: val + 1,
                         }
-                        // Block on netio
-                        Err(())
                     }
-                }
+                    ReadNetLength::Range(r) => r.clone(),
+                };
+
+                let netop = NetOpIn::RecvNet(RecvArgs {
+                    len,
+                    addr: args.name.clone(),
+                });
+                self.next_netop_in = Some(netop);
             }
             Instruction::ComputeLength(args) => {
                 let msg = self.message_heap.get(&args.msg_name).unwrap();
                 let len = msg.len_suffix(&args.field_name);
                 self.number_heap.insert(args.name.clone(), len as u128);
-                Ok(())
             }
             Instruction::SetNumericValue(args) => {
                 let val = self.number_heap.get(&args.name).unwrap().clone();
@@ -172,69 +162,23 @@ impl Interpreter {
                 msg.set_field_unsigned_numeric(&args.field_name, val)
                     .unwrap();
                 self.message_heap.insert(args.msg_name.clone(), msg);
-                Ok(())
             }
             Instruction::WriteApp(args) => {
-                // Need to block if we have a queued netop.
-                if self.next_netop_in.is_some() {
-                    return Err(());
-                }
-
                 let msg = self.message_heap.remove(&args.msg_name).unwrap();
                 let netop = NetOpIn::SendApp(SendArgs {
                     bytes: msg.into_inner_field(&args.field_name).unwrap(),
                 });
                 self.next_netop_in = Some(netop);
-
-                // Assume it will get written and continue.
-                Ok(())
             }
             Instruction::WriteNet(args) => {
-                // Need to block if we have a queued netop.
-                if self.next_netop_out.is_some() {
-                    return Err(());
-                }
-
                 let msg = self.message_heap.remove(&args.msg_name).unwrap();
                 let netop = NetOpOut::SendNet(SendArgs {
                     bytes: msg.into_inner(),
                 });
                 self.next_netop_out = Some(netop);
-
-                // Assume it will get written and continue.
-                Ok(())
             }
-        }
-    }
-
-    fn execute_instructions_until_blocked(&mut self, mut op: TaskOp) -> Option<TaskOp> {
-        while op.next_ins_index < op.task.ins.len() {
-            match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
-                Ok(_) => op.next_ins_index += 1,
-                Err(_) => break,
-            };
-        }
-
-        if op.next_ins_index < op.task.ins.len() {
-            Some(op)
-        } else {
-            self.wants_tasks = true;
-            None
-        }
-    }
-
-    fn execute_until_blocked(&mut self) {
-        if self.wants_tasks {
-            self.load_tasks();
-        }
-
-        if let Some(op) = self.current_taskop_out.take() {
-            self.current_taskop_out = self.execute_instructions_until_blocked(op);
-        }
-
-        if let Some(op) = self.current_taskop_in.take() {
-            self.current_taskop_in = self.execute_instructions_until_blocked(op);
-        }
+        };
+        Ok(())
     }
 
     /// Loads task from the task provider. Panics if we already have a current
@@ -271,15 +215,57 @@ impl Interpreter {
     /// Return the next incoming (app<-net) command we want the network protocol
     /// to run, or an error if the app<-net direction should block for now.
     fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
-        self.execute_until_blocked();
-        self.next_netop_in.take().ok_or(())
+        loop {
+            if self.wants_tasks {
+                self.load_tasks();
+            }
+
+            match self.current_taskop_in.take() {
+                Some(mut op) => {
+                    while op.next_ins_index < op.task.ins.len() {
+                        match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
+                            Ok(_) => op.next_ins_index += 1,
+                            Err(e) => self.next_netop_in = Some(NetOpIn::Error(e.into())),
+                        };
+
+                        if let Some(netop) = self.next_netop_in.take() {
+                            self.current_taskop_in = Some(op);
+                            return Ok(netop);
+                        }
+                    }
+                    self.wants_tasks = true;
+                }
+                None => return Err(()),
+            }
+        }
     }
 
     /// Return the next outgoing (app->net) command we want the network protocol
     /// to run, or an error if the app->net direction should block for now.
     fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
-        self.execute_until_blocked();
-        self.next_netop_out.take().ok_or(())
+        loop {
+            if self.wants_tasks {
+                self.load_tasks();
+            }
+
+            match self.current_taskop_out.take() {
+                Some(mut op) => {
+                    while op.next_ins_index < op.task.ins.len() {
+                        match self.execute_instruction(&op.task.ins[op.next_ins_index]) {
+                            Ok(_) => op.next_ins_index += 1,
+                            Err(e) => self.next_netop_out = Some(NetOpOut::Error(e.into())),
+                        };
+
+                        if let Some(netop) = self.next_netop_out.take() {
+                            self.current_taskop_out = Some(op);
+                            return Ok(netop);
+                        }
+                    }
+                    self.wants_tasks = true;
+                }
+                None => return Err(()),
+            }
+        }
     }
 
     /// Inserts the given new task into the old Option. Panics if the option
@@ -517,16 +503,13 @@ mod tests {
         assert!(int.current_taskop_out.is_some());
     }
 
-    #[test]
-    fn read_app_write_net() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-
+    fn read_app_write_net_pipeline(int: &mut Interpreter) {
         let args = match int.next_net_cmd_out().unwrap() {
             NetOpOut::RecvApp(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
-        let payload = Bytes::from("Attack at dawn");
+        let payload = Bytes::from("When should I attack?");
         assert!(args.len.contains(&payload.len()));
 
         int.store(args.addr, payload.clone());
@@ -544,17 +527,14 @@ mod tests {
         assert_eq!(len as usize, payload.len());
     }
 
-    #[test]
-    fn read_net_write_app() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-
+    fn read_net_write_app_pipeline(int: &mut Interpreter) {
         let args = match int.next_net_cmd_in().unwrap() {
             NetOpIn::RecvNet(args) => args,
             _ => panic!("Unexpected interpreter command"),
         };
 
         assert!(args.len.contains(&2));
-        let payload = Bytes::from("Attack at dawn");
+        let payload = Bytes::from("Attack at dawn!");
         let mut buf = BytesMut::new();
         buf.put_u16(payload.len() as u16);
         int.store(args.addr, buf.freeze());
@@ -574,5 +554,33 @@ mod tests {
 
         assert_eq!(args.bytes.len(), payload.len());
         assert_eq!(args.bytes[..], payload[..]);
+    }
+
+    #[test]
+    fn read_app_write_net_once() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        read_app_write_net_pipeline(&mut int);
+    }
+
+    #[test]
+    fn read_app_write_net_many() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        for _ in 0..10 {
+            read_app_write_net_pipeline(&mut int);
+        }
+    }
+
+    #[test]
+    fn read_net_write_app_once() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        read_net_write_app_pipeline(&mut int);
+    }
+
+    #[test]
+    fn read_net_write_app_many() {
+        let mut int = Interpreter::new(LengthPayloadSpec::new());
+        for _ in 0..10 {
+            read_net_write_app_pipeline(&mut int);
+        }
     }
 }
