@@ -9,7 +9,7 @@ field = { "{" ~ name_value ~ ";" ~ type_value ~ "}" }
 size_of_op = ${ identifier~".size_of" }
 
 primitive_array = { "[" ~ primitive_type ~ ";" ~ positive_numeric_literal ~ "]" }
-dynamic_array = { "[" ~ primitive_type ~ ";" ~ size_of_op ~ "]" }
+dynamic_array = { "[" ~ "u8" ~ ";" ~ size_of_op ~ "]" }
 array = { primitive_array | dynamic_array }
 
 numeric_type = { "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" }
@@ -27,4 +27,13 @@ char = {
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
 }
 
-format = { "DEFINE" ~ identifier ~ "FIELDS" ~ field ~ ("," ~ field)* ~ ";" } 
+format = { "DEFINE" ~ identifier ~ "FIELDS" ~ field ~ ("," ~ field)* ~ ";" }
+
+field_semantic = { "padding" | "payload" | "length" }
+
+sematic_binding = { "{" ~
+  "FORMAT" ~ ":" ~ identifier ~ ";" ~
+  "FIELD" ~ ":" ~ identifier ~ ";" ~
+  "SEMANTIC" ~ field_semantic ~ "}" }
+
+psf = { SOI ~ "@SEGMENT FORMATS" ~ format+ ~ "@SEGMENT SEMANTICS" ~ EOI }

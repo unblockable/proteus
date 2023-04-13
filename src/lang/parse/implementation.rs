@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::fs;
+
 use crate::lang::types::*;
 use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
@@ -60,11 +62,6 @@ fn parse_dynamic_array(p: &RulePair) -> DynamicArray {
     assert!(p.as_rule() == Rule::dynamic_array);
 
     let mut p = p.clone().into_inner();
-
-    // TODO: ryan, fix the grammar and parser because dynamic arrays are now
-    // always u8
-    let pt = p.next().unwrap();
-    let pt = parse_primitive_type(&pt);
 
     let soo = p.next().unwrap();
     let soo = parse_sizeof_op(&soo);
@@ -137,6 +134,25 @@ fn parse_format(p: &RulePair) -> Format {
 
     Format { name: id, fields }
 }
+
+fn parse_psf(p: &RulePair) -> PSF {
+    assert!(p.as_rule() == Rule::psf);
+
+    let mut formats: std::collections::HashMap<Identifier, AbstractFormat> = Default::default();
+
+    let mut p = p.clone().into_inner();
+
+    while let Some(f) = p.next() {
+        println!("{:?}", p);
+        if f.as_rule() == Rule::format {
+            let format = parse_format(&f);
+            formats.insert(format.name.clone(), format.into());
+        }
+    }
+
+    PSF { formats }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -309,5 +325,18 @@ mod tests {
         println!("{:?}", test_cases[0].1.maybe_size_of().unwrap());
 
         test_rule_pair(test_cases.iter(), Rule::format, parse_format);
+    }
+
+    #[test]
+    fn test_psf() {
+        let filepath = "src/lang/parse/example.psf";
+        let input = fs::read_to_string(filepath).expect("cannot read example file");
+
+        let rule = Rule::psf;
+
+        let mut p = ProteusLiteParser::parse(rule, &input).expect("Unsuccessful parse");
+        let mut pair = p.next().unwrap();
+        let output = parse_psf(&mut pair);
+        println!("{:?}", output);
     }
 }

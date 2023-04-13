@@ -1,0 +1,6 @@
+@SEGMENT FORMATS
+
+DEFINE DataMsg
+FIELDS
+  { NAME: Length ; TYPE: u32 },
+  { NAME: Payload ; TYPE: [u8; Length.size_of] };

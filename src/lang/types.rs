@@ -421,6 +421,31 @@ impl MaybeSized for Format {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum FieldSemantic {
+    Payload,
+    Padding,
+    Length
+}
+
+impl FromStr for FieldSemantic {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        match s {
+            "payload" => Ok(FieldSemantic::Payload),
+            "padding" => Ok(FieldSemantic::Padding),
+            "length" => Ok(FieldSemantic::Length),
+            _ => Err(ParseError {}),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PSF {
+    pub formats: std::collections::HashMap<Identifier, AbstractFormat>,
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
