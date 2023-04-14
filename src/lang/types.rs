@@ -606,6 +606,17 @@ pub struct SequenceSpecifier {
     pub format: Identifier,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Password(pub String);
+
+impl FromStr for Password {
+    type Err = NeverError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Password(s.to_string()))
+    }
+}
+
 #[derive(Debug)]
 pub struct PSF {
     pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
@@ -626,6 +637,22 @@ impl PSF {
     /// Run checks to ensure that the PSF is semantically valid
     pub fn is_valid(&self) -> bool {
         self.validate_seqs()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cipher {
+    ChaCha20Poly1305,
+}
+
+impl FromStr for Cipher {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "CHACHA20-POLY1305" => Ok(Cipher::ChaCha20Poly1305),
+            _ => Err(ParseError{})
+        }
     }
 }
 

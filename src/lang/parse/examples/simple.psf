@@ -1,15 +1,15 @@
-@SEGMENT FORMATS
+@SEGMENT.FORMATS
 
   DEFINE DataMsg
     { NAME: length  ; TYPE: u16 },
     { NAME: payload ; TYPE: [u8; length.size_of] };
 
-@SEGMENT SEMANTICS
+@SEGMENT.SEMANTICS
 
   { FORMAT: DataMsg; FIELD: length;  SEMANTIC: LENGTH };
   { FORMAT: DataMsg; FIELD: payload; SEMANTIC: PAYLOAD };
 
-@SEGMENT SEQUENCE
+@SEGMENT.SEQUENCE
 
   { ROLE: CLIENT; PHASE: DATA;      FORMAT: DataMsg };
   { ROLE: SERVER; PHASE: DATA;      FORMAT: DataMsg };

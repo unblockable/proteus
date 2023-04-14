@@ -1,0 +1,35 @@
+@SEGMENT FORMATS
+
+  DEFINE DataMsg
+    { NAME: length  ; TYPE: u16 },
+    { NAME: payload ; TYPE: [u8; length.size_of] };
+
+  DEFINE EncDataMsg
+    { NAME: enc_length  ; TYPE: [u8; 2] },
+    { NAME: length_mac  ; TYPE: [u8; 16] },
+    { NAME: enc_payload ; TYPE: [u8; length.size_of] };
+    { NAME: payload_mac ; TYPE: [u8; 16] };
+
+@SEGMENT SEMANTICS
+
+  { FORMAT: DataMsg; FIELD: length;  SEMANTIC: LENGTH };
+  { FORMAT: DataMsg; FIELD: payload; SEMANTIC: PAYLOAD };
+
+@SEGMENT SEQUENCE
+
+  { ROLE: CLIENT; PHASE: DATA; FORMAT: EncDataMsg };
+  { ROLE: SERVER; PHASE: DATA; FORMAT: EncDataMsg };
+
+@SEGMENT CRYPTO
+
+  PASSWORD = hunter2;
+  CIPHER = CHACHA20-POLY1305;
+
+  {
+    EncDataMsg FROM DataMsg;
+
+    SEQ {
+      ENC length  CTEXT enc_length MAC lenth_mac
+      ENC payload CTEXT enc_payload MAC payload_mac
+    }
+  }

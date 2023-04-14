@@ -191,6 +191,32 @@ fn parse_sequence_specifier(p: &RulePair) -> SequenceSpecifier {
     }
 }
 
+fn parse_password_assignment(p: &RulePair) -> Password {
+    assert!(p.as_rule() == Rule::password_assignment);
+
+    let p = p
+        .clone()
+        .into_inner()
+        .next()
+        .unwrap()
+        .into_inner()
+        .next()
+        .unwrap();
+
+    Password(p.as_str().to_string())
+}
+
+fn parse_cipher(p: &RulePair) -> Cipher {
+    assert!(p.as_rule() == Rule::cipher);
+    parse_simple(p)
+}
+
+fn parse_cipher_assignment(p: &RulePair) -> Cipher {
+    assert!(p.as_rule() == Rule::cipher_assignment);
+    let p = p.clone().into_inner().next().unwrap();
+    parse_cipher(&p)
+}
+
 pub fn parse_psf_impl(p: &RulePair) -> PSF {
     assert!(p.as_rule() == Rule::psf);
 
@@ -471,6 +497,34 @@ pub mod tests {
             test_cases.iter(),
             Rule::sequence_specifier,
             parse_sequence_specifier,
+        );
+    }
+
+    #[test]
+    fn test_parse_password() {
+        let input = "PASSWORD = \"hunter2\";";
+        let output: Password = "hunter2".parse().unwrap();
+
+        let test_cases = vec![(input, output)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::password_assignment,
+            parse_password_assignment,
+        );
+    }
+
+    #[test]
+    fn test_parse_cipher_assignment() {
+        let input = "CIPHER = CHACHA20-POLY1305;";
+        let output = Cipher::ChaCha20Poly1305;
+
+        let test_cases = vec![(input, output)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::cipher_assignment,
+            parse_cipher_assignment,
         );
     }
 

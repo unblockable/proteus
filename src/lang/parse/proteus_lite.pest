@@ -45,7 +45,15 @@ sequence_specifier = { "{" ~
   "PHASE" ~ ":" ~ phase ~ ";" ~
   "FORMAT" ~ ":" ~ identifier ~ "}" ~ ";" }
 
-psf = { SOI ~ "@SEGMENT FORMATS" ~ format+ ~
-        "@SEGMENT SEMANTICS" ~ semantic_binding* ~
-        "@SEGMENT SEQUENCE" ~ sequence_specifier+ ~
+psf = { SOI ~ "@SEGMENT.FORMATS" ~ format+ ~
+        "@SEGMENT.SEMANTICS" ~ semantic_binding* ~
+        "@SEGMENT.SEQUENCE" ~ sequence_specifier+ ~
         EOI }
+
+password_assignment = {"PASSWORD" ~ "=" ~ string_literal ~ ";" }
+
+cipher = { "CHACHA20-POLY1305" }
+
+crypto_segment = { "@SEGMENT.CRYPTO" }
+
+cipher_assignment = { "CIPHER" ~ "=" ~ cipher ~ ";" }
