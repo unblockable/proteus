@@ -621,6 +621,7 @@ impl FromStr for Password {
 pub struct PSF {
     pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
     pub sequence: Vec<SequenceSpecifier>,
+    pub crypto_spec: Option<CryptoSpec>,
 }
 
 impl PSF {
@@ -651,7 +652,47 @@ impl FromStr for Cipher {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "CHACHA20-POLY1305" => Ok(Cipher::ChaCha20Poly1305),
-            _ => Err(ParseError{})
+            _ => Err(ParseError {}),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EncryptionFormatBinding {
+    pub to_format_name: Identifier,
+    pub from_format_name: Identifier,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EncryptionFieldDirective {
+    pub ptext_name: Identifier,
+    pub ctext_name: Identifier,
+    pub mac_name: Identifier,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EncryptionDirectives {
+    pub enc_fmt_bnd: EncryptionFormatBinding,
+    pub enc_field_dirs: Vec<EncryptionFieldDirective>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CryptoSpec {
+    pub password: Option<Password>,
+    pub cipher: Cipher,
+    pub directives: HashMap<EncryptionFormatBinding, EncryptionDirectives>,
+}
+
+impl CryptoSpec {
+    pub fn new<'a, T: Iterator<Item = &'a EncryptionDirectives>>(
+        password: Option<Password>,
+        cipher: Cipher,
+        itr: T,
+    ) -> CryptoSpec {
+        CryptoSpec {
+            password,
+            cipher,
+            directives: HashMap::from_iter(itr.map(|e| (e.enc_fmt_bnd.clone(), e.clone()))),
         }
     }
 }

@@ -110,7 +110,6 @@ pub fn compile_task_graph<'a, T: Iterator<Item = &'a SequenceSpecifier>>(itr: T)
     let mut graph: Graph = Default::default();
 
     let start_node = graph.add_node(());
-    println!("{:?}", start_node);
 
     let mut prev_node = start_node;
     for seqspec in itr {

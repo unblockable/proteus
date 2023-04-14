@@ -217,13 +217,89 @@ fn parse_cipher_assignment(p: &RulePair) -> Cipher {
     parse_cipher(&p)
 }
 
+fn parse_encryption_format_binding(p: &RulePair) -> EncryptionFormatBinding {
+    assert!(p.as_rule() == Rule::encryption_format_binding);
+
+    let mut p = p.clone().into_inner();
+
+    let to_format_name = parse_identifier(&p.next().unwrap());
+    let from_format_name = parse_identifier(&p.next().unwrap());
+
+    EncryptionFormatBinding {
+        to_format_name,
+        from_format_name,
+    }
+}
+
+fn parse_encryption_field_directive(p: &RulePair) -> EncryptionFieldDirective {
+    assert!(p.as_rule() == Rule::encryption_field_directive);
+
+    let mut p = p.clone().into_inner();
+
+    let ptext_name: Identifier = parse_identifier(&p.next().unwrap());
+    let ctext_name: Identifier = parse_identifier(&p.next().unwrap());
+    let mac_name: Identifier = parse_identifier(&p.next().unwrap());
+
+    EncryptionFieldDirective {
+        ptext_name,
+        ctext_name,
+        mac_name,
+    }
+}
+
+fn parse_encryption_directives(p: &RulePair) -> EncryptionDirectives {
+    assert!(p.as_rule() == Rule::encryption_directives);
+
+    let mut p = p.clone().into_inner();
+
+    let a = p.next().unwrap();
+    let enc_fmt_bnd = parse_encryption_format_binding(&a);
+
+    let mut enc_field_dirs = vec![];
+
+    for x in p {
+        enc_field_dirs.push(parse_encryption_field_directive(&x));
+    }
+
+    EncryptionDirectives {
+        enc_fmt_bnd,
+        enc_field_dirs,
+    }
+}
+
+pub fn parse_crypto_segment(p: &RulePair) -> CryptoSpec {
+    assert!(p.as_rule() == Rule::crypto_segment);
+
+    let mut password: Option<Password> = None;
+    let mut cipher: Option<Cipher> = None;
+    let mut encryption_directives = vec![];
+
+    for e in p.clone().into_inner() {
+        match e.as_rule() {
+            Rule::password_assignment => {
+                password = Some(parse_password_assignment(&e));
+            }
+            Rule::cipher_assignment => {
+                cipher = Some(parse_cipher_assignment(&e));
+            }
+            Rule::encryption_directives => {
+                encryption_directives.push(parse_encryption_directives(&e));
+            }
+            _ => panic!(),
+        }
+    }
+
+    CryptoSpec::new(password, cipher.unwrap(), encryption_directives.iter())
+}
+
 pub fn parse_psf_impl(p: &RulePair) -> PSF {
     assert!(p.as_rule() == Rule::psf);
 
     let mut formats: HashMap<Identifier, AbstractFormatAndSemantics> = Default::default();
     let mut sequence: Vec<SequenceSpecifier> = vec![];
+    let mut crypto_spec: Option<CryptoSpec> = None;
 
-    let mut p = p.clone().into_inner();
+    let p = p.clone().into_inner();
 
     for x in p {
         match x.as_rule() {
@@ -231,7 +307,7 @@ pub fn parse_psf_impl(p: &RulePair) -> PSF {
                 let format: AbstractFormatAndSemantics =
                     Into::<AbstractFormat>::into(parse_format(&x)).into();
                 formats.insert(format.format.format.name.clone(), format);
-            }
+            },
             Rule::semantic_binding => {
                 let sem_binding = parse_semantic_binding(&x);
                 formats
@@ -240,16 +316,19 @@ pub fn parse_psf_impl(p: &RulePair) -> PSF {
                     .semantics
                     .as_mut_ref()
                     .insert(sem_binding.field.clone(), sem_binding.semantic);
-            }
+            },
             Rule::sequence_specifier => {
                 let seqspec = parse_sequence_specifier(&x);
                 sequence.push(seqspec);
+            },
+            Rule::crypto_segment => {
+                crypto_spec = Some(parse_crypto_segment(&x));
             }
             _ => {}
         }
     }
 
-    PSF { formats, sequence }
+    PSF { formats, sequence, crypto_spec }
 }
 
 pub fn parse_psf(psf_contents: &String) -> PSF {
@@ -528,6 +607,126 @@ pub mod tests {
         );
     }
 
+    #[test]
+    fn test_parse_encryption_format_binding() {
+        let input = "ENCRYPT Foo FROM Bar";
+        let output = EncryptionFormatBinding {
+            to_format_name: "Foo".id(),
+            from_format_name: "Bar".id(),
+        };
+
+        let test_cases = vec![(input, output)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::encryption_format_binding,
+            parse_encryption_format_binding,
+        );
+    }
+
+    #[test]
+    fn test_parse_encryption_field_directive() {
+        let input = "{PTEXT: length;  CTEXT: enc_length;  MAC: length_mac}";
+        let output = EncryptionFieldDirective {
+            ptext_name: "length".id(),
+            ctext_name: "enc_length".id(),
+            mac_name: "length_mac".id(),
+        };
+
+        let test_cases = vec![(input, output)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::encryption_field_directive,
+            parse_encryption_field_directive,
+        );
+    }
+
+    #[test]
+    fn test_parse_encryption_directives() {
+        let input = "\
+        ENCRYPT EncDataMsg FROM DataMsg\
+        { PTEXT: length;  CTEXT: enc_length;  MAC: length_mac },\
+        { PTEXT: payload; CTEXT: enc_payload; MAC: payload_mac };";
+
+        let enc_fmt_bnd = EncryptionFormatBinding {
+            to_format_name: "EncDataMsg".id(),
+            from_format_name: "DataMsg".id(),
+        };
+
+        let enc_field_dirs = vec![
+            EncryptionFieldDirective {
+                ptext_name: "length".id(),
+                ctext_name: "enc_length".id(),
+                mac_name: "length_mac".id(),
+            },
+            EncryptionFieldDirective {
+                ptext_name: "payload".id(),
+                ctext_name: "enc_payload".id(),
+                mac_name: "payload_mac".id(),
+            },
+        ];
+
+        let output = EncryptionDirectives {
+            enc_fmt_bnd,
+            enc_field_dirs,
+        };
+
+        let test_cases = vec![(input, output)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::encryption_directives,
+            parse_encryption_directives,
+        );
+    }
+
+    #[test]
+    fn test_parse_crypto_segment() {
+        let input = "@SEGMENT.CRYPTO\
+            PASSWORD = \"hunter2\";\
+            CIPHER   = CHACHA20-POLY1305;\
+            ENCRYPT EncDataMsg FROM DataMsg\
+            { PTEXT: length;  CTEXT: enc_length;  MAC: length_mac },\
+            { PTEXT: payload; CTEXT: enc_payload; MAC: payload_mac };";
+
+        let enc_fmt_bnd = EncryptionFormatBinding {
+            to_format_name: "EncDataMsg".id(),
+            from_format_name: "DataMsg".id(),
+        };
+
+        let password = Some(Password("hunter2".to_string()));
+        let cipher = Cipher::ChaCha20Poly1305;
+
+        let enc_field_dirs = vec![
+            EncryptionFieldDirective {
+                ptext_name: "length".id(),
+                ctext_name: "enc_length".id(),
+                mac_name: "length_mac".id(),
+            },
+            EncryptionFieldDirective {
+                ptext_name: "payload".id(),
+                ctext_name: "enc_payload".id(),
+                mac_name: "payload_mac".id(),
+            },
+        ];
+
+        let directives = vec![EncryptionDirectives {
+            enc_fmt_bnd,
+            enc_field_dirs,
+        }];
+
+        let output = CryptoSpec::new(password, cipher, directives.iter());
+
+        let test_cases = vec![(input, output)];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::crypto_segment,
+            parse_crypto_segment,
+        );
+    }
+
     pub fn parse_example_psf() -> PSF {
         let filepath = "src/lang/parse/examples/example.psf";
         let input = fs::read_to_string(filepath).expect("cannot read example file");
@@ -537,5 +736,16 @@ pub mod tests {
     #[test]
     fn test_parse_psf() {
         parse_example_psf();
+    }
+
+    pub fn parse_shadowsocks_psf() -> PSF {
+        let filepath = "src/lang/parse/examples/shadowsocks.psf";
+        let input = fs::read_to_string(filepath).expect("cannot read shadowsocks file");
+        parse_psf(&input)
+    }
+
+    #[test]
+    fn test_parse_shadowsocks_psf() {
+        let psf = parse_shadowsocks_psf();
     }
 }

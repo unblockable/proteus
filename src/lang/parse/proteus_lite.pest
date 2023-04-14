@@ -1,6 +1,8 @@
 WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 
-identifier = @{ ASCII_ALPHA~ASCII_ALPHANUMERIC* }
+identifier = @{ ("_"|"-"|ASCII_ALPHA)~("_"|"-"|ASCII_ALPHANUMERIC)* }
+
 name_value = { "NAME" ~ ":" ~ identifier }
 type_value = { "TYPE" ~ ":" ~ (primitive_type | array) }
 
@@ -48,12 +50,29 @@ sequence_specifier = { "{" ~
 psf = { SOI ~ "@SEGMENT.FORMATS" ~ format+ ~
         "@SEGMENT.SEMANTICS" ~ semantic_binding* ~
         "@SEGMENT.SEQUENCE" ~ sequence_specifier+ ~
+        crypto_segment? ~
         EOI }
 
 password_assignment = {"PASSWORD" ~ "=" ~ string_literal ~ ";" }
 
 cipher = { "CHACHA20-POLY1305" }
 
-crypto_segment = { "@SEGMENT.CRYPTO" }
-
 cipher_assignment = { "CIPHER" ~ "=" ~ cipher ~ ";" }
+
+encryption_format_binding = { "ENCRYPT" ~ identifier ~ "FROM" ~ identifier }
+
+encryption_field_directive = { "{" ~
+                               "PTEXT" ~ ":" ~ identifier ~ ";" ~
+                               "CTEXT" ~ ":" ~ identifier ~ ";" ~
+                               "MAC"   ~ ":" ~ identifier ~ "}" }
+
+encryption_directives = { encryption_format_binding ~
+                          encryption_field_directive ~
+                          ("," ~ encryption_field_directive)* ~ ";" }
+
+crypto_segment = {
+  "@SEGMENT.CRYPTO" ~
+  password_assignment? ~
+  cipher_assignment ~
+  encryption_directives+
+}
