@@ -23,6 +23,10 @@ impl ProteusSpec {
 }
 
 impl TaskProvider for ProteusSpec {
+    fn get_init_task(&self) -> Task {
+        todo!()
+    }
+
     fn get_next_tasks(&self, last_task: &TaskID) -> TaskSet {
         self.task_graph.next(*last_task)
     }

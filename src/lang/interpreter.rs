@@ -488,6 +488,13 @@ mod tests {
         }
 
         impl TaskProvider for LengthPayloadSpec {
+            fn get_init_task(&self) -> Task {
+                Task {
+                    ins: vec![],
+                    id: Default::default(),
+                }
+            }
+
             fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
                 // Outgoing data forwarding direction.
                 let out_task = Task {
@@ -696,7 +703,7 @@ mod tests {
                         },
                         Field {
                             name: "length_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
                         },
                         Field {
                             name: "payload".id(),
@@ -704,7 +711,7 @@ mod tests {
                         },
                         Field {
                             name: "payload_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
                         },
                     ],
                 }
@@ -719,7 +726,7 @@ mod tests {
                         },
                         Field {
                             name: "length_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
                         },
                     ],
                 }
@@ -734,7 +741,7 @@ mod tests {
                         },
                         Field {
                             name: "payload_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
                         },
                     ],
                 }
@@ -749,12 +756,24 @@ mod tests {
         }
 
         impl TaskProvider for EncryptedLengthPayloadSpec {
+            fn get_init_task(&self) -> Task {
+                let password = "hunter2";
+
+                Task {
+                    id: Default::default(),
+                    ins: vec![InitFixedSharedKeyArgs {
+                        password: password.to_string(),
+                    }
+                    .into()],
+                }
+            }
+
             fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
                 // Outgoing data forwarding direction.
                 let out_task = Task {
                     ins: vec![
                         ReadAppArgs {
-                            from_len: 1..(u16::MAX - 40) as usize,
+                            from_len: 1..(u16::MAX - 32) as usize,
                             to_heap_id: "payload".id(),
                         }
                         .into(),
@@ -786,6 +805,44 @@ mod tests {
                             to_field_id: "length".id(),
                         }
                         .into(),
+                        EncryptFieldArgs {
+                            from_msg_heap_id: "message".id(),
+                            from_field_id: "length".id(),
+                            to_ciphertext_heap_id: "enc_length_heap".id(),
+                            to_mac_heap_id: "length_mac_heap".id(),
+                        }
+                        .into(),
+                        EncryptFieldArgs {
+                            from_msg_heap_id: "message".id(),
+                            from_field_id: "payload".id(),
+                            to_ciphertext_heap_id: "enc_payload_heap".id(),
+                            to_mac_heap_id: "payload_mac_heap".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "enc_length_heap".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "length".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "enc_payload_heap".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "payload".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "length_mac_heap".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "length_mac".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "payload_mac_heap".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "payload_mac".id(),
+                        }
+                        .into(),
                         WriteNetArgs {
                             from_msg_heap_id: "message".id(),
                         }
@@ -803,7 +860,7 @@ mod tests {
                         }
                         .into(),
                         ReadNetArgs {
-                            from_len: ReadNetLength::Range(20..21 as usize),
+                            from_len: ReadNetLength::Range(16..17 as usize),
                             to_heap_id: "length_mac".id(),
                         }
                         .into(),
@@ -829,22 +886,37 @@ mod tests {
                             to_field_id: "length_mac".id(),
                         }
                         .into(),
+
+                        DecryptFieldArgs {
+                            from_msg_heap_id: "message_length_part".id(),
+                            from_ciphertext_field_id: "length".id(),
+                            from_mac_field_id: "length_mac".id(),
+                            to_plaintext_heap_id: "dec_length_heap".id(),
+                        }.into(),
+
+                        SetArrayBytesArgs {
+                            from_heap_id: "dec_length_heap".id(),
+                            to_msg_heap_id: "message_length_part".id(),
+                            to_field_id: "length".id(),
+                        }
+                        .into(),
+
                         GetNumericValueArgs {
                             from_msg_heap_id: "message_length_part".id(),
                             from_field_id: "length".id(),
-                            to_heap_id: "payload_len_value".id(),
+                            to_heap_id: "payload_len_value_heap".id(),
                         }
                         .into(),
                         ReadNetArgs {
                             from_len: ReadNetLength::IdentifierMinus((
-                                "payload_len_value".id(),
-                                20,
+                                "payload_len_value_heap".id(),
+                                16,
                             )),
                             to_heap_id: "payload".id(),
                         }
                         .into(),
                         ReadNetArgs {
-                            from_len: ReadNetLength::Range(20..21 as usize),
+                            from_len: ReadNetLength::Range(16..17 as usize),
                             to_heap_id: "payload_mac".id(),
                         }
                         .into(),
@@ -868,6 +940,18 @@ mod tests {
                             from_heap_id: "payload_mac".id(),
                             to_msg_heap_id: "message_payload_part".id(),
                             to_field_id: "payload_mac".id(),
+                        }
+                        .into(),
+                        DecryptFieldArgs {
+                            from_msg_heap_id: "message_payload_part".id(),
+                            from_ciphertext_field_id: "payload".id(),
+                            from_mac_field_id: "payload_mac".id(),
+                            to_plaintext_heap_id: "dec_payload_heap".id(),
+                        }.into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "dec_payload_heap".id(),
+                            to_msg_heap_id: "message_payload_part".id(),
+                            to_field_id: "payload".id(),
                         }
                         .into(),
                         WriteAppArgs {
@@ -923,11 +1007,11 @@ mod tests {
                 };
 
                 let mut msg = args.bytes.clone();
-                assert_eq!(msg.len(), payload.len() + 2 + 20 + 20); // len and 2 macs
-                assert_eq!(msg[22..(msg.len() - 20)], payload[..]);
+                assert_eq!(msg.len(), payload.len() + 2 + 16 + 16); // len and 2 macs
+                assert_eq!(msg[18..(msg.len() - 16)], payload[..]);
 
                 let len = msg.get_u16();
-                assert_eq!(len as usize, payload.len() + 20); // mac
+                assert_eq!(len as usize, payload.len() + 16); // mac
             }
 
             fn read_net(&self, int: &mut Interpreter) -> Bytes {
@@ -939,7 +1023,7 @@ mod tests {
                 assert!(args.len.contains(&2));
 
                 let payload = Bytes::from("Attack at dawn!");
-                let mac = Bytes::from_static(&[0; 20]);
+                let mac = Bytes::from_static(&[0; 16]);
 
                 let mut buf = BytesMut::new();
                 buf.put_u16((payload.len() + mac.len()) as u16);
