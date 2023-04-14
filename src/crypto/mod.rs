@@ -5,6 +5,7 @@ use bytes::Bytes;
 use crate::crypto;
 
 pub mod chacha;
+pub mod kdf;
 
 #[derive(Debug)]
 pub enum Error {

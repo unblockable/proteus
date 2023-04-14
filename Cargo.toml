@@ -15,6 +15,7 @@ typestate = "0.8.0"
 pest = "2.0"
 pest_derive = "2.0"
 petgraph = "0.6.3"
+argon2 = "0.5.0"
 
 # Crypto dependencies
 x25519-dalek = "1" # ephemeral key exchange

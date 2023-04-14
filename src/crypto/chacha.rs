@@ -1,13 +1,12 @@
-use bytes::{Buf, Bytes, BytesMut};
-
-use rand::rngs::OsRng;
-use rand::RngCore;
-
 use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::ChaCha20Poly1305;
 
 use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::Salsa20;
+
+const MAC_NBYTES: usize = 16;
+type Payload = Vec<u8>;
+type MAC = [u8; MAC_NBYTES];
 
 enum CipherKind {
     Sender,
@@ -38,9 +37,6 @@ impl Cipher {
             CipherKind::Receiver => NONCE_A,
         };
 
-        let mut fingerprint: [u8; 8] = [0; 8];
-        OsRng.fill_bytes(&mut fingerprint);
-
         Cipher {
             encryption_nonce_gen: Salsa20::new(&secret_key.into(), &encryption_nonce.into()),
             decryption_nonce_gen: Salsa20::new(&secret_key.into(), &decryption_nonce.into()),
@@ -57,23 +53,60 @@ impl Cipher {
         buf
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> Vec<u8> {
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, MAC) {
         self.nbytes_encrypted += plaintext.len();
 
         let nonce = Cipher::get_nonce(&mut self.encryption_nonce_gen);
 
-        self.encryption_cipher
+        let mut ciphertext = self
+            .encryption_cipher
             .encrypt(&nonce.into(), plaintext)
-            .expect("encryption failure")
+            .expect("encryption failure");
+
+        let mac: MAC;
+        mac = ciphertext
+            .drain(ciphertext.len() - 16..ciphertext.len())
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        assert!(plaintext.len() == ciphertext.len());
+
+        (ciphertext, mac)
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &MAC) -> Vec<u8> {
+        let ctext_and_mac: Vec<u8> = ciphertext.iter().chain(mac.iter()).map(|e| *e).collect();
+
         self.nbytes_decrypted += ciphertext.len();
 
         let nonce = Cipher::get_nonce(&mut self.decryption_nonce_gen);
 
         self.decryption_cipher
-            .decrypt(&nonce.into(), ciphertext)
+            .decrypt(&nonce.into(), &ctext_and_mac[..])
             .expect("decryption failure")
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::crypto::kdf::derive_key_256;
+
+    #[test]
+    fn test_encryption_decryption() {
+        let password = "hunter2";
+        let salt = "pepper pepper pepper";
+
+        let secret_key = derive_key_256(password, salt);
+
+        let mut send_cipher = Cipher::new(secret_key, CipherKind::Sender);
+        let mut recv_cipher = Cipher::new(secret_key, CipherKind::Receiver);
+
+        let original_plain_text: Vec<u8> = b"hello world".iter().map(|e| *e).collect();
+
+        let (ctext, mac) = send_cipher.encrypt(&original_plain_text[..]);
+        let recovered_plain_text = recv_cipher.decrypt(&ctext[..], &mac);
+
+        assert_eq!(original_plain_text, recovered_plain_text);
     }
 }
