@@ -1,7 +1,7 @@
 @SEGMENT FORMATS
 
   DEFINE DataMsg
-    { NAME: Length  ; TYPE: u32 },
+    { NAME: Length  ; TYPE: u16 },
     { NAME: Payload ; TYPE: [u8; Length.size_of] };
 
 @SEGMENT SEMANTICS

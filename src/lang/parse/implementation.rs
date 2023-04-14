@@ -210,7 +210,8 @@ fn parse_psf(p: &RulePair) -> PSF {
                 formats
                     .get_mut(&sem_binding.format)
                     .unwrap()
-                    .semantics
+                    .semantics.
+                    as_mut_ref()
                     .insert(sem_binding.field.clone(), sem_binding.semantic);
             }
             Rule::sequence_specifier => {

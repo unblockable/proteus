@@ -104,6 +104,11 @@ pub struct DowncastError;
 #[derive(Debug)]
 pub struct ConversionError;
 
+pub trait NumericallyBounded {
+    pub fn min();
+    pub fn max();
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum NumericType {
     U8,
@@ -115,6 +120,7 @@ pub enum NumericType {
     I32,
     I64,
 }
+
 
 impl StaticallySized for NumericType {
     fn size_of(&self) -> usize {
@@ -239,6 +245,17 @@ impl StaticallySized for PrimitiveArray {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DynamicArray(pub UnaryOp);
 
+impl DynamicArray {
+    // Tries to ge tthe length field assoc. with this dynamic array.
+    pub fn try_get_length_field(&self) -> Option<Identifier> {
+        if let UnaryOp::SizeOf(id) = &self.0 {
+            Some(id.clone())
+        } else {
+            None
+        }
+    }
+}
+
 // Dynamic arrays do not have a size defined.
 impl MaybeSized for DynamicArray {
     fn maybe_size_of(&self) -> Option<usize> {
@@ -333,6 +350,10 @@ impl Format {
         }
 
         None
+    }
+
+    pub fn try_get_field_by_name(&self, field_name: &Identifier) -> Option<Field> {
+        self.fields.iter().find(|&x| x.name == field_name.clone()).cloned()
     }
 }
 
@@ -480,10 +501,39 @@ pub struct SemanticBinding {
     pub semantic: FieldSemantic,
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Semantics {
+    semantics: HashMap<Identifier, FieldSemantic>
+}
+
+impl Semantics {
+    pub fn new(semantics: HashMap<Identifier, FieldSemantic>) -> Self {
+        Semantics { semantics }
+    }
+
+    pub fn as_mut_ref(&mut self) -> &mut HashMap<Identifier, FieldSemantic> {
+        &mut self.semantics
+    }
+
+    pub fn find_field_id(&self, semantic: FieldSemantic) -> Option<Identifier> {
+        if let Some(e) = self.semantics.iter().find(|&e| *e.1 == semantic) {
+            Some(e.0.clone())
+        } else {
+            None
+        }
+    }
+}
+
+impl From<HashMap<Identifier, FieldSemantic>> for Semantics {
+    fn from(value: HashMap<Identifier, FieldSemantic>) -> Self {
+        Self::new(value)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AbstractFormatAndSemantics {
     pub format: AbstractFormat,
-    pub semantics: HashMap<Identifier, FieldSemantic>,
+    pub semantics: Semantics,
 }
 
 impl From<AbstractFormat> for AbstractFormatAndSemantics {
