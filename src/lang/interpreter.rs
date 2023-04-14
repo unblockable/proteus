@@ -393,16 +393,14 @@ mod tests {
     use crate::lang::task::*;
     use crate::lang::types::*;
 
-    struct LengthPayloadSpec {}
+    struct LengthPayloadSpec {
+        abs_format_out: AbstractFormat,
+        abs_format_in1: AbstractFormat,
+        abs_format_in2: AbstractFormat,
+    }
 
     impl LengthPayloadSpec {
         fn new() -> LengthPayloadSpec {
-            Self {}
-        }
-    }
-
-    impl TaskProvider for LengthPayloadSpec {
-        fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
             let abs_format_out: AbstractFormat = Format {
                 name: "DataMessageOut".id(),
                 fields: vec![
@@ -436,6 +434,16 @@ mod tests {
             }
             .into();
 
+            Self {
+                abs_format_out,
+                abs_format_in1,
+                abs_format_in2,
+            }
+        }
+    }
+
+    impl TaskProvider for LengthPayloadSpec {
+        fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
             // Outgoing data forwarding direction.
             let out_task = Task {
                 ins: vec![
@@ -446,7 +454,7 @@ mod tests {
                     .into(),
                     ConcretizeFormatArgs {
                         name: "cformat".id(),
-                        aformat: abs_format_out,
+                        aformat: self.abs_format_out.clone(),
                     }
                     .into(),
                     CreateMessageArgs {
@@ -485,7 +493,7 @@ mod tests {
                     .into(),
                     ConcretizeFormatArgs {
                         name: "cformat1".id(),
-                        aformat: abs_format_in1,
+                        aformat: self.abs_format_in1.clone(),
                     }
                     .into(),
                     CreateMessageArgs {
@@ -507,7 +515,7 @@ mod tests {
                     .into(),
                     ConcretizeFormatArgs {
                         name: "cformat2".id(),
-                        aformat: abs_format_in2,
+                        aformat: self.abs_format_in2.clone(),
                     }
                     .into(),
                     CreateMessageArgs {
