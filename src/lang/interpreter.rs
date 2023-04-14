@@ -407,8 +407,25 @@ mod tests {
     use crate::lang::task::*;
     use crate::lang::types::*;
 
+    trait SpecTestHarness {
+        fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>>;
+        fn read_app(&self, int: &mut Interpreter) -> Bytes;
+        fn write_net(&self, int: &mut Interpreter, payload: Bytes);
+        fn read_net(&self, int: &mut Interpreter) -> Bytes;
+        fn write_app(&self, int: &mut Interpreter, payload: Bytes);
+    }
+
+    fn get_test_harnesses() -> Vec<Box<dyn SpecTestHarness + Send + 'static>> {
+        vec![
+            Box::new(LengthPayloadSpecHarness {}),
+            Box::new(EncryptedLengthPayloadSpecHarness {}),
+        ]
+    }
+
     mod basic {
         use super::*;
+
+        pub struct LengthPayloadSpecHarness {}
 
         pub struct LengthPayloadSpec {
             abs_format_out: AbstractFormat,
@@ -567,6 +584,83 @@ mod tests {
 
                 // Concurrently execute tasks for both data forwarding directions.
                 TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
+            }
+        }
+
+        impl LengthPayloadSpecHarness {
+            fn parse_simple_proteus_spec(&self) -> ProteusSpec {
+                let filepath = "src/lang/parse/examples/simple.psf";
+                let input = fs::read_to_string(filepath).expect("cannot read simple file");
+
+                ProteusSpec::new(&input, Role::Client)
+            }
+        }
+
+        impl SpecTestHarness for LengthPayloadSpecHarness {
+            fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>> {
+                vec![
+                    Box::new(LengthPayloadSpec::new()),
+                    Box::new(self.parse_simple_proteus_spec()),
+                ]
+            }
+
+            fn read_app(&self, int: &mut Interpreter) -> Bytes {
+                let args = match int.next_net_cmd_out().unwrap() {
+                    NetOpOut::RecvApp(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                let payload = Bytes::from("When should I attack?");
+                assert!(args.len.contains(&payload.len()));
+
+                int.store_out(args.addr, payload.clone());
+                payload
+            }
+
+            fn write_net(&self, int: &mut Interpreter, payload: Bytes) {
+                let args = match int.next_net_cmd_out().unwrap() {
+                    NetOpOut::SendNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                let mut msg = args.bytes.clone();
+                assert_eq!(msg.len(), payload.len() + 2); // 2 for length field
+                assert_eq!(msg[2..], payload[..]);
+
+                let len = msg.get_u16();
+                assert_eq!(len as usize, payload.len());
+            }
+
+            fn read_net(&self, int: &mut Interpreter) -> Bytes {
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::RecvNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert!(args.len.contains(&2));
+                let payload = Bytes::from("Attack at dawn!");
+                let mut buf = BytesMut::new();
+                buf.put_u16(payload.len() as u16);
+                int.store_in(args.addr, buf.freeze());
+
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::RecvNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert!(args.len.contains(&payload.len()));
+                int.store_in(args.addr, payload.clone());
+                payload
+            }
+
+            fn write_app(&self, int: &mut Interpreter, payload: Bytes) {
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::SendApp(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert_eq!(args.bytes.len(), payload.len());
+                assert_eq!(args.bytes[..], payload[..]);
             }
         }
     }
@@ -778,185 +872,229 @@ mod tests {
                 TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
             }
         }
-    }
 
-    fn parse_simple_proteus_spec() -> ProteusSpec {
-        let filepath = "src/lang/parse/examples/simple.psf";
-        let input = fs::read_to_string(filepath).expect("cannot read simple file");
+        pub struct EncryptedLengthPayloadSpecHarness {}
 
-        ProteusSpec::new(&input, Role::Client)
-    }
+        impl EncryptedLengthPayloadSpecHarness {
+            fn _parse_encrypted_proteus_spec(&self) -> ProteusSpec {
+                let filepath = "src/lang/parse/examples/encrypted.psf";
+                let input = fs::read_to_string(filepath).expect("cannot read encrypted file");
 
-    fn get_task_providers() -> Vec<Box<dyn TaskProvider + Send + 'static>> {
-        vec![
-            Box::new(LengthPayloadSpec::new()),
-            Box::new(parse_simple_proteus_spec()),
-        ]
+                ProteusSpec::new(&input, Role::Client)
+            }
+        }
+
+        impl SpecTestHarness for EncryptedLengthPayloadSpecHarness {
+            fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>> {
+                vec![
+                    Box::new(EncryptedLengthPayloadSpec::new()),
+                    // Box::new(self.parse_encrypted_proteus_spec()),
+                ]
+            }
+
+            fn read_app(&self, int: &mut Interpreter) -> Bytes {
+                let args = match int.next_net_cmd_out().unwrap() {
+                    NetOpOut::RecvApp(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                let payload = Bytes::from("When should I attack?");
+                assert!(args.len.contains(&payload.len()));
+
+                int.store_out(args.addr, payload.clone());
+                payload
+            }
+
+            fn write_net(&self, int: &mut Interpreter, payload: Bytes) {
+                let args = match int.next_net_cmd_out().unwrap() {
+                    NetOpOut::SendNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                let mut msg = args.bytes.clone();
+                assert_eq!(msg.len(), payload.len() + 2 + 20 + 20); // len and 2 macs
+                assert_eq!(msg[22..(msg.len() - 20)], payload[..]);
+
+                let len = msg.get_u16();
+                assert_eq!(len as usize, payload.len() + 20); // mac
+            }
+
+            fn read_net(&self, int: &mut Interpreter) -> Bytes {
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::RecvNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert!(args.len.contains(&2));
+
+                let payload = Bytes::from("Attack at dawn!");
+                let mac = Bytes::from_static(&[0; 20]);
+
+                let mut buf = BytesMut::new();
+                buf.put_u16((payload.len() + mac.len()) as u16);
+                assert!(args.len.contains(&buf.len()));
+                int.store_in(args.addr, buf.freeze());
+
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::RecvNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert!(args.len.contains(&mac.len()));
+                int.store_in(args.addr, mac.clone());
+
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::RecvNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert!(args.len.contains(&payload.len()));
+                int.store_in(args.addr, payload.clone());
+
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::RecvNet(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert!(args.len.contains(&mac.len()));
+                int.store_in(args.addr, mac.clone());
+                payload
+            }
+
+            fn write_app(&self, int: &mut Interpreter, payload: Bytes) {
+                let args = match int.next_net_cmd_in().unwrap() {
+                    NetOpIn::SendApp(args) => args,
+                    _ => panic!("Unexpected interpreter command"),
+                };
+
+                assert_eq!(args.bytes.len(), payload.len());
+                assert_eq!(args.bytes[..], payload[..]);
+            }
+        }
     }
 
     #[test]
     fn load_tasks() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            int.load_tasks();
-            assert!(int.current_prog_in.is_some());
-            assert!(int.current_prog_out.is_some());
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                int.load_tasks();
+                assert!(int.current_prog_in.is_some());
+                assert!(int.current_prog_out.is_some());
+            }
         }
     }
 
-    fn read_app(int: &mut Interpreter) -> Bytes {
-        let args = match int.next_net_cmd_out().unwrap() {
-            NetOpOut::RecvApp(args) => args,
-            _ => panic!("Unexpected interpreter command"),
-        };
-
-        let payload = Bytes::from("When should I attack?");
-        assert!(args.len.contains(&payload.len()));
-
-        int.store_out(args.addr, payload.clone());
-        payload
-    }
-
-    fn write_net(int: &mut Interpreter, payload: Bytes) {
-        let args = match int.next_net_cmd_out().unwrap() {
-            NetOpOut::SendNet(args) => args,
-            _ => panic!("Unexpected interpreter command"),
-        };
-
-        let mut msg = args.bytes;
-        assert_eq!(msg.len(), payload.len() + 2); // 2 for length field
-        assert_eq!(msg[2..], payload[..]);
-
-        let len = msg.get_u16();
-        assert_eq!(len as usize, payload.len());
-    }
-
-    fn read_net(int: &mut Interpreter) -> Bytes {
-        let args = match int.next_net_cmd_in().unwrap() {
-            NetOpIn::RecvNet(args) => args,
-            _ => panic!("Unexpected interpreter command"),
-        };
-
-        assert!(args.len.contains(&2));
-        let payload = Bytes::from("Attack at dawn!");
-        let mut buf = BytesMut::new();
-        buf.put_u16(payload.len() as u16);
-        int.store_in(args.addr, buf.freeze());
-
-        let args = match int.next_net_cmd_in().unwrap() {
-            NetOpIn::RecvNet(args) => args,
-            _ => panic!("Unexpected interpreter command"),
-        };
-
-        assert!(args.len.contains(&payload.len()));
-        int.store_in(args.addr, payload.clone());
-        payload
-    }
-
-    fn write_app(int: &mut Interpreter, payload: Bytes) {
-        let args = match int.next_net_cmd_in().unwrap() {
-            NetOpIn::SendApp(args) => args,
-            _ => panic!("Unexpected interpreter command"),
-        };
-
-        assert_eq!(args.bytes.len(), payload.len());
-        assert_eq!(args.bytes[..], payload[..]);
-    }
-
-    fn read_app_write_net_pipeline(int: &mut Interpreter) {
-        let payload = read_app(int);
-        write_net(int, payload);
+    fn read_app_write_net_pipeline(th: &Box<dyn SpecTestHarness + Send>, int: &mut Interpreter) {
+        let payload = th.read_app(int);
+        th.write_net(int, payload);
     }
 
     #[test]
     fn read_app_write_net_once() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            read_app_write_net_pipeline(&mut int);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                read_app_write_net_pipeline(&th, &mut int);
+            }
         }
     }
 
     #[test]
     fn read_app_write_net_many() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            for _ in 0..10 {
-                read_app_write_net_pipeline(&mut int);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                for _ in 0..10 {
+                    read_app_write_net_pipeline(&th, &mut int);
+                }
             }
         }
     }
 
-    fn read_net_write_app_pipeline(int: &mut Interpreter) {
-        let payload = read_net(int);
-        write_app(int, payload);
+    fn read_net_write_app_pipeline(th: &Box<dyn SpecTestHarness + Send>, int: &mut Interpreter) {
+        let payload = th.read_net(int);
+        th.write_app(int, payload);
     }
 
     #[test]
     fn read_net_write_app_once() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            read_net_write_app_pipeline(&mut int);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                read_net_write_app_pipeline(&th, &mut int);
+            }
         }
     }
 
     #[test]
     fn read_net_write_app_many() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            for _ in 0..10 {
-                read_net_write_app_pipeline(&mut int);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                for _ in 0..10 {
+                    read_net_write_app_pipeline(&th, &mut int);
+                }
             }
         }
     }
 
     #[test]
     fn interleaved_app_net_app_net() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            for _ in 0..10 {
-                let app_payload = read_app(&mut int);
-                let net_payload = read_net(&mut int);
-                write_app(&mut int, net_payload);
-                write_net(&mut int, app_payload);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                for _ in 0..10 {
+                    let app_payload = th.read_app(&mut int);
+                    let net_payload = th.read_net(&mut int);
+                    th.write_app(&mut int, net_payload);
+                    th.write_net(&mut int, app_payload);
+                }
             }
         }
     }
 
     #[test]
     fn interleaved_net_app_net_app() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            for _ in 0..10 {
-                let net_payload = read_net(&mut int);
-                let app_payload = read_app(&mut int);
-                write_net(&mut int, app_payload);
-                write_app(&mut int, net_payload);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                for _ in 0..10 {
+                    let net_payload = th.read_net(&mut int);
+                    let app_payload = th.read_app(&mut int);
+                    th.write_net(&mut int, app_payload);
+                    th.write_app(&mut int, net_payload);
+                }
             }
         }
     }
 
     #[test]
     fn interleaved_app_net_net_app() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            for _ in 0..10 {
-                let app_payload = read_app(&mut int);
-                let net_payload = read_net(&mut int);
-                write_net(&mut int, app_payload);
-                write_app(&mut int, net_payload);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                for _ in 0..10 {
+                    let app_payload = th.read_app(&mut int);
+                    let net_payload = th.read_net(&mut int);
+                    th.write_net(&mut int, app_payload);
+                    th.write_app(&mut int, net_payload);
+                }
             }
         }
     }
 
     #[test]
     fn interleaved_net_app_app_net() {
-        for tp in get_task_providers() {
-            let mut int = Interpreter::new(tp);
-            for _ in 0..10 {
-                let net_payload = read_net(&mut int);
-                let app_payload = read_app(&mut int);
-                write_app(&mut int, net_payload);
-                write_net(&mut int, app_payload);
+        for th in get_test_harnesses() {
+            for tp in th.get_task_providers() {
+                let mut int = Interpreter::new(tp);
+                for _ in 0..10 {
+                    let net_payload = th.read_net(&mut int);
+                    let app_payload = th.read_app(&mut int);
+                    th.write_app(&mut int, net_payload);
+                    th.write_net(&mut int, app_payload);
+                }
             }
         }
     }
