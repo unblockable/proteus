@@ -205,9 +205,9 @@ struct Interpreter {
 }
 
 impl Interpreter {
-    fn new(spec: impl TaskProvider + Send + 'static) -> Self {
+    fn new(spec: Box<dyn TaskProvider + Send + 'static>) -> Self {
         Self {
-            spec: Box::new(spec),
+            spec,
             next_netop_out: None,
             next_netop_in: None,
             current_prog_out: None,
@@ -326,7 +326,7 @@ pub struct SharedAsyncInterpreter {
 impl SharedAsyncInterpreter {
     pub fn new(spec: ProteusSpec) -> SharedAsyncInterpreter {
         SharedAsyncInterpreter {
-            inner: Arc::new(Mutex::new(Interpreter::new(spec))),
+            inner: Arc::new(Mutex::new(Interpreter::new(Box::new(spec)))),
         }
     }
 
@@ -386,8 +386,10 @@ impl SharedAsyncInterpreter {
 #[cfg(test)]
 mod tests {
     use bytes::{Buf, BufMut, BytesMut};
+    use std::fs;
 
     use super::*;
+    use crate::lang::common::Role;
     use crate::lang::task::*;
     use crate::lang::types::*;
 
@@ -528,12 +530,28 @@ mod tests {
         }
     }
 
+    fn parse_simple_proteus_spec() -> ProteusSpec {
+        let filepath = "src/lang/parse/examples/simple.psf";
+        let input = fs::read_to_string(filepath).expect("cannot read simple file");
+
+        ProteusSpec::new(&input, Role::Client)
+    }
+
+    fn get_task_providers() -> Vec<Box<dyn TaskProvider + Send + 'static>> {
+        vec![
+            Box::new(LengthPayloadSpec {}),
+            Box::new(parse_simple_proteus_spec()),
+        ]
+    }
+
     #[test]
     fn load_tasks() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        int.load_tasks();
-        assert!(int.current_prog_in.is_some());
-        assert!(int.current_prog_out.is_some());
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            int.load_tasks();
+            assert!(int.current_prog_in.is_some());
+            assert!(int.current_prog_out.is_some());
+        }
     }
 
     fn read_app(int: &mut Interpreter) -> Bytes {
@@ -602,15 +620,19 @@ mod tests {
 
     #[test]
     fn read_app_write_net_once() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        read_app_write_net_pipeline(&mut int);
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            read_app_write_net_pipeline(&mut int);
+        }
     }
 
     #[test]
     fn read_app_write_net_many() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        for _ in 0..10 {
-            read_app_write_net_pipeline(&mut int);
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                read_app_write_net_pipeline(&mut int);
+            }
         }
     }
 
@@ -621,59 +643,71 @@ mod tests {
 
     #[test]
     fn read_net_write_app_once() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        read_net_write_app_pipeline(&mut int);
-    }
-
-    #[test]
-    fn read_net_write_app_many() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        for _ in 0..10 {
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
             read_net_write_app_pipeline(&mut int);
         }
     }
 
     #[test]
+    fn read_net_write_app_many() {
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                read_net_write_app_pipeline(&mut int);
+            }
+        }
+    }
+
+    #[test]
     fn interleaved_app_net_app_net() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        for _ in 0..10 {
-            let app_payload = read_app(&mut int);
-            let net_payload = read_net(&mut int);
-            write_app(&mut int, net_payload);
-            write_net(&mut int, app_payload);
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let app_payload = read_app(&mut int);
+                let net_payload = read_net(&mut int);
+                write_app(&mut int, net_payload);
+                write_net(&mut int, app_payload);
+            }
         }
     }
 
     #[test]
     fn interleaved_net_app_net_app() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        for _ in 0..10 {
-            let net_payload = read_net(&mut int);
-            let app_payload = read_app(&mut int);
-            write_net(&mut int, app_payload);
-            write_app(&mut int, net_payload);
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let net_payload = read_net(&mut int);
+                let app_payload = read_app(&mut int);
+                write_net(&mut int, app_payload);
+                write_app(&mut int, net_payload);
+            }
         }
     }
 
     #[test]
     fn interleaved_app_net_net_app() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        for _ in 0..10 {
-            let app_payload = read_app(&mut int);
-            let net_payload = read_net(&mut int);
-            write_net(&mut int, app_payload);
-            write_app(&mut int, net_payload);
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let app_payload = read_app(&mut int);
+                let net_payload = read_net(&mut int);
+                write_net(&mut int, app_payload);
+                write_app(&mut int, net_payload);
+            }
         }
     }
 
     #[test]
     fn interleaved_net_app_app_net() {
-        let mut int = Interpreter::new(LengthPayloadSpec::new());
-        for _ in 0..10 {
-            let net_payload = read_net(&mut int);
-            let app_payload = read_app(&mut int);
-            write_app(&mut int, net_payload);
-            write_net(&mut int, app_payload);
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let net_payload = read_net(&mut int);
+                let app_payload = read_app(&mut int);
+                write_app(&mut int, net_payload);
+                write_net(&mut int, app_payload);
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ use crate::lang::types::*;
 use core::str::FromStr;
 use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
+use pest::Parser;
 use std::collections::hash_map::HashMap;
 use std::fmt::Debug;
 
@@ -190,7 +191,7 @@ fn parse_sequence_specifier(p: &RulePair) -> SequenceSpecifier {
     }
 }
 
-fn parse_psf(p: &RulePair) -> PSF {
+pub fn parse_psf_impl(p: &RulePair) -> PSF {
     assert!(p.as_rule() == Rule::psf);
 
     let mut formats: HashMap<Identifier, AbstractFormatAndSemantics> = Default::default();
@@ -223,6 +224,15 @@ fn parse_psf(p: &RulePair) -> PSF {
     }
 
     PSF { formats, sequence }
+}
+
+pub fn parse_psf(psf_contents: &String) -> PSF {
+    let rule = Rule::psf;
+    let mut p = ProteusLiteParser::parse(rule, psf_contents).expect("Unsuccessful parse");
+    let mut pair = p.next().unwrap();
+    let psf = parse_psf_impl(&mut pair);
+    assert!(psf.is_valid());
+    psf
 }
 
 #[cfg(test)]
@@ -465,16 +475,9 @@ pub mod tests {
     }
 
     pub fn parse_example_psf() -> PSF {
-        let filepath = "src/lang/parse/example.psf";
+        let filepath = "src/lang/parse/examples/example.psf";
         let input = fs::read_to_string(filepath).expect("cannot read example file");
-
-        let rule = Rule::psf;
-
-        let mut p = ProteusLiteParser::parse(rule, &input).expect("Unsuccessful parse");
-        let mut pair = p.next().unwrap();
-        let psf = parse_psf(&mut pair);
-        assert!(psf.is_valid());
-        psf
+        parse_psf(&input)
     }
 
     #[test]

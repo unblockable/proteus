@@ -22,14 +22,22 @@ use crate::lang::types::*;
 */
 type Graph = petgraph::graph::Graph<(), (Role, Identifier), Directed, usize>;
 
-struct TaskGraphImpl {
+pub struct TaskGraphImpl {
     graph: Graph,
     my_role: Role,
     psf: PSF,
 }
 
 impl TaskGraphImpl {
-    fn next(&self, task_completed: TaskID) -> TaskSet {
+    pub fn new(graph: Graph, my_role: Role, psf: PSF) -> TaskGraphImpl {
+        TaskGraphImpl {
+            graph,
+            my_role,
+            psf,
+        }
+    }
+
+    pub fn next(&self, task_completed: TaskID) -> TaskSet {
         let edges: Vec<_> = self
             .graph
             .edges(usize::from(task_completed).into())
@@ -56,19 +64,17 @@ impl TaskGraphImpl {
                 }
             }
             2 => {
-
                 let edge0_role = &(edges[0].weight()).0;
                 let edge0_format = &(edges[0].weight()).1;
 
                 let edge1_role = &(edges[1].weight()).0;
                 let edge1_format = &(edges[1].weight()).1;
 
-                let ins0 = compile_message_to_instrs(self.my_role,
-                    *edge0_role, edge0_format, &self.psf);
+                let ins0 =
+                    compile_message_to_instrs(self.my_role, *edge0_role, edge0_format, &self.psf);
 
-                let ins1 = compile_message_to_instrs(self.my_role,
-                    *edge1_role, edge1_format, &self.psf);
-
+                let ins1 =
+                    compile_message_to_instrs(self.my_role, *edge1_role, edge1_format, &self.psf);
 
                 let t0 = Task {
                     ins: ins0,
@@ -100,7 +106,7 @@ impl TaskGraphImpl {
     }
 }
 
-fn compile_task_graph<'a, T: Iterator<Item = &'a SequenceSpecifier>>(itr: T) -> Graph {
+pub fn compile_task_graph<'a, T: Iterator<Item = &'a SequenceSpecifier>>(itr: T) -> Graph {
     let mut graph: Graph = Default::default();
 
     let start_node = graph.add_node(());
@@ -302,38 +308,54 @@ fn compile_message_to_instrs(
         } // has_prefix
 
         if has_suffix {
-
             // Only support one payload field
             assert!(suffix.fields.len() == 1);
 
             if let Some(ref hints_dynamic_payload) = maybe_hints_dynamic_payload {
                 // The length field must exist in the fixed-size prefix.
-                instrs.push(GetNumericValueArgs{
-                    name: LENGTH_ON_HEAP_NAME.id(),
-                    msg_name: MSG_PFX_HEAP_NAME.id(),
-                    field_name: hints_dynamic_payload.length_field_name.clone(),
-                }.into());
+                instrs.push(
+                    GetNumericValueArgs {
+                        name: LENGTH_ON_HEAP_NAME.id(),
+                        msg_name: MSG_PFX_HEAP_NAME.id(),
+                        field_name: hints_dynamic_payload.length_field_name.clone(),
+                    }
+                    .into(),
+                );
 
-                instrs.push(ReadNetArgs{
-                    name: hints_dynamic_payload.payload_field_name.clone(),
-                    len: ReadNetLength::Identifier(LENGTH_ON_HEAP_NAME.id()),
-                }.into());
+                instrs.push(
+                    ReadNetArgs {
+                        name: hints_dynamic_payload.payload_field_name.clone(),
+                        len: ReadNetLength::Identifier(LENGTH_ON_HEAP_NAME.id()),
+                    }
+                    .into(),
+                );
 
-                instrs.push(ConcretizeFormatArgs{
-                    name: CFORMAT_SFX_HEAP_NAME.id(),
-                    aformat: AbstractFormat{format: format.clone()},
-                }.into());
+                instrs.push(
+                    ConcretizeFormatArgs {
+                        name: CFORMAT_SFX_HEAP_NAME.id(),
+                        aformat: AbstractFormat {
+                            format: format.clone(),
+                        },
+                    }
+                    .into(),
+                );
 
-                instrs.push(CreateMessageArgs {
-                    name: MSG_SFX_HEAP_NAME.id(),
-                    fmt_name: CFORMAT_SFX_HEAP_NAME.id(),
-                    field_names: suffix.fields.iter().map(|e| e.name.clone()).collect(),
-                }.into());
+                instrs.push(
+                    CreateMessageArgs {
+                        name: MSG_SFX_HEAP_NAME.id(),
+                        fmt_name: CFORMAT_SFX_HEAP_NAME.id(),
+                        field_names: suffix.fields.iter().map(|e| e.name.clone()).collect(),
+                    }
+                    .into(),
+                );
 
-                instrs.push(WriteAppArgs{
-                    msg_name: MSG_SFX_HEAP_NAME.id(),
-                    field_name: hints_dynamic_payload.payload_field_name.clone(),
-                }.into());
+                instrs.push(
+                    WriteAppArgs {
+                        msg_name: MSG_SFX_HEAP_NAME.id(),
+                        field_name: hints_dynamic_payload.payload_field_name.clone(),
+                    }
+                    .into(),
+                );
             }
         } // has_suffix
     } // receiver
