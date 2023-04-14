@@ -91,7 +91,7 @@ pub enum Instruction {
 /// `from_field_id`, and store the length in `to_heap_id`.
 #[derive(Debug)]
 pub struct ComputeLengthArgs {
-    pub from_msg_id: Identifier,
+    pub from_msg_heap_id: Identifier,
     pub from_field_id: Identifier,
     pub to_heap_id: Identifier,
 }

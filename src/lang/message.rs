@@ -31,14 +31,28 @@ impl Message {
         })
     }
 
-    fn get_field_bytes_mut(&mut self, offset: usize, size: usize) -> &mut [u8] {
+    fn get_field_slice(&self, offset: usize, size: usize) -> &[u8] {
+        assert!(offset < self.data.len() && offset + size <= self.data.len());
+        &self.data.as_ref()[offset..offset + size]
+    }
+
+    fn get_field_slice_mut(&mut self, offset: usize, size: usize) -> &mut [u8] {
         assert!(offset < self.data.len() && offset + size <= self.data.len());
         &mut self.data.as_mut()[offset..offset + size]
     }
 
-    fn get_field_bytes(&self, offset: usize, size: usize) -> &[u8] {
-        assert!(offset < self.data.len() && offset + size <= self.data.len());
-        &self.data.as_ref()[offset..offset + size]
+    fn try_get_field_slice(&self, field_name: &Identifier) -> Option<&[u8]> {
+        self.format
+            .format
+            .try_get_field_type_offset_and_size(field_name)
+            .map(|(_, offset, size)| self.get_field_slice(offset, size))
+    }
+
+    fn try_get_field_slice_mut(&mut self, field_name: &Identifier) -> Option<&mut [u8]> {
+        self.format
+            .format
+            .try_get_field_type_offset_and_size(field_name)
+            .map(|(_, offset, size)| self.get_field_slice_mut(offset, size))
     }
 
     pub fn set_field_unsigned_numeric(
@@ -51,7 +65,7 @@ impl Message {
             .format
             .try_get_field_type_offset_and_size(field_name)
         {
-            let mut field_bytes = self.get_field_bytes_mut(offset, size);
+            let mut field_bytes = self.get_field_slice_mut(offset, size);
 
             match dtype {
                 Array::Primitive(PrimitiveArray(x, n)) => {
@@ -114,7 +128,7 @@ impl Message {
             .format
             .try_get_field_type_offset_and_size(field_name)
         {
-            let mut field_bytes = self.get_field_bytes(offset, size);
+            let mut field_bytes = self.get_field_slice(offset, size);
 
             match dtype {
                 Array::Primitive(PrimitiveArray(x, n)) => {
@@ -168,11 +182,15 @@ impl Message {
         nbytes
     }
 
-    pub fn try_get_field_bytes(&mut self, field_name: &Identifier) -> Option<&mut [u8]> {
-        self.format
-            .format
-            .try_get_field_type_offset_and_size(field_name)
-            .map(|(_, offset, size)| self.get_field_bytes_mut(offset, size))
+    pub fn get_field_bytes(&self, field_name: &Identifier) -> Result<Bytes, GetFieldError> {
+        match self.try_get_field_slice(field_name) {
+            Some(slice) => {
+                let mut buf = BytesMut::with_capacity(slice.len());
+                buf.put_slice(slice);
+                Ok(buf.freeze())
+            }
+            None => Err(GetFieldError::NotDefined),
+        }
     }
 
     pub fn set_field_bytes(
@@ -180,7 +198,7 @@ impl Message {
         field_name: &Identifier,
         bytes: &Bytes,
     ) -> Result<(), SetFieldError> {
-        match self.try_get_field_bytes(field_name) {
+        match self.try_get_field_slice_mut(field_name) {
             Some(slice) => {
                 if slice.len() == bytes.len() {
                     slice.copy_from_slice(bytes);

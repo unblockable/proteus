@@ -92,7 +92,7 @@ impl Program {
     ) -> Result<(), interpreter::Error> {
         match &self.task.ins[self.next_ins_index] {
             Instruction::ComputeLength(args) => {
-                let msg = self.message_heap.get(&args.from_msg_id).unwrap();
+                let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
                 let len = msg.len_suffix(&args.from_field_id);
                 self.number_heap
                     .insert(args.to_heap_id.clone(), len as u128);
@@ -126,7 +126,9 @@ impl Program {
                 todo!()
             }
             Instruction::GetArrayBytes(args) => {
-                todo!()
+                let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
+                let bytes = msg.get_field_bytes(&args.from_field_id).unwrap();
+                self.bytes_heap.insert(args.to_heap_id.clone(), bytes);
             }
             Instruction::GetNumericValue(args) => {
                 let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
@@ -503,7 +505,7 @@ mod tests {
                         }
                         .into(),
                         ComputeLengthArgs {
-                            from_msg_id: "message".id(),
+                            from_msg_heap_id: "message".id(),
                             from_field_id: "length".id(),
                             to_heap_id: "length_value_on_heap".id(),
                         }
@@ -764,7 +766,7 @@ mod tests {
                         }
                         .into(),
                         ComputeLengthArgs {
-                            from_msg_id: "message".id(),
+                            from_msg_heap_id: "message".id(),
                             from_field_id: "length_mac".id(),
                             to_heap_id: "length_value_on_heap".id(),
                         }

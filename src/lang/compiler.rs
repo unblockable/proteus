@@ -245,7 +245,7 @@ fn compile_message_to_instrs(
         if let Some(ref hints_dynamic_payload) = maybe_hints_dynamic_payload {
             instrs.push(
                 ComputeLengthArgs {
-                    from_msg_id: MESSAGE_HEAP_NAME.id(),
+                    from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
                     from_field_id: hints_dynamic_payload.length_field_name.clone(),
                     to_heap_id: LEN_FIELD_HEAP_NAME.id(),
                 }
