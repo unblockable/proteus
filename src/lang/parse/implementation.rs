@@ -28,12 +28,12 @@ where
 
 fn parse_numeric_type(p: &RulePair) -> NumericType {
     assert!(p.as_rule() == Rule::numeric_type);
-    parse_simple(&p)
+    parse_simple(p)
 }
 
 fn parse_primitive_type(p: &RulePair) -> PrimitiveType {
     assert!(p.as_rule() == Rule::primitive_type);
-    parse_simple(&p)
+    parse_simple(p)
 }
 
 fn parse_positive_numeric_literal(p: &RulePair) -> usize {
@@ -43,7 +43,7 @@ fn parse_positive_numeric_literal(p: &RulePair) -> usize {
 
 fn parse_identifier(p: &RulePair) -> Identifier {
     assert!(p.as_rule() == Rule::identifier);
-    parse_simple(&p)
+    parse_simple(p)
 }
 
 fn parse_primitive_array(p: &RulePair) -> PrimitiveArray {
@@ -136,7 +136,7 @@ fn parse_format(p: &RulePair) -> Format {
     let f = p.next().unwrap();
     fields.push(parse_field(&f));
 
-    while let Some(f) = p.next() {
+    for f in p {
         fields.push(parse_field(&f));
     }
 
@@ -145,7 +145,7 @@ fn parse_format(p: &RulePair) -> Format {
 
 fn parse_field_semantic(p: &RulePair) -> FieldSemantic {
     assert!(p.as_rule() == Rule::field_semantic);
-    parse_simple(&p)
+    parse_simple(p)
 }
 
 fn parse_semantic_binding(p: &RulePair) -> SemanticBinding {
@@ -166,12 +166,12 @@ fn parse_semantic_binding(p: &RulePair) -> SemanticBinding {
 
 fn parse_role(p: &RulePair) -> Role {
     assert!(p.as_rule() == Rule::role);
-    parse_simple(&p)
+    parse_simple(p)
 }
 
 fn parse_phase(p: &RulePair) -> Phase {
     assert!(p.as_rule() == Rule::phase);
-    parse_simple(&p)
+    parse_simple(p)
 }
 
 fn parse_sequence_specifier(p: &RulePair) -> SequenceSpecifier {
@@ -198,7 +198,7 @@ fn parse_psf(p: &RulePair) -> PSF {
 
     let mut p = p.clone().into_inner();
 
-    while let Some(x) = p.next() {
+    for x in p {
         match x.as_rule() {
             Rule::format => {
                 let format: AbstractFormatAndSemantics =

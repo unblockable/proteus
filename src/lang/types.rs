@@ -79,13 +79,13 @@ impl ArrayCoorespondence for i64 {
 
 impl ArrayCoorespondence for bool {
     fn corresponded_array_type() -> Array {
-        PrimitiveArray(PrimitiveType::Bool.into(), 1).into()
+        PrimitiveArray(PrimitiveType::Bool, 1).into()
     }
 }
 
 impl ArrayCoorespondence for char {
     fn corresponded_array_type() -> Array {
-        PrimitiveArray(PrimitiveType::Char.into(), 1).into()
+        PrimitiveArray(PrimitiveType::Char, 1).into()
     }
 }
 
@@ -105,8 +105,7 @@ pub struct DowncastError;
 pub struct ConversionError;
 
 pub trait NumericallyBounded {
-    pub fn min();
-    pub fn max();
+    fn bounds(&self) -> (i128, u128);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -121,6 +120,20 @@ pub enum NumericType {
     I64,
 }
 
+impl NumericallyBounded for NumericType {
+    fn bounds(&self) -> (i128, u128) {
+        match self {
+            NumericType::U8 => (u8::MIN.into(), u8::MAX.into()),
+            NumericType::U16 => (u16::MIN.into(), u16::MAX.into()),
+            NumericType::U32 => (u32::MIN.into(), u32::MAX.into()),
+            NumericType::U64 => (u64::MIN.into(), u64::MAX.into()),
+            NumericType::I8 => (i8::MIN.into(), i8::MAX.try_into().unwrap()),
+            NumericType::I16 => (i16::MIN.into(), i16::MAX.try_into().unwrap()),
+            NumericType::I32 => (i32::MIN.into(), i32::MAX.try_into().unwrap()),
+            NumericType::I64 => (i64::MIN.into(), i64::MAX.try_into().unwrap()),
+        }
+    }
+}
 
 impl StaticallySized for NumericType {
     fn size_of(&self) -> usize {
@@ -234,6 +247,18 @@ pub enum UnaryOp {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PrimitiveArray(pub PrimitiveType, pub usize);
+
+impl TryFrom<PrimitiveArray> for NumericType {
+    type Error = DowncastError;
+
+    fn try_from(value: PrimitiveArray) -> Result<Self, Self::Error> {
+        if let PrimitiveType::Numeric(x) = value.0 {
+            Ok(x)
+        } else {
+            Err(Self::Error {})
+        }
+    }
+}
 
 impl StaticallySized for PrimitiveArray {
     fn size_of(&self) -> usize {
@@ -353,7 +378,37 @@ impl Format {
     }
 
     pub fn try_get_field_by_name(&self, field_name: &Identifier) -> Option<Field> {
-        self.fields.iter().find(|&x| x.name == field_name.clone()).cloned()
+        self.fields
+            .iter()
+            .find(|&x| x.name == field_name.clone())
+            .cloned()
+    }
+
+    pub fn split_into_fixed_sized_prefix_dynamic_suffix(&self) -> (Format, Format) {
+        let mut fixed_sized_fields = vec![];
+        let mut dynamic_fields = vec![];
+
+        let mut in_prefix = true;
+
+        for field in &self.fields[..] {
+            if in_prefix && field.maybe_size_of().is_some() {
+                fixed_sized_fields.push(field.clone());
+            } else {
+                dynamic_fields.push(field.clone());
+                in_prefix = false;
+            }
+        }
+
+        (
+            Format {
+                name: (self.name.0.clone() + "_prefix").parse().unwrap(),
+                fields: fixed_sized_fields,
+            },
+            Format {
+                name: (self.name.0.clone() + "_suffix").parse().unwrap(),
+                fields: dynamic_fields,
+            },
+        )
     }
 }
 
@@ -503,7 +558,7 @@ pub struct SemanticBinding {
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Semantics {
-    semantics: HashMap<Identifier, FieldSemantic>
+    semantics: HashMap<Identifier, FieldSemantic>,
 }
 
 impl Semantics {
@@ -516,11 +571,10 @@ impl Semantics {
     }
 
     pub fn find_field_id(&self, semantic: FieldSemantic) -> Option<Identifier> {
-        if let Some(e) = self.semantics.iter().find(|&e| *e.1 == semantic) {
-            Some(e.0.clone())
-        } else {
-            None
-        }
+        self.semantics
+            .iter()
+            .find(|&e| *e.1 == semantic)
+            .map(|e| e.0.clone())
     }
 }
 

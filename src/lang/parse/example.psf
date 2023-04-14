@@ -1,13 +1,13 @@
 @SEGMENT FORMATS
 
   DEFINE DataMsg
-    { NAME: Length  ; TYPE: u16 },
-    { NAME: Payload ; TYPE: [u8; Length.size_of] };
+    { NAME: length  ; TYPE: u16 },
+    { NAME: payload ; TYPE: [u8; length.size_of] };
 
 @SEGMENT SEMANTICS
 
-  { FORMAT: DataMsg; FIELD: Length;  SEMANTIC: LENGTH };
-  { FORMAT: DataMsg; FIELD: Payload; SEMANTIC: PAYLOAD };
+  { FORMAT: DataMsg; FIELD: length;  SEMANTIC: LENGTH };
+  { FORMAT: DataMsg; FIELD: payload; SEMANTIC: PAYLOAD };
 
 @SEGMENT SEQUENCE
 
