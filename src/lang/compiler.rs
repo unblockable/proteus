@@ -202,8 +202,8 @@ fn compile_message_to_instrs(
         if let Some(ref hints_dynamic_payload) = maybe_hints_dynamic_payload {
             instrs.push(
                 ReadAppArgs {
-                    name: hints_dynamic_payload.payload_field_name.clone(),
-                    len: 1..hints_dynamic_payload.length_field_max.into(),
+                    from_len: 1..hints_dynamic_payload.length_field_max.into(),
+                    to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
                 }
                 .into(),
             );
@@ -213,40 +213,50 @@ fn compile_message_to_instrs(
 
         instrs.push(
             ConcretizeFormatArgs {
-                name: CFORMAT_HEAP_NAME.id(),
-                aformat: AbstractFormat {
+                from_format: AbstractFormat {
                     format: format.clone(),
                 },
+                to_heap_id: CFORMAT_HEAP_NAME.id(),
             }
             .into(),
         );
 
         instrs.push(
             CreateMessageArgs {
-                name: MESSAGE_HEAP_NAME.id(),
-                fmt_name: CFORMAT_HEAP_NAME.id(),
-                field_names: dynamic_field_names,
+                from_format_heap_id: CFORMAT_HEAP_NAME.id(),
+                to_heap_id: MESSAGE_HEAP_NAME.id(),
             }
             .into(),
         );
+
+        for name in dynamic_field_names {
+            instrs.push(
+                SetArrayBytesArgs {
+                    from_heap_id: name.clone(),
+                    to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                    to_field_id: name.clone(),
+                }
+                .into(),
+            );
+        }
 
         // If there's a length field to set, set it here.
 
         if let Some(ref hints_dynamic_payload) = maybe_hints_dynamic_payload {
             instrs.push(
                 ComputeLengthArgs {
-                    name: LEN_FIELD_HEAP_NAME.id(),
-                    msg_name: MESSAGE_HEAP_NAME.id(),
-                    field_name: hints_dynamic_payload.length_field_name.clone(),
+                    from_msg_id: MESSAGE_HEAP_NAME.id(),
+                    from_field_id: hints_dynamic_payload.length_field_name.clone(),
+                    to_heap_id: LEN_FIELD_HEAP_NAME.id(),
                 }
                 .into(),
             );
 
             instrs.push(
                 SetNumericValueArgs {
-                    msg_name: MESSAGE_HEAP_NAME.id(),
-                    field_name: hints_dynamic_payload.length_field_name.clone(),
-                    name: LEN_FIELD_HEAP_NAME.id(),
+                    from_heap_id: LEN_FIELD_HEAP_NAME.id(),
+                    to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                    to_field_id: hints_dynamic_payload.length_field_name.clone(),
                 }
                 .into(),
             );
@@ -254,7 +264,7 @@ fn compile_message_to_instrs(
 
         instrs.push(
             WriteNetArgs {
-                msg_name: MESSAGE_HEAP_NAME.id(),
+                from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
             }
             .into(),
         );
@@ -280,8 +290,8 @@ fn compile_message_to_instrs(
 
                 instrs.push(
                     ReadNetArgs {
-                        name: field.name.clone(),
-                        len: ReadNetLength::Range(field_nbytes..field_nbytes + 1),
+                        from_len: ReadNetLength::Range(field_nbytes..field_nbytes + 1),
+                        to_heap_id: field.name.clone(),
                     }
                     .into(),
                 );
@@ -289,22 +299,37 @@ fn compile_message_to_instrs(
 
             instrs.push(
                 ConcretizeFormatArgs {
-                    name: CFORMAT_PFX_HEAP_NAME.id(),
-                    aformat: AbstractFormat {
+                    from_format: AbstractFormat {
                         format: prefix.clone(),
                     },
+                    to_heap_id: CFORMAT_PFX_HEAP_NAME.id(),
                 }
                 .into(),
             );
 
             instrs.push(
                 CreateMessageArgs {
-                    name: MSG_PFX_HEAP_NAME.id(),
-                    fmt_name: CFORMAT_PFX_HEAP_NAME.id(),
-                    field_names: prefix.fields.iter().map(|e| e.name.clone()).collect(),
+                    from_format_heap_id: CFORMAT_PFX_HEAP_NAME.id(),
+                    to_heap_id: MSG_PFX_HEAP_NAME.id(),
                 }
                 .into(),
-            )
+            );
+
+            for name in prefix
+                .fields
+                .iter()
+                .map(|e| e.name.clone())
+                .collect::<Vec<Identifier>>()
+            {
+                instrs.push(
+                    SetArrayBytesArgs {
+                        from_heap_id: name.clone(),
+                        to_msg_heap_id: MSG_PFX_HEAP_NAME.id(),
+                        to_field_id: name.clone(),
+                    }
+                    .into(),
+                );
+            }
         } // has_prefix
 
         if has_suffix {
@@ -315,44 +340,59 @@ fn compile_message_to_instrs(
                 // The length field must exist in the fixed-size prefix.
                 instrs.push(
                     GetNumericValueArgs {
-                        name: LENGTH_ON_HEAP_NAME.id(),
-                        msg_name: MSG_PFX_HEAP_NAME.id(),
-                        field_name: hints_dynamic_payload.length_field_name.clone(),
+                        from_msg_heap_id: MSG_PFX_HEAP_NAME.id(),
+                        from_field_id: hints_dynamic_payload.length_field_name.clone(),
+                        to_heap_id: LENGTH_ON_HEAP_NAME.id(),
                     }
                     .into(),
                 );
 
                 instrs.push(
                     ReadNetArgs {
-                        name: hints_dynamic_payload.payload_field_name.clone(),
-                        len: ReadNetLength::Identifier(LENGTH_ON_HEAP_NAME.id()),
+                        from_len: ReadNetLength::Identifier(LENGTH_ON_HEAP_NAME.id()),
+                        to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
                     }
                     .into(),
                 );
 
                 instrs.push(
                     ConcretizeFormatArgs {
-                        name: CFORMAT_SFX_HEAP_NAME.id(),
-                        aformat: AbstractFormat {
+                        from_format: AbstractFormat {
                             format: format.clone(),
                         },
+                        to_heap_id: CFORMAT_SFX_HEAP_NAME.id(),
                     }
                     .into(),
                 );
 
                 instrs.push(
                     CreateMessageArgs {
-                        name: MSG_SFX_HEAP_NAME.id(),
-                        fmt_name: CFORMAT_SFX_HEAP_NAME.id(),
-                        field_names: suffix.fields.iter().map(|e| e.name.clone()).collect(),
+                        from_format_heap_id: CFORMAT_SFX_HEAP_NAME.id(),
+                        to_heap_id: MSG_SFX_HEAP_NAME.id(),
                     }
                     .into(),
                 );
 
+                for name in suffix
+                    .fields
+                    .iter()
+                    .map(|e| e.name.clone())
+                    .collect::<Vec<Identifier>>()
+                {
+                    instrs.push(
+                        SetArrayBytesArgs {
+                            from_heap_id: name.clone(),
+                            to_msg_heap_id: MSG_SFX_HEAP_NAME.id(),
+                            to_field_id: name.clone(),
+                        }
+                        .into(),
+                    );
+                }
+
                 instrs.push(
                     WriteAppArgs {
-                        msg_name: MSG_SFX_HEAP_NAME.id(),
-                        field_name: hints_dynamic_payload.payload_field_name.clone(),
+                        from_msg_heap_id: MSG_SFX_HEAP_NAME.id(),
+                        from_field_id: hints_dynamic_payload.payload_field_name.clone(),
                     }
                     .into(),
                 );

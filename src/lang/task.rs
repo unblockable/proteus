@@ -57,6 +57,16 @@ pub struct Task {
     pub id: TaskID,
 }
 
+#[derive(Debug)]
+pub enum ReadNetLength {
+    /// Amount to read specified in this heap variable.
+    Identifier(Identifier),
+    /// Amount to read specified in this heap variable minus the given value.
+    IdentifierMinus((Identifier, usize)),
+    /// Amount to read specified by this range.
+    Range(Range<usize>),
+}
+
 // Auto-generates from implementations like
 //   `impl From<WriteAppArgs> for Instruction`
 // so we can upcast from args to the instruction variant.
@@ -66,90 +76,116 @@ pub enum Instruction {
     ComputeLength(ComputeLengthArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
     CreateMessage(CreateMessageArgs),
-    /// Not cryptographically secure.
     GenRandomBytes(GenRandomBytesArgs),
+    GetArrayBytes(GetArrayBytesArgs),
     GetNumericValue(GetNumericValueArgs),
     ReadApp(ReadAppArgs),
     ReadNet(ReadNetArgs),
+    SetArrayBytes(SetArrayBytesArgs),
     SetNumericValue(SetNumericValueArgs),
     WriteApp(WriteAppArgs),
     WriteNet(WriteNetArgs),
 }
 
-/// Compute the length of all msg fields after field and store in name.
+/// Compute the length of all `from_msg_id` fields that are ordered after
+/// `from_field_id`, and store the length in `to_heap_id`.
 #[derive(Debug)]
 pub struct ComputeLengthArgs {
-    pub name: Identifier,
-    pub msg_name: Identifier,
-    pub field_name: Identifier,
+    pub from_msg_id: Identifier,
+    pub from_field_id: Identifier,
+    pub to_heap_id: Identifier,
 }
 
-
-#[derive(Debug)]
-pub struct ReadAppArgs {
-    pub name: Identifier,
-    pub len: Range<usize>,
-}
-
+/// Instantiates a `ConcreteFormat` from the given `from_format` and stores the
+/// result in `to_heap_id`. All fields of type `DynamicArray` must already
+/// contain a bytes object with an identical id on the heap when using this
+/// instruction, or else it will fail.
 #[derive(Debug)]
 pub struct ConcretizeFormatArgs {
-    pub name: Identifier,
-    pub aformat: AbstractFormat,
+    pub from_format: AbstractFormat,
+    pub to_heap_id: Identifier,
 }
 
-
-#[derive(Debug)]
-pub struct GenRandomBytesArgs {
-    pub name: Identifier,
-    pub len: Range<usize>,
-}
-
+/// Creates an allocated message from the `ConcreteFormat` on the heap given by
+/// `from_format_heap_id` and stores the message on the heap in `to_heap_id`.
 #[derive(Debug)]
 pub struct CreateMessageArgs {
-    pub name: Identifier,
-    /// Specifies the location of the format object on the heap.
-    pub fmt_name: Identifier,
-    /// Specifies the locations of heap data and field names into which to copy
-    /// the data.
-    pub field_names: Vec<Identifier>,
+    pub from_format_heap_id: Identifier,
+    pub to_heap_id: Identifier,
 }
 
+/// TODO. Generate cryptographically insecure random bytes.
 #[derive(Debug)]
-pub struct WriteNetArgs {
-    pub msg_name: Identifier,
+pub struct GenRandomBytesArgs {
+    pub from_len: Range<usize>,
+    pub to_heap_id: Identifier,
 }
 
+/// Get the bytes data from the field given by `from_field_id` inside of the
+/// message stored on the heap at `from_msg_heap_id`, and store the bytes on the
+/// heap in `to_heap_id`.
 #[derive(Debug)]
-pub enum ReadNetLength {
-    /// Amount to read specified in this heap variable.
-    Identifier(Identifier),
-    /// Amount to read specified by this range.
-    Range(Range<usize>),
+pub struct GetArrayBytesArgs {
+    pub from_msg_heap_id: Identifier,
+    pub from_field_id: Identifier,
+    pub to_heap_id: Identifier,
 }
 
-#[derive(Debug)]
-pub struct ReadNetArgs {
-    pub name: Identifier,
-    pub len: ReadNetLength,
-}
-
-// Get the numeric value from msg->field and store it in name.
+/// Get the numeric value from the field given by `from_field_id` inside of the
+/// message stored on the heap at `from_msg_heap_id`, and store the value on the
+/// heap in `to_heap_id`.
 #[derive(Debug)]
 pub struct GetNumericValueArgs {
-    pub name: Identifier,
-    pub msg_name: Identifier,
-    pub field_name: Identifier,
+    pub from_msg_heap_id: Identifier,
+    pub from_field_id: Identifier,
+    pub to_heap_id: Identifier,
 }
 
+/// Read a number of bytes given by the `from_len` range from the application
+/// and store the result on the heap in `to_heap_id`.
+#[derive(Debug)]
+pub struct ReadAppArgs {
+    pub from_len: Range<usize>,
+    pub to_heap_id: Identifier,
+}
+
+/// Read a number of bytes given by `from_len` from the network and store the
+/// result on the heap in `to_heap_id`.
+#[derive(Debug)]
+pub struct ReadNetArgs {
+    pub from_len: ReadNetLength,
+    pub to_heap_id: Identifier,
+}
+
+/// Set the bytes stored on the heap at `from_heap_id` in the field
+/// `to_field_id` inside the message stored on the heap at `to_msg_heap_id`.
+#[derive(Debug)]
+pub struct SetArrayBytesArgs {
+    pub from_heap_id: Identifier,
+    pub to_msg_heap_id: Identifier,
+    pub to_field_id: Identifier,
+}
+
+/// Set the numeric value stored on the heap at `from_heap_id` in the field
+/// `to_field_id` inside the message stored on the heap at `to_msg_heap_id`.
 #[derive(Debug)]
 pub struct SetNumericValueArgs {
-    pub msg_name: Identifier,
-    pub field_name: Identifier,
-    pub name: Identifier,
+    pub from_heap_id: Identifier,
+    pub to_msg_heap_id: Identifier,
+    pub to_field_id: Identifier,
 }
 
+/// Write the bytes from the field `from_field_id` inside of the message stored
+/// at `from_msg_heap_id` on the heap to the application.
 #[derive(Debug)]
 pub struct WriteAppArgs {
-    pub msg_name: Identifier,
-    pub field_name: Identifier, // usually payload field
+    pub from_msg_heap_id: Identifier,
+    pub from_field_id: Identifier, // usually payload field
+}
+
+/// Write the bytes from the message stored on the heap at `from_msg_heap_id` to
+/// the network.
+#[derive(Debug)]
+pub struct WriteNetArgs {
+    pub from_msg_heap_id: Identifier,
 }

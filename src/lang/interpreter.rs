@@ -91,13 +91,14 @@ impl Program {
         interpreter: &mut Interpreter,
     ) -> Result<(), interpreter::Error> {
         match &self.task.ins[self.next_ins_index] {
-            Instruction::GetNumericValue(args) => {
-                let msg = self.message_heap.get(&args.msg_name).unwrap();
-                let num = msg.get_field_unsigned_numeric(&args.field_name).unwrap();
-                self.number_heap.insert(args.name.clone(), num);
+            Instruction::ComputeLength(args) => {
+                let msg = self.message_heap.get(&args.from_msg_id).unwrap();
+                let len = msg.len_suffix(&args.from_field_id);
+                self.number_heap
+                    .insert(args.to_heap_id.clone(), len as u128);
             }
             Instruction::ConcretizeFormat(args) => {
-                let aformat = args.aformat.clone();
+                let aformat = args.from_format.clone();
 
                 // Get the fields that have dynamic lengths, and compute what the lengths
                 // will be now that we should have the data for each field on the heap.
@@ -111,37 +112,47 @@ impl Program {
                 let cformat = aformat.concretize(&concrete_sizes);
 
                 // Store it for use by later instructions.
-                self.format_heap.insert(args.name.clone(), cformat);
+                self.format_heap.insert(args.to_heap_id.clone(), cformat);
             }
             Instruction::CreateMessage(args) => {
                 // Create a message with an existing concrete format.
-                let cformat = self.format_heap.remove(&args.fmt_name).unwrap();
-                let mut msg = Message::new(cformat).unwrap();
-
-                // Copy the specified bytes over to the allocated message.
-                for id in args.field_names.iter() {
-                    msg.set_field_bytes(id, self.bytes_heap.get(&id).unwrap())
-                        .unwrap();
-                }
+                let cformat = self.format_heap.remove(&args.from_format_heap_id).unwrap();
+                let msg = Message::new(cformat).unwrap();
 
                 // Store the message for use in later instructions.
-                self.message_heap.insert(args.name.clone(), msg);
+                self.message_heap.insert(args.to_heap_id.clone(), msg);
             }
             Instruction::GenRandomBytes(_args) => {
                 todo!()
             }
+            Instruction::GetArrayBytes(args) => {
+                todo!()
+            }
+            Instruction::GetNumericValue(args) => {
+                let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
+                let num = msg.get_field_unsigned_numeric(&args.from_field_id).unwrap();
+                self.number_heap.insert(args.to_heap_id.clone(), num);
+            }
             Instruction::ReadApp(args) => {
                 let netop = NetOpOut::RecvApp(RecvArgs {
-                    len: args.len.clone(),
-                    addr: args.name.clone(),
+                    len: args.from_len.clone(),
+                    addr: args.to_heap_id.clone(),
                 });
                 interpreter.next_netop_out = Some(netop);
             }
             Instruction::ReadNet(args) => {
-                let len = match &args.len {
+                let len = match &args.from_len {
                     ReadNetLength::Identifier(id) => {
                         let num = self.number_heap.get(&id).unwrap();
                         let val = *num as usize;
+                        Range {
+                            start: val,
+                            end: val + 1,
+                        }
+                    }
+                    ReadNetLength::IdentifierMinus((id, sub)) => {
+                        let num = self.number_heap.get(&id).unwrap();
+                        let val = (*num as usize) - sub;
                         Range {
                             start: val,
                             end: val + 1,
@@ -152,31 +163,32 @@ impl Program {
 
                 let netop = NetOpIn::RecvNet(RecvArgs {
                     len,
-                    addr: args.name.clone(),
+                    addr: args.to_heap_id.clone(),
                 });
                 interpreter.next_netop_in = Some(netop);
             }
-            Instruction::ComputeLength(args) => {
-                let msg = self.message_heap.get(&args.msg_name).unwrap();
-                let len = msg.len_suffix(&args.field_name);
-                self.number_heap.insert(args.name.clone(), len as u128);
+            Instruction::SetArrayBytes(args) => {
+                let bytes = self.bytes_heap.get(&args.from_heap_id).unwrap();
+                let mut msg = self.message_heap.remove(&args.to_msg_heap_id).unwrap();
+                msg.set_field_bytes(&args.to_field_id, &bytes).unwrap();
+                self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
             Instruction::SetNumericValue(args) => {
-                let val = self.number_heap.get(&args.name).unwrap().clone();
-                let mut msg = self.message_heap.remove(&args.msg_name).unwrap();
-                msg.set_field_unsigned_numeric(&args.field_name, val)
+                let val = self.number_heap.get(&args.from_heap_id).unwrap().clone();
+                let mut msg = self.message_heap.remove(&args.to_msg_heap_id).unwrap();
+                msg.set_field_unsigned_numeric(&args.to_field_id, val)
                     .unwrap();
-                self.message_heap.insert(args.msg_name.clone(), msg);
+                self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
             Instruction::WriteApp(args) => {
-                let msg = self.message_heap.remove(&args.msg_name).unwrap();
+                let msg = self.message_heap.remove(&args.from_msg_heap_id).unwrap();
                 let netop = NetOpIn::SendApp(SendArgs {
-                    bytes: msg.into_inner_field(&args.field_name).unwrap(),
+                    bytes: msg.into_inner_field(&args.from_field_id).unwrap(),
                 });
                 interpreter.next_netop_in = Some(netop);
             }
             Instruction::WriteNet(args) => {
-                let msg = self.message_heap.remove(&args.msg_name).unwrap();
+                let msg = self.message_heap.remove(&args.from_msg_heap_id).unwrap();
                 let netop = NetOpOut::SendNet(SendArgs {
                     bytes: msg.into_inner(),
                 });
@@ -388,153 +400,383 @@ mod tests {
     use bytes::{Buf, BufMut, BytesMut};
     use std::fs;
 
+    use self::{basic::*, encrypted::*};
     use super::*;
+
     use crate::lang::common::Role;
     use crate::lang::task::*;
     use crate::lang::types::*;
 
-    struct LengthPayloadSpec {
-        abs_format_out: AbstractFormat,
-        abs_format_in1: AbstractFormat,
-        abs_format_in2: AbstractFormat,
-    }
+    mod basic {
+        use super::*;
 
-    impl LengthPayloadSpec {
-        fn new() -> LengthPayloadSpec {
-            let abs_format_out: AbstractFormat = Format {
-                name: "DataMessageOut".id(),
-                fields: vec![
-                    Field {
+        pub struct LengthPayloadSpec {
+            abs_format_out: AbstractFormat,
+            abs_format_in1: AbstractFormat,
+            abs_format_in2: AbstractFormat,
+        }
+
+        impl LengthPayloadSpec {
+            pub fn new() -> Self {
+                let abs_format_out: AbstractFormat = Format {
+                    name: "DataMessageOut".id(),
+                    fields: vec![
+                        Field {
+                            name: "length".id(),
+                            dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
+                        },
+                        Field {
+                            name: "payload".id(),
+                            dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
+                        },
+                    ],
+                }
+                .into();
+
+                let abs_format_in1: AbstractFormat = Format {
+                    name: "DataMessageIn1".id(),
+                    fields: vec![Field {
                         name: "length".id(),
                         dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
-                    },
-                    Field {
+                    }],
+                }
+                .into();
+
+                let abs_format_in2: AbstractFormat = Format {
+                    name: "DataMessageIn2".id(),
+                    fields: vec![Field {
                         name: "payload".id(),
                         dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
-                    },
-                ],
-            }
-            .into();
+                    }],
+                }
+                .into();
 
-            let abs_format_in1: AbstractFormat = Format {
-                name: "DataMessageIn1".id(),
-                fields: vec![Field {
-                    name: "length".id(),
-                    dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
-                }],
+                Self {
+                    abs_format_out,
+                    abs_format_in1,
+                    abs_format_in2,
+                }
             }
-            .into();
+        }
 
-            let abs_format_in2: AbstractFormat = Format {
-                name: "DataMessageIn2".id(),
-                fields: vec![Field {
-                    name: "payload".id(),
-                    dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
-                }],
-            }
-            .into();
+        impl TaskProvider for LengthPayloadSpec {
+            fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
+                // Outgoing data forwarding direction.
+                let out_task = Task {
+                    ins: vec![
+                        ReadAppArgs {
+                            from_len: 1..u16::MAX as usize,
+                            to_heap_id: "payload".id(),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            from_format: self.abs_format_out.clone(),
+                            to_heap_id: "cformat".id(),
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            from_format_heap_id: "cformat".id(),
+                            to_heap_id: "message".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "payload".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "payload".id(),
+                        }
+                        .into(),
+                        ComputeLengthArgs {
+                            from_msg_id: "message".id(),
+                            from_field_id: "length".id(),
+                            to_heap_id: "length_value_on_heap".id(),
+                        }
+                        .into(),
+                        SetNumericValueArgs {
+                            from_heap_id: "length_value_on_heap".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "length".id(),
+                        }
+                        .into(),
+                        WriteNetArgs {
+                            from_msg_heap_id: "message".id(),
+                        }
+                        .into(),
+                    ],
+                    id: TaskID::default(),
+                };
 
-            Self {
-                abs_format_out,
-                abs_format_in1,
-                abs_format_in2,
+                // Incoming data forwarding direction.
+                let in_task = Task {
+                    ins: vec![
+                        ReadNetArgs {
+                            from_len: ReadNetLength::Range(2..3 as usize),
+                            to_heap_id: "length".id(),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            from_format: self.abs_format_in1.clone(),
+                            to_heap_id: "cformat1".id(),
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            from_format_heap_id: "cformat1".id(),
+                            to_heap_id: "message_length_part".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "length".id(),
+                            to_msg_heap_id: "message_length_part".id(),
+                            to_field_id: "length".id(),
+                        }
+                        .into(),
+                        GetNumericValueArgs {
+                            from_msg_heap_id: "message_length_part".id(),
+                            from_field_id: "length".id(),
+                            to_heap_id: "payload_len_value".id(),
+                        }
+                        .into(),
+                        ReadNetArgs {
+                            from_len: ReadNetLength::Identifier("payload_len_value".id()),
+                            to_heap_id: "payload".id(),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            from_format: self.abs_format_in2.clone(),
+                            to_heap_id: "cformat2".id(),
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            from_format_heap_id: "cformat2".id(),
+                            to_heap_id: "message_payload_part".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "payload".id(),
+                            to_msg_heap_id: "message_payload_part".id(),
+                            to_field_id: "payload".id(),
+                        }
+                        .into(),
+                        WriteAppArgs {
+                            from_msg_heap_id: "message_payload_part".id(),
+                            from_field_id: "payload".id(),
+                        }
+                        .into(),
+                    ],
+                    id: TaskID::default(),
+                };
+
+                // Concurrently execute tasks for both data forwarding directions.
+                TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
             }
         }
     }
 
-    impl TaskProvider for LengthPayloadSpec {
-        fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
-            // Outgoing data forwarding direction.
-            let out_task = Task {
-                ins: vec![
-                    ReadAppArgs {
-                        name: "payload".id(),
-                        len: 1..u16::MAX as usize,
-                    }
-                    .into(),
-                    ConcretizeFormatArgs {
-                        name: "cformat".id(),
-                        aformat: self.abs_format_out.clone(),
-                    }
-                    .into(),
-                    CreateMessageArgs {
-                        name: "message".id(),
-                        fmt_name: "cformat".id(),
-                        field_names: vec!["payload".id()],
-                    }
-                    .into(),
-                    ComputeLengthArgs {
-                        name: "length_value_on_heap".id(),
-                        msg_name: "message".id(),
-                        field_name: "length".id(),
-                    }
-                    .into(),
-                    SetNumericValueArgs {
-                        msg_name: "message".id(),
-                        field_name: "length".id(),
-                        name: "length_value_on_heap".id(),
-                    }
-                    .into(),
-                    WriteNetArgs {
-                        msg_name: "message".id(),
-                    }
-                    .into(),
-                ],
-                id: TaskID::default(),
-            };
+    mod encrypted {
+        use super::*;
 
-            // Incoming data forwarding direction.
-            let in_task = Task {
-                ins: vec![
-                    ReadNetArgs {
-                        name: "length".id(),
-                        len: ReadNetLength::Range(2..3 as usize),
-                    }
-                    .into(),
-                    ConcretizeFormatArgs {
-                        name: "cformat1".id(),
-                        aformat: self.abs_format_in1.clone(),
-                    }
-                    .into(),
-                    CreateMessageArgs {
-                        name: "message_length_part".id(),
-                        fmt_name: "cformat1".id(),
-                        field_names: vec!["length".id()],
-                    }
-                    .into(),
-                    GetNumericValueArgs {
-                        name: "num_payload_bytes".id(),
-                        msg_name: "message_length_part".id(),
-                        field_name: "length".id(),
-                    }
-                    .into(),
-                    ReadNetArgs {
-                        name: "payload".id(),
-                        len: ReadNetLength::Identifier("num_payload_bytes".id()),
-                    }
-                    .into(),
-                    ConcretizeFormatArgs {
-                        name: "cformat2".id(),
-                        aformat: self.abs_format_in2.clone(),
-                    }
-                    .into(),
-                    CreateMessageArgs {
-                        name: "message_payload_part".id(),
-                        fmt_name: "cformat2".id(),
-                        field_names: vec!["payload".id()],
-                    }
-                    .into(),
-                    WriteAppArgs {
-                        msg_name: "message_payload_part".id(),
-                        field_name: "payload".id(),
-                    }
-                    .into(),
-                ],
-                id: TaskID::default(),
-            };
+        pub struct EncryptedLengthPayloadSpec {
+            abs_format_out: AbstractFormat,
+            abs_format_in1: AbstractFormat,
+            abs_format_in2: AbstractFormat,
+        }
 
-            // Concurrently execute tasks for both data forwarding directions.
-            TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
+        impl EncryptedLengthPayloadSpec {
+            pub fn new() -> Self {
+                let abs_format_out: AbstractFormat = Format {
+                    name: "DataMessageOut".id(),
+                    fields: vec![
+                        Field {
+                            name: "length".id(),
+                            dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
+                        },
+                        Field {
+                            name: "length_mac".id(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                        },
+                        Field {
+                            name: "payload".id(),
+                            dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
+                        },
+                        Field {
+                            name: "payload_mac".id(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                        },
+                    ],
+                }
+                .into();
+
+                let abs_format_in1: AbstractFormat = Format {
+                    name: "DataMessageIn1".id(),
+                    fields: vec![
+                        Field {
+                            name: "length".id(),
+                            dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
+                        },
+                        Field {
+                            name: "length_mac".id(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                        },
+                    ],
+                }
+                .into();
+
+                let abs_format_in2: AbstractFormat = Format {
+                    name: "DataMessageIn2".id(),
+                    fields: vec![
+                        Field {
+                            name: "payload".id(),
+                            dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
+                        },
+                        Field {
+                            name: "payload_mac".id(),
+                            dtype: PrimitiveArray(NumericType::U8.into(), 20).into(),
+                        },
+                    ],
+                }
+                .into();
+
+                Self {
+                    abs_format_out,
+                    abs_format_in1,
+                    abs_format_in2,
+                }
+            }
+        }
+
+        impl TaskProvider for EncryptedLengthPayloadSpec {
+            fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
+                // Outgoing data forwarding direction.
+                let out_task = Task {
+                    ins: vec![
+                        ReadAppArgs {
+                            from_len: 1..(u16::MAX - 40) as usize,
+                            to_heap_id: "payload".id(),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            from_format: self.abs_format_out.clone(),
+                            to_heap_id: "cformat".id(),
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            from_format_heap_id: "cformat".id(),
+                            to_heap_id: "message".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "payload".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "payload".id(),
+                        }
+                        .into(),
+                        ComputeLengthArgs {
+                            from_msg_id: "message".id(),
+                            from_field_id: "length_mac".id(),
+                            to_heap_id: "length_value_on_heap".id(),
+                        }
+                        .into(),
+                        SetNumericValueArgs {
+                            from_heap_id: "length_value_on_heap".id(),
+                            to_msg_heap_id: "message".id(),
+                            to_field_id: "length".id(),
+                        }
+                        .into(),
+                        WriteNetArgs {
+                            from_msg_heap_id: "message".id(),
+                        }
+                        .into(),
+                    ],
+                    id: TaskID::default(),
+                };
+
+                // Incoming data forwarding direction.
+                let in_task = Task {
+                    ins: vec![
+                        ReadNetArgs {
+                            from_len: ReadNetLength::Range(2..3 as usize),
+                            to_heap_id: "length".id(),
+                        }
+                        .into(),
+                        ReadNetArgs {
+                            from_len: ReadNetLength::Range(20..21 as usize),
+                            to_heap_id: "length_mac".id(),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            from_format: self.abs_format_in1.clone(),
+                            to_heap_id: "cformat1".id(),
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            from_format_heap_id: "cformat1".id(),
+                            to_heap_id: "message_length_part".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "length".id(),
+                            to_msg_heap_id: "message_length_part".id(),
+                            to_field_id: "length".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "length_mac".id(),
+                            to_msg_heap_id: "message_length_part".id(),
+                            to_field_id: "length_mac".id(),
+                        }
+                        .into(),
+                        GetNumericValueArgs {
+                            from_msg_heap_id: "message_length_part".id(),
+                            from_field_id: "length".id(),
+                            to_heap_id: "payload_len_value".id(),
+                        }
+                        .into(),
+                        ReadNetArgs {
+                            from_len: ReadNetLength::IdentifierMinus((
+                                "payload_len_value".id(),
+                                20,
+                            )),
+                            to_heap_id: "payload".id(),
+                        }
+                        .into(),
+                        ReadNetArgs {
+                            from_len: ReadNetLength::Range(20..21 as usize),
+                            to_heap_id: "payload_mac".id(),
+                        }
+                        .into(),
+                        ConcretizeFormatArgs {
+                            from_format: self.abs_format_in2.clone(),
+                            to_heap_id: "cformat2".id(),
+                        }
+                        .into(),
+                        CreateMessageArgs {
+                            from_format_heap_id: "cformat2".id(),
+                            to_heap_id: "message_payload_part".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "payload".id(),
+                            to_msg_heap_id: "message_payload_part".id(),
+                            to_field_id: "payload".id(),
+                        }
+                        .into(),
+                        SetArrayBytesArgs {
+                            from_heap_id: "payload_mac".id(),
+                            to_msg_heap_id: "message_payload_part".id(),
+                            to_field_id: "payload_mac".id(),
+                        }
+                        .into(),
+                        WriteAppArgs {
+                            from_msg_heap_id: "message_payload_part".id(),
+                            from_field_id: "payload".id(),
+                        }
+                        .into(),
+                    ],
+                    id: TaskID::default(),
+                };
+
+                // Concurrently execute tasks for both data forwarding directions.
+                TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
+            }
         }
     }
 
@@ -547,7 +789,7 @@ mod tests {
 
     fn get_task_providers() -> Vec<Box<dyn TaskProvider + Send + 'static>> {
         vec![
-            Box::new(LengthPayloadSpec {}),
+            Box::new(LengthPayloadSpec::new()),
             Box::new(parse_simple_proteus_spec()),
         ]
     }

@@ -4,8 +4,8 @@ use crate::lang::common::Role;
 use crate::lang::types::*;
 use core::str::FromStr;
 use pest::iterators::{Pair, Pairs};
-use pest_derive::Parser;
 use pest::Parser;
+use pest_derive::Parser;
 use std::collections::hash_map::HashMap;
 use std::fmt::Debug;
 
@@ -211,8 +211,8 @@ pub fn parse_psf_impl(p: &RulePair) -> PSF {
                 formats
                     .get_mut(&sem_binding.format)
                     .unwrap()
-                    .semantics.
-                    as_mut_ref()
+                    .semantics
+                    .as_mut_ref()
                     .insert(sem_binding.field.clone(), sem_binding.semantic);
             }
             Rule::sequence_specifier => {
