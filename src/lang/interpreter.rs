@@ -122,6 +122,12 @@ impl Program {
                 // Store the message for use in later instructions.
                 self.message_heap.insert(args.to_heap_id.clone(), msg);
             }
+            Instruction::DecryptField(_args) => {
+                todo!()
+            }
+            Instruction::EncryptField(_args) => {
+                todo!()
+            }
             Instruction::GenRandomBytes(_args) => {
                 todo!()
             }
@@ -134,6 +140,9 @@ impl Program {
                 let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
                 let num = msg.get_field_unsigned_numeric(&args.from_field_id).unwrap();
                 self.number_heap.insert(args.to_heap_id.clone(), num);
+            }
+            Instruction::InitFixedSharedKey(_args) => {
+                todo!()
             }
             Instruction::ReadApp(args) => {
                 let netop = NetOpOut::RecvApp(RecvArgs {

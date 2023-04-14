@@ -76,9 +76,12 @@ pub enum Instruction {
     ComputeLength(ComputeLengthArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
     CreateMessage(CreateMessageArgs),
+    DecryptField(DecryptFieldArgs),
+    EncryptField(EncryptFieldArgs),
     GenRandomBytes(GenRandomBytesArgs),
     GetArrayBytes(GetArrayBytesArgs),
     GetNumericValue(GetNumericValueArgs),
+    InitFixedSharedKey(InitFixedSharedKeyArgs),
     ReadApp(ReadAppArgs),
     ReadNet(ReadNetArgs),
     SetArrayBytes(SetArrayBytesArgs),
@@ -114,6 +117,24 @@ pub struct CreateMessageArgs {
     pub to_heap_id: Identifier,
 }
 
+/// TODO
+#[derive(Debug)]
+pub struct DecryptFieldArgs {
+    pub from_msg_heap_id: Identifier,
+    pub from_ciphertext_field_id: Identifier,
+    pub from_mac_field_id: Identifier,
+    pub to_plaintext_heap_id: Identifier,
+}
+
+/// TODO
+#[derive(Debug)]
+pub struct EncryptFieldArgs {
+    pub from_msg_heap_id: Identifier,
+    pub from_field_id: Identifier,
+    pub to_ciphertext_heap_id: Identifier,
+    pub to_mac_heap_id: Identifier,
+}
+
 /// TODO. Generate cryptographically insecure random bytes.
 #[derive(Debug)]
 pub struct GenRandomBytesArgs {
@@ -139,6 +160,12 @@ pub struct GetNumericValueArgs {
     pub from_msg_heap_id: Identifier,
     pub from_field_id: Identifier,
     pub to_heap_id: Identifier,
+}
+
+/// TODO
+#[derive(Debug)]
+pub struct InitFixedSharedKeyArgs {
+    pub password: String,
 }
 
 /// Read a number of bytes given by the `from_len` range from the application

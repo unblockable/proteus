@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::crypto;
 
-// mod chacha;
+pub mod chacha;
 
 #[derive(Debug)]
 pub enum Error {
@@ -19,7 +19,7 @@ impl fmt::Display for Error {
     }
 }
 
-pub trait CryptoProtocol {
-    fn encrypt(&mut self, data: Bytes) -> Result<Bytes, crypto::Error>;
-    fn decrypt(&mut self, data: Bytes) -> Result<Bytes, crypto::Error>;
-}
+// pub trait CryptoProtocol {
+//     fn encrypt(&mut self, data: Bytes) -> Result<Bytes, crypto::Error>;
+//     fn decrypt(&mut self, data: Bytes) -> Result<Bytes, crypto::Error>;
+// }

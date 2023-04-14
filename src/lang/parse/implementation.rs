@@ -307,7 +307,7 @@ pub fn parse_psf_impl(p: &RulePair) -> PSF {
                 let format: AbstractFormatAndSemantics =
                     Into::<AbstractFormat>::into(parse_format(&x)).into();
                 formats.insert(format.format.format.name.clone(), format);
-            },
+            }
             Rule::semantic_binding => {
                 let sem_binding = parse_semantic_binding(&x);
                 formats
@@ -316,11 +316,11 @@ pub fn parse_psf_impl(p: &RulePair) -> PSF {
                     .semantics
                     .as_mut_ref()
                     .insert(sem_binding.field.clone(), sem_binding.semantic);
-            },
+            }
             Rule::sequence_specifier => {
                 let seqspec = parse_sequence_specifier(&x);
                 sequence.push(seqspec);
-            },
+            }
             Rule::crypto_segment => {
                 crypto_spec = Some(parse_crypto_segment(&x));
             }
@@ -328,7 +328,11 @@ pub fn parse_psf_impl(p: &RulePair) -> PSF {
         }
     }
 
-    PSF { formats, sequence, crypto_spec }
+    PSF {
+        formats,
+        sequence,
+        crypto_spec,
+    }
 }
 
 pub fn parse_psf(psf_contents: &String) -> PSF {
