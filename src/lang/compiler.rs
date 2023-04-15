@@ -104,6 +104,27 @@ impl TaskGraphImpl {
             _ => panic!(),
         }
     }
+
+    pub fn init_task(&self) -> Task {
+        let mut ins: Vec<Instruction> = vec![];
+
+        if let Some(ref crypto_spec) = self.psf.crypto_spec {
+            if let Some(ref password) = crypto_spec.password {
+                ins.push(
+                    InitFixedSharedKeyArgs {
+                        password: password.0.clone(),
+                        role: self.my_role,
+                    }
+                    .into(),
+                );
+            }
+        }
+
+        Task {
+            id: Default::default(),
+            ins,
+        }
+    }
 }
 
 pub fn compile_task_graph<'a, T: Iterator<Item = &'a SequenceSpecifier>>(itr: T) -> Graph {
@@ -147,7 +168,12 @@ fn generate_dynamic_payload_hints(
     let payload_field_id = semantics.find_field_id(FieldSemantic::Payload).unwrap();
     let payload_field = format.try_get_field_by_name(&payload_field_id).unwrap();
 
-    let (static_prefix, _) = format.split_into_fixed_sized_prefix_dynamic_suffix();
+    let (static_prefix, dynamic_suffix) = format.split_into_fixed_sized_prefix_dynamic_suffix();
+
+    let (_, dynamic_suffix_fixed_part) =
+        dynamic_suffix.split_into_dynamic_prefix_and_fixed_suffix();
+    let suffix_fixed_size = dynamic_suffix_fixed_part.fixed_fields_size();
+
     let static_prefix_last_field: Identifier;
     if let Some(last_field) = static_prefix.fields.last() {
         static_prefix_last_field = last_field.name.clone();
@@ -168,7 +194,8 @@ fn generate_dynamic_payload_hints(
         )
         .unwrap();
 
-        len_field_max = len_field_type.bounds().1.try_into().unwrap();
+        len_field_max = <u128 as TryInto<usize>>::try_into(len_field_type.bounds().1).unwrap()
+            - suffix_fixed_size;
 
         length_field_nbytes = len_field_type.size_of();
     } else {
