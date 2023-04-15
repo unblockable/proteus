@@ -31,7 +31,9 @@ impl Message {
         }).unwrap();
 
         for (field_name, field_value) in &format.fixed_fields {
-            msg.try_get_field_slice_mut(field_name).unwrap().put_slice(&field_value[..]);
+            if let Some(mut bytes) = msg.try_get_field_slice_mut(field_name) {
+                bytes.put_slice(&field_value[..]);
+            }
         }
 
         Some(msg)

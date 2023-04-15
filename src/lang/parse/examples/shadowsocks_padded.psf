@@ -1,0 +1,29 @@
+@SEGMENT.FORMATS
+
+  DEFINE EncDataMsg
+    { NAME: padding     ; TYPE: [u8; 9] },
+    { NAME: length      ; TYPE: u16 },
+    { NAME: length_mac  ; TYPE: [u8; 16] },
+    { NAME: payload     ; TYPE: [u8; length.size_of] },
+    { NAME: payload_mac ; TYPE: [u8; 16] };
+
+@SEGMENT.SEMANTICS
+
+  { FORMAT: EncDataMsg; FIELD: length;  SEMANTIC: LENGTH };
+  { FORMAT: EncDataMsg; FIELD: payload; SEMANTIC: PAYLOAD };
+  { FORMAT: EncDataMsg; FIELD: padding; SEMANTIC: FIXED_STRING("foobarbaz") };
+
+@SEGMENT.SEQUENCE
+
+  { ROLE: CLIENT; PHASE: DATA; FORMAT: EncDataMsg };
+  { ROLE: SERVER; PHASE: DATA; FORMAT: EncDataMsg };
+
+@SEGMENT.CRYPTO
+
+  PASSWORD = "hunter2";
+
+  CIPHER   = CHACHA20-POLY1305;
+
+  ENCRYPT EncDataMsg FROM EncDataMsg
+    { PTEXT: length;  CTEXT: length;  MAC: length_mac },
+    { PTEXT: payload; CTEXT: payload; MAC: payload_mac };

@@ -266,3 +266,12 @@ fn integration_psf_basic_enc() {
     )
     .test()
 }
+
+#[test]
+fn integration_psf_padded_enc() {
+    ProtocolTester::new(
+        Box::new(parse_encrypted_padded_proteus_spec(Role::Client)),
+        Box::new(parse_encrypted_padded_proteus_spec(Role::Server)),
+    )
+    .test()
+}

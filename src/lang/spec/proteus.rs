@@ -51,3 +51,13 @@ pub fn parse_encrypted_proteus_spec(role: Role) -> ProteusSpec {
 
     ProteusSpec::new(&input, role)
 }
+
+#[cfg(test)]
+pub fn parse_encrypted_padded_proteus_spec(role: Role) -> ProteusSpec {
+    use std::fs;
+
+    let filepath = "src/lang/parse/examples/shadowsocks_padded.psf";
+    let input = fs::read_to_string(filepath).expect("cannot read shadowsocks file");
+
+    ProteusSpec::new(&input, role)
+}
