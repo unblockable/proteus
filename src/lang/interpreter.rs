@@ -40,11 +40,13 @@ impl From<interpreter::Error> for String {
     }
 }
 
+#[derive(Debug)]
 pub struct SendArgs {
     // Send these bytes.
     pub bytes: Bytes,
 }
 
+#[derive(Debug)]
 pub struct RecvArgs {
     // Receive this many bytes.
     pub len: Range<usize>,
@@ -52,6 +54,7 @@ pub struct RecvArgs {
     pub addr: Identifier,
 }
 
+#[derive(Debug)]
 pub enum NetOpOut {
     RecvApp(RecvArgs),
     SendNet(SendArgs),
@@ -59,6 +62,7 @@ pub enum NetOpOut {
     Error(String),
 }
 
+#[derive(Debug)]
 pub enum NetOpIn {
     RecvNet(RecvArgs),
     SendApp(SendArgs),

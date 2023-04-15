@@ -34,10 +34,10 @@ impl Network {
         };
     }
 
-    fn recv(&mut self, role: &Role, range: Range<usize>) -> Result<Bytes, ()> {
+    fn recv(&mut self, role: &Role, range: &Range<usize>) -> Result<Bytes, ()> {
         let net_src = match role {
-            Role::Client => &self.client_to_server,
-            Role::Server => &self.server_to_client,
+            Role::Client => &self.server_to_client,
+            Role::Server => &self.client_to_server,
         };
 
         match net_src.remaining() >= range.start {
@@ -48,8 +48,8 @@ impl Network {
                 dst.put(&mut src);
 
                 match role {
-                    Role::Client => self.client_to_server = src.into_inner(),
-                    Role::Server => self.server_to_client = src.into_inner(),
+                    Role::Client => self.server_to_client = src.into_inner(),
+                    Role::Server => self.client_to_server = src.into_inner(),
                 };
                 Ok(dst.freeze())
             }
@@ -64,6 +64,8 @@ struct Host {
     app_src_orig: Bytes,
     app_src: BytesMut,
     app_dst: BytesMut,
+    next_op_out: Option<NetOpOut>,
+    next_op_in: Option<NetOpIn>,
 }
 
 impl Host {
@@ -71,16 +73,20 @@ impl Host {
     where
         T: TaskProvider + Send + 'static,
     {
+        let mut app_src = BytesMut::new();
+        app_src.extend(&msg);
         Self {
             interpreter: Interpreter::new(protospec),
             role,
-            app_src_orig: msg.clone(),
-            app_src: BytesMut::new(),
+            app_src_orig: msg,
+            app_src: app_src,
             app_dst: BytesMut::new(),
+            next_op_out: None,
+            next_op_in: None,
         }
     }
 
-    fn read_app(&mut self, range: Range<usize>) -> Result<Bytes, ()> {
+    fn read_app(&mut self, range: &Range<usize>) -> Result<Bytes, ()> {
         match self.app_src.remaining() >= range.start {
             true => {
                 let mut src = self.app_src.clone().take(range.end - 1);
@@ -101,12 +107,19 @@ impl Host {
 
     /// Returns `Ok()` if some progress was made, `Err()` if not.
     fn run_outgoing(&mut self, net: &mut Network) -> Result<(), ()> {
-        match self.interpreter.next_net_cmd_out() {
+        match self
+            .next_op_out
+            .take()
+            .map_or_else(|| self.interpreter.next_net_cmd_out(), |op| Ok(op))
+        {
             Ok(op) => {
                 match op {
-                    NetOpOut::RecvApp(args) => match self.read_app(args.len) {
+                    NetOpOut::RecvApp(args) => match self.read_app(&args.len) {
                         Ok(bytes) => self.interpreter.store_out(args.addr, bytes),
-                        Err(_) => return Err(()),
+                        Err(_) => {
+                            self.next_op_out = Some(NetOpOut::RecvApp(args));
+                            return Err(());
+                        }
                     },
                     NetOpOut::SendNet(args) => net.send(&self.role, args.bytes),
                     NetOpOut::Close => todo!(),
@@ -120,12 +133,19 @@ impl Host {
 
     /// Returns `Ok()` if some progress was made, `Err()` if not.
     fn run_incoming(&mut self, net: &mut Network) -> Result<(), ()> {
-        match self.interpreter.next_net_cmd_in() {
+        match self
+            .next_op_in
+            .take()
+            .map_or_else(|| self.interpreter.next_net_cmd_in(), |op| Ok(op))
+        {
             Ok(op) => {
                 match op {
-                    NetOpIn::RecvNet(args) => match net.recv(&self.role, args.len) {
+                    NetOpIn::RecvNet(args) => match net.recv(&self.role, &args.len) {
                         Ok(bytes) => self.interpreter.store_in(args.addr, bytes),
-                        Err(_) => return Err(()),
+                        Err(_) => {
+                            self.next_op_in = Some(NetOpIn::RecvNet(args));
+                            return Err(());
+                        }
                     },
                     NetOpIn::SendApp(args) => self.write_app(args.bytes),
                     NetOpIn::Close => todo!(),
