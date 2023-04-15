@@ -455,6 +455,7 @@ impl Format {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AbstractFormat {
     pub format: Format,
+    pub fixed_fields: Vec<(Identifier, Vec<u8>)>,
 }
 
 impl AbstractFormat {
@@ -479,7 +480,7 @@ impl AbstractFormat {
                 }
             }
         }
-        self.format.try_into().unwrap()
+        self.try_into().unwrap()
     }
 
     pub fn into_inner(self) -> Format {
@@ -496,6 +497,7 @@ impl ConcreteFormat {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConcreteFormat {
     pub format: Format,
+    pub fixed_fields: Vec<(Identifier, Vec<u8>)>,
 }
 
 impl MaybeSized for AbstractFormat {
@@ -512,7 +514,21 @@ impl StaticallySized for ConcreteFormat {
 
 impl From<Format> for AbstractFormat {
     fn from(item: Format) -> AbstractFormat {
-        AbstractFormat { format: item }
+        AbstractFormat {
+            format: item,
+            fixed_fields: vec![],
+        }
+    }
+}
+
+impl TryFrom<AbstractFormat> for ConcreteFormat {
+    type Error = ConversionError;
+
+    fn try_from(value: AbstractFormat) -> Result<Self, Self::Error> {
+        match value.maybe_size_of() {
+            Some(_) => Ok(ConcreteFormat { format: value.format, fixed_fields: value.fixed_fields }),
+            None => Err(Self::Error {}),
+        }
     }
 }
 
@@ -521,7 +537,7 @@ impl TryFrom<Format> for ConcreteFormat {
 
     fn try_from(value: Format) -> Result<Self, Self::Error> {
         match value.maybe_size_of() {
-            Some(_) => Ok(ConcreteFormat { format: value }),
+            Some(_) => Ok(ConcreteFormat { format: value, fixed_fields: vec![] }),
             None => Err(Self::Error {}),
         }
     }
@@ -539,11 +555,24 @@ impl MaybeSized for Format {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FieldSemantic {
     Payload,
     Padding,
     Length,
+    FixedString(String),
+}
+
+impl TryFrom<FieldSemantic> for String {
+    type Error = DowncastError;
+
+    fn try_from(value: FieldSemantic) -> Result<Self, Self::Error> {
+        if let FieldSemantic::FixedString(s) = value {
+            Ok(s)
+        } else {
+            Err(Self::Error {})
+        }
+    }
 }
 
 impl FromStr for FieldSemantic {
@@ -615,6 +644,24 @@ impl Semantics {
             .iter()
             .find(|&e| *e.1 == semantic)
             .map(|e| e.0.clone())
+    }
+
+    pub fn get_fixed_fields(&self) -> Vec<(Identifier, Vec<u8>)> {
+        self.semantics
+            .iter()
+            .filter(|&e| matches!(*e.1, FieldSemantic::FixedString(_)))
+            .map(|e| {
+                (
+                    e.0.clone(),
+                    String::try_from(e.1.clone())
+                        .unwrap()
+                        .as_str()
+                        .chars()
+                        .map(|e| e as u8)
+                        .collect(),
+                )
+            })
+            .collect()
     }
 }
 

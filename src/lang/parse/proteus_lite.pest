@@ -31,7 +31,9 @@ char = {
 
 format = { "DEFINE" ~ identifier ~ field ~ ("," ~ field)* ~ ";" }
 
-field_semantic = { "PADDING" | "PAYLOAD" | "LENGTH" }
+fixed_string_semantic = { "FIXED_STRING" ~ "(" ~ string_literal ~ ")" }
+
+field_semantic = { fixed_string_semantic | "PADDING" | "PAYLOAD" | "LENGTH" }
 
 semantic_binding = { "{" ~
   "FORMAT" ~ ":" ~ identifier ~ ";" ~

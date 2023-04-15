@@ -144,9 +144,35 @@ fn parse_format(p: &RulePair) -> Format {
     Format { name: id, fields }
 }
 
+fn parse_fixed_string_semantic(p: &RulePair) -> FieldSemantic {
+    assert!(p.as_rule() == Rule::fixed_string_semantic);
+
+    let p = p
+        .clone()
+        .into_inner()
+        .next()
+        .unwrap()
+        .into_inner()
+        .next()
+        .unwrap();
+
+    FieldSemantic::FixedString(p.as_str().to_string())
+}
+
 fn parse_field_semantic(p: &RulePair) -> FieldSemantic {
     assert!(p.as_rule() == Rule::field_semantic);
-    parse_simple(p)
+
+    let maybe_inner_p = p.clone().into_inner().next();
+
+    if let Some(ref inner_p) = maybe_inner_p {
+        if inner_p.as_rule() == Rule::fixed_string_semantic {
+            parse_fixed_string_semantic(&inner_p)
+        } else {
+            panic!();
+        }
+    } else {
+        parse_simple(p)
+    }
 }
 
 fn parse_semantic_binding(p: &RulePair) -> SemanticBinding {
@@ -519,11 +545,25 @@ pub mod tests {
     }
 
     #[test]
+    fn test_parse_fixed_string_semantic() {
+        let test_cases = vec![
+            ("FIXED_STRING(\"foo\")", FieldSemantic::FixedString("foo".to_string()))
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::fixed_string_semantic,
+            parse_fixed_string_semantic,
+        );
+    }
+
+    #[test]
     fn test_parse_field_semantic() {
         let test_cases = vec![
             ("PAYLOAD", FieldSemantic::Payload),
             ("PADDING", FieldSemantic::Padding),
             ("LENGTH", FieldSemantic::Length),
+            ("FIXED_STRING(\"foo\")", FieldSemantic::FixedString("foo".to_string()))
         ];
 
         test_rule_pair(

@@ -271,6 +271,7 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &PSF) -> Vec<I
         ConcretizeFormatArgs {
             from_format: AbstractFormat {
                 format: format.clone(),
+                fixed_fields: afs.semantics.get_fixed_fields(),
             },
             to_heap_id: CFORMAT_HEAP_NAME.id(),
         }
@@ -432,6 +433,7 @@ fn compile_message_to_instrs(
                 ConcretizeFormatArgs {
                     from_format: AbstractFormat {
                         format: prefix.clone(),
+                        fixed_fields: afs.semantics.get_fixed_fields(),
                     },
                     to_heap_id: CFORMAT_PFX_HEAP_NAME.id(),
                 }
@@ -554,6 +556,7 @@ fn compile_message_to_instrs(
                     ConcretizeFormatArgs {
                         from_format: AbstractFormat {
                             format: suffix.clone(),
+                            fixed_fields: afs.semantics.get_fixed_fields(),
                         },
                         to_heap_id: CFORMAT_SFX_HEAP_NAME.id(),
                     }
