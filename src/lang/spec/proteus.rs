@@ -24,7 +24,7 @@ impl ProteusSpec {
 
 impl TaskProvider for ProteusSpec {
     fn get_init_task(&self) -> Task {
-        todo!()
+        self.task_graph.init_task()
     }
 
     fn get_next_tasks(&self, last_task: &TaskID) -> TaskSet {
