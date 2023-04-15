@@ -8,3 +8,6 @@ pub mod parse;
 pub mod spec;
 pub mod task;
 pub mod types;
+
+#[cfg(test)]
+mod test;

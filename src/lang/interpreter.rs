@@ -264,7 +264,7 @@ impl Program {
     }
 }
 
-struct Interpreter {
+pub struct Interpreter {
     spec: Box<dyn TaskProvider + Send + 'static>,
     cipher: Option<Cipher>,
     next_netop_out: Option<NetOpOut>,
@@ -276,7 +276,7 @@ struct Interpreter {
 }
 
 impl Interpreter {
-    fn new(spec: Box<dyn TaskProvider + Send + 'static>) -> Self {
+    pub fn new(spec: Box<dyn TaskProvider + Send + 'static>) -> Self {
         let mut int = Self {
             spec,
             cipher: None,
@@ -299,7 +299,7 @@ impl Interpreter {
     /// Loads task from the task provider. Panics if we already have a current
     /// task in/out, we receive another one from the provider, and the ID of the
     /// new task does not match that of the existing task.
-    fn load_tasks(&mut self) {
+    pub fn load_tasks(&mut self) {
         match self.spec.get_next_tasks(&self.last_task_id) {
             TaskSet::InTask(task) => Self::set_task(&mut self.current_prog_in, task),
             TaskSet::OutTask(task) => Self::set_task(&mut self.current_prog_out, task),
@@ -326,7 +326,7 @@ impl Interpreter {
 
     /// Return the next incoming (app<-net) command we want the network protocol
     /// to run, or an error if the app<-net direction should block for now.
-    fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
+    pub fn next_net_cmd_in(&mut self) -> Result<NetOpIn, ()> {
         // TODO: refactor this and next_net_cmd_out.
         loop {
             if self.wants_tasks {
@@ -355,7 +355,7 @@ impl Interpreter {
 
     /// Return the next outgoing (app->net) command we want the network protocol
     /// to run, or an error if the app->net direction should block for now.
-    fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
+    pub fn next_net_cmd_out(&mut self) -> Result<NetOpOut, ()> {
         // TODO: refactor this and next_net_cmd_in.
         loop {
             if self.wants_tasks {
@@ -383,13 +383,13 @@ impl Interpreter {
     }
 
     /// Store the given bytes on the heap at the given address.
-    fn store_in(&mut self, addr: Identifier, bytes: Bytes) {
+    pub fn store_in(&mut self, addr: Identifier, bytes: Bytes) {
         if let Some(t) = self.current_prog_in.as_mut() {
             t.store_bytes(addr, bytes);
         }
     }
 
-    fn store_out(&mut self, addr: Identifier, bytes: Bytes) {
+    pub fn store_out(&mut self, addr: Identifier, bytes: Bytes) {
         if let Some(t) = self.current_prog_out.as_mut() {
             t.store_bytes(addr, bytes);
         }
@@ -466,787 +466,180 @@ impl SharedAsyncInterpreter {
 
 #[cfg(test)]
 mod tests {
+    use crate::lang::spec::test::basic::LengthPayloadSpec;
     use bytes::{Buf, BufMut, BytesMut};
-    use std::fs;
 
-    use self::{basic::*, encrypted::*};
     use super::*;
 
-    use crate::lang::common::Role;
-    use crate::lang::task::*;
-    use crate::lang::types::*;
-
-    trait SpecTestHarness {
-        fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>>;
-        fn read_app(&self, int: &mut Interpreter) -> Bytes;
-        fn write_net(&self, int: &mut Interpreter, payload: Bytes);
-        fn read_net(&self, int: &mut Interpreter) -> Bytes;
-        fn write_app(&self, int: &mut Interpreter, payload: Bytes);
-    }
-
-    fn get_test_harnesses() -> Vec<Box<dyn SpecTestHarness + Send + 'static>> {
+    fn get_task_providers() -> Vec<Box<dyn TaskProvider + Send + 'static>> {
         vec![
-            Box::new(LengthPayloadSpecHarness {}),
-            Box::new(EncryptedLengthPayloadSpecHarness {}),
+            Box::new(LengthPayloadSpec::new()),
+            // Box::new(src::lang::spec::proteus::parse_simple_proteus_spec()),
         ]
     }
 
-    mod basic {
-        use super::*;
+    fn read_app(int: &mut Interpreter) -> Bytes {
+        let args = match int.next_net_cmd_out().unwrap() {
+            NetOpOut::RecvApp(args) => args,
+            _ => panic!("Unexpected interpreter command"),
+        };
 
-        pub struct LengthPayloadSpecHarness {}
+        let payload = Bytes::from("When should I attack?");
+        assert!(args.len.contains(&payload.len()));
 
-        pub struct LengthPayloadSpec {
-            abs_format_out: AbstractFormat,
-            abs_format_in1: AbstractFormat,
-            abs_format_in2: AbstractFormat,
-        }
-
-        impl LengthPayloadSpec {
-            pub fn new() -> Self {
-                let abs_format_out: AbstractFormat = Format {
-                    name: "DataMessageOut".id(),
-                    fields: vec![
-                        Field {
-                            name: "length".id(),
-                            dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
-                        },
-                        Field {
-                            name: "payload".id(),
-                            dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
-                        },
-                    ],
-                }
-                .into();
-
-                let abs_format_in1: AbstractFormat = Format {
-                    name: "DataMessageIn1".id(),
-                    fields: vec![Field {
-                        name: "length".id(),
-                        dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
-                    }],
-                }
-                .into();
-
-                let abs_format_in2: AbstractFormat = Format {
-                    name: "DataMessageIn2".id(),
-                    fields: vec![Field {
-                        name: "payload".id(),
-                        dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
-                    }],
-                }
-                .into();
-
-                Self {
-                    abs_format_out,
-                    abs_format_in1,
-                    abs_format_in2,
-                }
-            }
-        }
-
-        impl TaskProvider for LengthPayloadSpec {
-            fn get_init_task(&self) -> Task {
-                Task {
-                    ins: vec![],
-                    id: Default::default(),
-                }
-            }
-
-            fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
-                // Outgoing data forwarding direction.
-                let out_task = Task {
-                    ins: vec![
-                        ReadAppArgs {
-                            from_len: 1..u16::MAX as usize,
-                            to_heap_id: "payload".id(),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            from_format: self.abs_format_out.clone(),
-                            to_heap_id: "cformat".id(),
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            from_format_heap_id: "cformat".id(),
-                            to_heap_id: "message".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "payload".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "payload".id(),
-                        }
-                        .into(),
-                        ComputeLengthArgs {
-                            from_msg_heap_id: "message".id(),
-                            from_field_id: "length".id(),
-                            to_heap_id: "length_value_on_heap".id(),
-                        }
-                        .into(),
-                        SetNumericValueArgs {
-                            from_heap_id: "length_value_on_heap".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "length".id(),
-                        }
-                        .into(),
-                        WriteNetArgs {
-                            from_msg_heap_id: "message".id(),
-                        }
-                        .into(),
-                    ],
-                    id: TaskID::default(),
-                };
-
-                // Incoming data forwarding direction.
-                let in_task = Task {
-                    ins: vec![
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Range(2..3 as usize),
-                            to_heap_id: "length".id(),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            from_format: self.abs_format_in1.clone(),
-                            to_heap_id: "cformat1".id(),
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            from_format_heap_id: "cformat1".id(),
-                            to_heap_id: "message_length_part".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "length".id(),
-                            to_msg_heap_id: "message_length_part".id(),
-                            to_field_id: "length".id(),
-                        }
-                        .into(),
-                        GetNumericValueArgs {
-                            from_msg_heap_id: "message_length_part".id(),
-                            from_field_id: "length".id(),
-                            to_heap_id: "payload_len_value".id(),
-                        }
-                        .into(),
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Identifier("payload_len_value".id()),
-                            to_heap_id: "payload".id(),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            from_format: self.abs_format_in2.clone(),
-                            to_heap_id: "cformat2".id(),
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            from_format_heap_id: "cformat2".id(),
-                            to_heap_id: "message_payload_part".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "payload".id(),
-                            to_msg_heap_id: "message_payload_part".id(),
-                            to_field_id: "payload".id(),
-                        }
-                        .into(),
-                        WriteAppArgs {
-                            from_msg_heap_id: "message_payload_part".id(),
-                            from_field_id: "payload".id(),
-                        }
-                        .into(),
-                    ],
-                    id: TaskID::default(),
-                };
-
-                // Concurrently execute tasks for both data forwarding directions.
-                TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
-            }
-        }
-
-        impl LengthPayloadSpecHarness {
-            fn parse_simple_proteus_spec(&self) -> ProteusSpec {
-                let filepath = "src/lang/parse/examples/simple.psf";
-                let input = fs::read_to_string(filepath).expect("cannot read simple file");
-
-                ProteusSpec::new(&input, Role::Client)
-            }
-        }
-
-        impl SpecTestHarness for LengthPayloadSpecHarness {
-            fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>> {
-                vec![
-                    Box::new(LengthPayloadSpec::new()),
-                    // Box::new(self.parse_simple_proteus_spec()),
-                ]
-            }
-
-            fn read_app(&self, int: &mut Interpreter) -> Bytes {
-                let args = match int.next_net_cmd_out().unwrap() {
-                    NetOpOut::RecvApp(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                let payload = Bytes::from("When should I attack?");
-                assert!(args.len.contains(&payload.len()));
-
-                int.store_out(args.addr, payload.clone());
-                payload
-            }
-
-            fn write_net(&self, int: &mut Interpreter, payload: Bytes) {
-                let args = match int.next_net_cmd_out().unwrap() {
-                    NetOpOut::SendNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                let mut msg = args.bytes.clone();
-                assert_eq!(msg.len(), payload.len() + 2); // 2 for length field
-                assert_eq!(msg[2..], payload[..]);
-
-                let len = msg.get_u16();
-                assert_eq!(len as usize, payload.len());
-            }
-
-            fn read_net(&self, int: &mut Interpreter) -> Bytes {
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::RecvNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert!(args.len.contains(&2));
-                let payload = Bytes::from("Attack at dawn!");
-                let mut buf = BytesMut::new();
-                buf.put_u16(payload.len() as u16);
-                int.store_in(args.addr, buf.freeze());
-
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::RecvNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert!(args.len.contains(&payload.len()));
-                int.store_in(args.addr, payload.clone());
-                payload
-            }
-
-            fn write_app(&self, int: &mut Interpreter, payload: Bytes) {
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::SendApp(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert_eq!(args.bytes.len(), payload.len());
-                assert_eq!(args.bytes[..], payload[..]);
-            }
-        }
+        int.store_out(args.addr, payload.clone());
+        payload
     }
 
-    mod encrypted {
-        use super::*;
+    fn write_net(int: &mut Interpreter, payload: Bytes) {
+        let args = match int.next_net_cmd_out().unwrap() {
+            NetOpOut::SendNet(args) => args,
+            _ => panic!("Unexpected interpreter command"),
+        };
 
-        pub struct EncryptedLengthPayloadSpec {
-            abs_format_out: AbstractFormat,
-            abs_format_in1: AbstractFormat,
-            abs_format_in2: AbstractFormat,
-        }
+        let mut msg = args.bytes.clone();
+        assert_eq!(msg.len(), payload.len() + 2); // 2 for length field
+        assert_eq!(msg[2..], payload[..]);
 
-        impl EncryptedLengthPayloadSpec {
-            pub fn new() -> Self {
-                let abs_format_out: AbstractFormat = Format {
-                    name: "DataMessageOut".id(),
-                    fields: vec![
-                        Field {
-                            name: "length".id(),
-                            dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
-                        },
-                        Field {
-                            name: "length_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
-                        },
-                        Field {
-                            name: "payload".id(),
-                            dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
-                        },
-                        Field {
-                            name: "payload_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
-                        },
-                    ],
-                }
-                .into();
+        let len = msg.get_u16();
+        assert_eq!(len as usize, payload.len());
+    }
 
-                let abs_format_in1: AbstractFormat = Format {
-                    name: "DataMessageIn1".id(),
-                    fields: vec![
-                        Field {
-                            name: "length".id(),
-                            dtype: PrimitiveArray(NumericType::U16.into(), 1).into(),
-                        },
-                        Field {
-                            name: "length_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
-                        },
-                    ],
-                }
-                .into();
+    fn read_net(int: &mut Interpreter) -> Bytes {
+        let args = match int.next_net_cmd_in().unwrap() {
+            NetOpIn::RecvNet(args) => args,
+            _ => panic!("Unexpected interpreter command"),
+        };
 
-                let abs_format_in2: AbstractFormat = Format {
-                    name: "DataMessageIn2".id(),
-                    fields: vec![
-                        Field {
-                            name: "payload".id(),
-                            dtype: DynamicArray(UnaryOp::SizeOf("length".id())).into(),
-                        },
-                        Field {
-                            name: "payload_mac".id(),
-                            dtype: PrimitiveArray(NumericType::U8.into(), 16).into(),
-                        },
-                    ],
-                }
-                .into();
+        assert!(args.len.contains(&2));
+        let payload = Bytes::from("Attack at dawn!");
+        let mut buf = BytesMut::new();
+        buf.put_u16(payload.len() as u16);
+        int.store_in(args.addr, buf.freeze());
 
-                Self {
-                    abs_format_out,
-                    abs_format_in1,
-                    abs_format_in2,
-                }
-            }
-        }
+        let args = match int.next_net_cmd_in().unwrap() {
+            NetOpIn::RecvNet(args) => args,
+            _ => panic!("Unexpected interpreter command"),
+        };
 
-        impl TaskProvider for EncryptedLengthPayloadSpec {
-            fn get_init_task(&self) -> Task {
-                let password = "hunter2";
+        assert!(args.len.contains(&payload.len()));
+        int.store_in(args.addr, payload.clone());
+        payload
+    }
 
-                Task {
-                    id: Default::default(),
-                    ins: vec![InitFixedSharedKeyArgs {
-                        password: password.to_string(),
-                        role: Role::Client,
-                    }
-                    .into()],
-                }
-            }
+    fn write_app(int: &mut Interpreter, payload: Bytes) {
+        let args = match int.next_net_cmd_in().unwrap() {
+            NetOpIn::SendApp(args) => args,
+            _ => panic!("Unexpected interpreter command"),
+        };
 
-            fn get_next_tasks(&self, _last_task: &TaskID) -> TaskSet {
-                // Outgoing data forwarding direction.
-                let out_task = Task {
-                    ins: vec![
-                        ReadAppArgs {
-                            from_len: 1..(u16::MAX - 32) as usize,
-                            to_heap_id: "payload".id(),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            from_format: self.abs_format_out.clone(),
-                            to_heap_id: "cformat".id(),
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            from_format_heap_id: "cformat".id(),
-                            to_heap_id: "message".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "payload".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "payload".id(),
-                        }
-                        .into(),
-                        ComputeLengthArgs {
-                            from_msg_heap_id: "message".id(),
-                            from_field_id: "length_mac".id(),
-                            to_heap_id: "length_value_on_heap".id(),
-                        }
-                        .into(),
-                        SetNumericValueArgs {
-                            from_heap_id: "length_value_on_heap".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "length".id(),
-                        }
-                        .into(),
-                        EncryptFieldArgs {
-                            from_msg_heap_id: "message".id(),
-                            from_field_id: "length".id(),
-                            to_ciphertext_heap_id: "enc_length_heap".id(),
-                            to_mac_heap_id: "length_mac_heap".id(),
-                        }
-                        .into(),
-                        EncryptFieldArgs {
-                            from_msg_heap_id: "message".id(),
-                            from_field_id: "payload".id(),
-                            to_ciphertext_heap_id: "enc_payload_heap".id(),
-                            to_mac_heap_id: "payload_mac_heap".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "enc_length_heap".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "length".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "enc_payload_heap".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "payload".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "length_mac_heap".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "length_mac".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "payload_mac_heap".id(),
-                            to_msg_heap_id: "message".id(),
-                            to_field_id: "payload_mac".id(),
-                        }
-                        .into(),
-                        WriteNetArgs {
-                            from_msg_heap_id: "message".id(),
-                        }
-                        .into(),
-                    ],
-                    id: TaskID::default(),
-                };
-
-                // Incoming data forwarding direction.
-                let in_task = Task {
-                    ins: vec![
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Range(2..3 as usize),
-                            to_heap_id: "length".id(),
-                        }
-                        .into(),
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Range(16..17 as usize),
-                            to_heap_id: "length_mac".id(),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            from_format: self.abs_format_in1.clone(),
-                            to_heap_id: "cformat1".id(),
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            from_format_heap_id: "cformat1".id(),
-                            to_heap_id: "message_length_part".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "length".id(),
-                            to_msg_heap_id: "message_length_part".id(),
-                            to_field_id: "length".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "length_mac".id(),
-                            to_msg_heap_id: "message_length_part".id(),
-                            to_field_id: "length_mac".id(),
-                        }
-                        .into(),
-                        DecryptFieldArgs {
-                            from_msg_heap_id: "message_length_part".id(),
-                            from_ciphertext_field_id: "length".id(),
-                            from_mac_field_id: "length_mac".id(),
-                            to_plaintext_heap_id: "dec_length_heap".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "dec_length_heap".id(),
-                            to_msg_heap_id: "message_length_part".id(),
-                            to_field_id: "length".id(),
-                        }
-                        .into(),
-                        GetNumericValueArgs {
-                            from_msg_heap_id: "message_length_part".id(),
-                            from_field_id: "length".id(),
-                            to_heap_id: "payload_len_value_heap".id(),
-                        }
-                        .into(),
-                        ReadNetArgs {
-                            from_len: ReadNetLength::IdentifierMinus((
-                                "payload_len_value_heap".id(),
-                                16,
-                            )),
-                            to_heap_id: "payload".id(),
-                        }
-                        .into(),
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Range(16..17 as usize),
-                            to_heap_id: "payload_mac".id(),
-                        }
-                        .into(),
-                        ConcretizeFormatArgs {
-                            from_format: self.abs_format_in2.clone(),
-                            to_heap_id: "cformat2".id(),
-                        }
-                        .into(),
-                        CreateMessageArgs {
-                            from_format_heap_id: "cformat2".id(),
-                            to_heap_id: "message_payload_part".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "payload".id(),
-                            to_msg_heap_id: "message_payload_part".id(),
-                            to_field_id: "payload".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "payload_mac".id(),
-                            to_msg_heap_id: "message_payload_part".id(),
-                            to_field_id: "payload_mac".id(),
-                        }
-                        .into(),
-                        DecryptFieldArgs {
-                            from_msg_heap_id: "message_payload_part".id(),
-                            from_ciphertext_field_id: "payload".id(),
-                            from_mac_field_id: "payload_mac".id(),
-                            to_plaintext_heap_id: "dec_payload_heap".id(),
-                        }
-                        .into(),
-                        SetArrayBytesArgs {
-                            from_heap_id: "dec_payload_heap".id(),
-                            to_msg_heap_id: "message_payload_part".id(),
-                            to_field_id: "payload".id(),
-                        }
-                        .into(),
-                        WriteAppArgs {
-                            from_msg_heap_id: "message_payload_part".id(),
-                            from_field_id: "payload".id(),
-                        }
-                        .into(),
-                    ],
-                    id: TaskID::default(),
-                };
-
-                // Concurrently execute tasks for both data forwarding directions.
-                TaskSet::InAndOutTasks(TaskPair { out_task, in_task })
-            }
-        }
-
-        pub struct EncryptedLengthPayloadSpecHarness {}
-
-        impl EncryptedLengthPayloadSpecHarness {
-            fn _parse_encrypted_proteus_spec(&self) -> ProteusSpec {
-                let filepath = "src/lang/parse/examples/encrypted.psf";
-                let input = fs::read_to_string(filepath).expect("cannot read encrypted file");
-
-                ProteusSpec::new(&input, Role::Client)
-            }
-        }
-
-        impl SpecTestHarness for EncryptedLengthPayloadSpecHarness {
-            fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>> {
-                vec![
-                    Box::new(EncryptedLengthPayloadSpec::new()),
-                    // Box::new(self.parse_encrypted_proteus_spec()),
-                ]
-            }
-
-            fn read_app(&self, int: &mut Interpreter) -> Bytes {
-                let args = match int.next_net_cmd_out().unwrap() {
-                    NetOpOut::RecvApp(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                let payload = Bytes::from("When should I attack?");
-                assert!(args.len.contains(&payload.len()));
-
-                int.store_out(args.addr, payload.clone());
-                payload
-            }
-
-            fn write_net(&self, int: &mut Interpreter, payload: Bytes) {
-                let args = match int.next_net_cmd_out().unwrap() {
-                    NetOpOut::SendNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                let mut msg = args.bytes.clone();
-                assert_eq!(msg.len(), payload.len() + 2 + 16 + 16); // len and 2 macs
-                assert_eq!(msg[18..(msg.len() - 16)], payload[..]);
-
-                let len = msg.get_u16();
-                assert_eq!(len as usize, payload.len() + 16); // mac
-            }
-
-            fn read_net(&self, int: &mut Interpreter) -> Bytes {
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::RecvNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert!(args.len.contains(&2));
-
-                let payload = Bytes::from("Attack at dawn!");
-                let mac = Bytes::from_static(&[0; 16]);
-
-                let mut buf = BytesMut::new();
-                buf.put_u16((payload.len() + mac.len()) as u16);
-                assert!(args.len.contains(&buf.len()));
-                int.store_in(args.addr, buf.freeze());
-
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::RecvNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert!(args.len.contains(&mac.len()));
-                int.store_in(args.addr, mac.clone());
-
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::RecvNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert!(args.len.contains(&payload.len()));
-                int.store_in(args.addr, payload.clone());
-
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::RecvNet(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert!(args.len.contains(&mac.len()));
-                int.store_in(args.addr, mac.clone());
-                payload
-            }
-
-            fn write_app(&self, int: &mut Interpreter, payload: Bytes) {
-                let args = match int.next_net_cmd_in().unwrap() {
-                    NetOpIn::SendApp(args) => args,
-                    _ => panic!("Unexpected interpreter command"),
-                };
-
-                assert_eq!(args.bytes.len(), payload.len());
-                assert_eq!(args.bytes[..], payload[..]);
-            }
-        }
+        assert_eq!(args.bytes.len(), payload.len());
+        assert_eq!(args.bytes[..], payload[..]);
     }
 
     #[test]
     fn load_tasks() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                int.load_tasks();
-                assert!(int.current_prog_in.is_some() || int.current_prog_out.is_some());
-            }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            int.load_tasks();
+            assert!(int.current_prog_in.is_some() || int.current_prog_out.is_some());
         }
     }
 
-    fn read_app_write_net_pipeline(th: &Box<dyn SpecTestHarness + Send>, int: &mut Interpreter) {
-        let payload = th.read_app(int);
-        th.write_net(int, payload);
+    fn read_app_write_net_pipeline(int: &mut Interpreter) {
+        let payload = read_app(int);
+        write_net(int, payload);
     }
 
     #[test]
     fn read_app_write_net_once() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                read_app_write_net_pipeline(&th, &mut int);
-            }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            read_app_write_net_pipeline(&mut int);
         }
     }
 
     #[test]
     fn read_app_write_net_many() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                for _ in 0..10 {
-                    read_app_write_net_pipeline(&th, &mut int);
-                }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                read_app_write_net_pipeline(&mut int);
             }
         }
     }
 
-    fn read_net_write_app_pipeline(th: &Box<dyn SpecTestHarness + Send>, int: &mut Interpreter) {
-        let payload = th.read_net(int);
-        th.write_app(int, payload);
+    fn read_net_write_app_pipeline(int: &mut Interpreter) {
+        let payload = read_net(int);
+        write_app(int, payload);
     }
 
     #[test]
     fn read_net_write_app_once() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                read_net_write_app_pipeline(&th, &mut int);
-            }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            read_net_write_app_pipeline(&mut int);
         }
     }
 
     #[test]
     fn read_net_write_app_many() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                for _ in 0..10 {
-                    read_net_write_app_pipeline(&th, &mut int);
-                }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                read_net_write_app_pipeline(&mut int);
             }
         }
     }
 
     #[test]
     fn interleaved_app_net_app_net() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                for _ in 0..10 {
-                    let app_payload = th.read_app(&mut int);
-                    let net_payload = th.read_net(&mut int);
-                    th.write_app(&mut int, net_payload);
-                    th.write_net(&mut int, app_payload);
-                }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let app_payload = read_app(&mut int);
+                let net_payload = read_net(&mut int);
+                write_app(&mut int, net_payload);
+                write_net(&mut int, app_payload);
             }
         }
     }
 
     #[test]
     fn interleaved_net_app_net_app() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                for _ in 0..10 {
-                    let net_payload = th.read_net(&mut int);
-                    let app_payload = th.read_app(&mut int);
-                    th.write_net(&mut int, app_payload);
-                    th.write_app(&mut int, net_payload);
-                }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let net_payload = read_net(&mut int);
+                let app_payload = read_app(&mut int);
+                write_net(&mut int, app_payload);
+                write_app(&mut int, net_payload);
             }
         }
     }
 
     #[test]
     fn interleaved_app_net_net_app() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                for _ in 0..10 {
-                    let app_payload = th.read_app(&mut int);
-                    let net_payload = th.read_net(&mut int);
-                    th.write_net(&mut int, app_payload);
-                    th.write_app(&mut int, net_payload);
-                }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let app_payload = read_app(&mut int);
+                let net_payload = read_net(&mut int);
+                write_net(&mut int, app_payload);
+                write_app(&mut int, net_payload);
             }
         }
     }
 
     #[test]
     fn interleaved_net_app_app_net() {
-        for th in get_test_harnesses() {
-            for tp in th.get_task_providers() {
-                let mut int = Interpreter::new(tp);
-                for _ in 0..10 {
-                    let net_payload = th.read_net(&mut int);
-                    let app_payload = th.read_app(&mut int);
-                    th.write_app(&mut int, net_payload);
-                    th.write_net(&mut int, app_payload);
-                }
+        for tp in get_task_providers() {
+            let mut int = Interpreter::new(tp);
+            for _ in 0..10 {
+                let net_payload = read_net(&mut int);
+                let app_payload = read_app(&mut int);
+                write_app(&mut int, net_payload);
+                write_net(&mut int, app_payload);
             }
         }
     }

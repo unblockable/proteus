@@ -31,3 +31,13 @@ impl TaskProvider for ProteusSpec {
         self.task_graph.next(*last_task)
     }
 }
+
+#[cfg(test)]
+pub fn parse_simple_proteus_spec() -> ProteusSpec {
+    use std::fs;
+
+    let filepath = "src/lang/parse/examples/simple.psf";
+    let input = fs::read_to_string(filepath).expect("cannot read simple file");
+
+    ProteusSpec::new(&input, Role::Client)
+}
