@@ -1,7 +1,7 @@
 use crate::lang::{
     common::Role,
     interpreter::{Interpreter, NetOpIn, NetOpOut},
-    spec::test::basic::LengthPayloadSpec,
+    spec::test::{basic::LengthPayloadSpec, basic_enc::EncryptedLengthPayloadSpec},
     task::TaskProvider,
 };
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -12,7 +12,7 @@ use rand::{
 
 use std::ops::Range;
 
-use crate::lang::spec::proteus::parse_simple_proteus_spec;
+use crate::lang::spec::proteus::*;
 
 struct Network {
     client_to_server: BytesMut,
@@ -186,15 +186,15 @@ struct ProtocolTester {
 }
 
 impl ProtocolTester {
-    fn new<T>(protospec: Box<T>) -> Self
+    fn new<T>(client_spec: Box<T>, server_spec: Box<T>) -> Self
     where
-        T: TaskProvider + Clone + Send + 'static,
+        T: TaskProvider + Send + 'static,
     {
-        let client_msg = ProtocolTester::generate_payload(10..1000);
-        let server_msg = ProtocolTester::generate_payload(10..1000);
+        let client_msg = ProtocolTester::generate_payload(100..100_000);
+        let server_msg = ProtocolTester::generate_payload(100..100_000);
         Self {
-            client: Host::new(protospec.clone(), Role::Client, client_msg),
-            server: Host::new(protospec, Role::Server, server_msg),
+            client: Host::new(client_spec, Role::Client, client_msg),
+            server: Host::new(server_spec, Role::Server, server_msg),
             net: Network::new(),
         }
     }
@@ -233,11 +233,36 @@ impl ProtocolTester {
 
 #[test]
 fn integration_static_basic() {
-    ProtocolTester::new(Box::new(LengthPayloadSpec::new())).test()
+    ProtocolTester::new(
+        Box::new(LengthPayloadSpec::new(Role::Client)),
+        Box::new(LengthPayloadSpec::new(Role::Server)),
+    )
+    .test()
 }
 
 #[test]
 fn integration_psf_basic() {
-    let spec = parse_simple_proteus_spec();
-    // ProtocolTester::new(Box::new(spec)).test()
+    ProtocolTester::new(
+        Box::new(parse_simple_proteus_spec(Role::Client)),
+        Box::new(parse_simple_proteus_spec(Role::Server)),
+    )
+    .test()
+}
+
+#[test]
+fn integration_static_basic_enc() {
+    ProtocolTester::new(
+        Box::new(EncryptedLengthPayloadSpec::new(Role::Client)),
+        Box::new(EncryptedLengthPayloadSpec::new(Role::Server)),
+    )
+    .test()
+}
+
+#[test]
+fn integration_psf_basic_enc() {
+    ProtocolTester::new(
+        Box::new(parse_encrypted_proteus_spec(Role::Client)),
+        Box::new(parse_encrypted_proteus_spec(Role::Server)),
+    )
+    .test()
 }

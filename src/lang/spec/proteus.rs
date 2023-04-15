@@ -33,11 +33,21 @@ impl TaskProvider for ProteusSpec {
 }
 
 #[cfg(test)]
-pub fn parse_simple_proteus_spec() -> ProteusSpec {
+pub fn parse_simple_proteus_spec(role: Role) -> ProteusSpec {
     use std::fs;
 
     let filepath = "src/lang/parse/examples/simple.psf";
     let input = fs::read_to_string(filepath).expect("cannot read simple file");
 
-    ProteusSpec::new(&input, Role::Client)
+    ProteusSpec::new(&input, role)
+}
+
+#[cfg(test)]
+pub fn parse_encrypted_proteus_spec(role: Role) -> ProteusSpec {
+    use std::fs;
+
+    let filepath = "src/lang/parse/examples/shadowsocks.psf";
+    let input = fs::read_to_string(filepath).expect("cannot read shadowsocks file");
+
+    ProteusSpec::new(&input, role)
 }

@@ -385,13 +385,16 @@ impl Format {
     }
 
     pub fn fixed_fields_size(&self) -> usize {
-        self.fields.iter().map(|x| {
-            if let Some(y) = x.maybe_size_of() {
-                y
-            } else {
-                0
-            }
-        }).sum()
+        self.fields
+            .iter()
+            .map(|x| {
+                if let Some(y) = x.maybe_size_of() {
+                    y
+                } else {
+                    0
+                }
+            })
+            .sum()
     }
 
     pub fn split_into_fixed_sized_prefix_dynamic_suffix(&self) -> (Format, Format) {
@@ -654,7 +657,7 @@ impl FromStr for Password {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PSF {
     pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
     pub sequence: Vec<SequenceSpecifier>,

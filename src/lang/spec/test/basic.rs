@@ -1,14 +1,14 @@
-use crate::lang::{task::*, types::*};
+use crate::lang::{common::Role, task::*, types::*};
 
-#[derive(Clone)]
 pub struct LengthPayloadSpec {
+    _role: Role, // both sides are identical
     abs_format_out: AbstractFormat,
     abs_format_in1: AbstractFormat,
     abs_format_in2: AbstractFormat,
 }
 
 impl LengthPayloadSpec {
-    pub fn new() -> Self {
+    pub fn new(role: Role) -> Self {
         let abs_format_out: AbstractFormat = Format {
             name: "DataMessageOut".id(),
             fields: vec![
@@ -43,6 +43,7 @@ impl LengthPayloadSpec {
         .into();
 
         Self {
+            _role: role,
             abs_format_out,
             abs_format_in1,
             abs_format_in2,

@@ -1,13 +1,14 @@
 use crate::lang::{common::Role, task::*, types::*};
 
 pub struct EncryptedLengthPayloadSpec {
+    role: Role,
     abs_format_out: AbstractFormat,
     abs_format_in1: AbstractFormat,
     abs_format_in2: AbstractFormat,
 }
 
 impl EncryptedLengthPayloadSpec {
-    pub fn new() -> Self {
+    pub fn new(role: Role) -> Self {
         let abs_format_out: AbstractFormat = Format {
             name: "DataMessageOut".id(),
             fields: vec![
@@ -62,6 +63,7 @@ impl EncryptedLengthPayloadSpec {
         .into();
 
         Self {
+            role,
             abs_format_out,
             abs_format_in1,
             abs_format_in2,
@@ -77,7 +79,7 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
             id: Default::default(),
             ins: vec![InitFixedSharedKeyArgs {
                 password: password.to_string(),
-                role: Role::Client,
+                role: self.role,
             }
             .into()],
         }

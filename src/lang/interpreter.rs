@@ -470,15 +470,15 @@ impl SharedAsyncInterpreter {
 
 #[cfg(test)]
 mod tests {
-    use crate::lang::spec::test::basic::LengthPayloadSpec;
+    use crate::lang::spec::{proteus::parse_simple_proteus_spec, test::basic::LengthPayloadSpec};
     use bytes::{Buf, BufMut, BytesMut};
 
     use super::*;
 
     fn get_task_providers() -> Vec<Box<dyn TaskProvider + Send + 'static>> {
         vec![
-            Box::new(LengthPayloadSpec::new()),
-            // Box::new(src::lang::spec::proteus::parse_simple_proteus_spec()),
+            Box::new(LengthPayloadSpec::new(Role::Client)),
+            Box::new(parse_simple_proteus_spec(Role::Client)),
         ]
     }
 
