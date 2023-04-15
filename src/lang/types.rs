@@ -384,6 +384,16 @@ impl Format {
             .cloned()
     }
 
+    pub fn fixed_fields_size(&self) -> usize {
+        self.fields.iter().map(|x| {
+            if let Some(y) = x.maybe_size_of() {
+                y
+            } else {
+                0
+            }
+        }).sum()
+    }
+
     pub fn split_into_fixed_sized_prefix_dynamic_suffix(&self) -> (Format, Format) {
         let mut fixed_sized_fields = vec![];
         let mut dynamic_fields = vec![];
@@ -407,6 +417,33 @@ impl Format {
             Format {
                 name: (self.name.0.clone() + "_suffix").parse().unwrap(),
                 fields: dynamic_fields,
+            },
+        )
+    }
+
+    pub fn split_into_dynamic_prefix_and_fixed_suffix(&self) -> (Format, Format) {
+        let mut dynamic_fields = vec![];
+        let mut fixed_sized_fields = vec![];
+
+        let mut in_prefix = true;
+
+        for field in &self.fields[..] {
+            if in_prefix && field.maybe_size_of().is_none() {
+                dynamic_fields.push(field.clone());
+            } else {
+                fixed_sized_fields.push(field.clone());
+                in_prefix = false;
+            }
+        }
+
+        (
+            Format {
+                name: (self.name.0.clone() + "_prefix").parse().unwrap(),
+                fields: dynamic_fields,
+            },
+            Format {
+                name: (self.name.0.clone() + "_suffix").parse().unwrap(),
+                fields: fixed_sized_fields,
             },
         )
     }
