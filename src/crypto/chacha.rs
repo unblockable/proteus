@@ -8,12 +8,12 @@ const MAC_NBYTES: usize = 16;
 type Payload = Vec<u8>;
 type MAC = [u8; MAC_NBYTES];
 
-enum CipherKind {
+pub enum CipherKind {
     Sender,
     Receiver,
 }
 
-struct Cipher {
+pub struct Cipher {
     encryption_nonce_gen: Salsa20,
     decryption_nonce_gen: Salsa20,
     encryption_cipher: ChaCha20Poly1305,

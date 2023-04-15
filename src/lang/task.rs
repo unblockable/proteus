@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use crate::lang::types::{AbstractFormat, Identifier};
+use crate::lang::{
+    common::Role,
+    types::{AbstractFormat, Identifier},
+};
 use std::ops::Range;
 
 use std::convert::From;
@@ -167,6 +170,7 @@ pub struct GetNumericValueArgs {
 #[derive(Debug)]
 pub struct InitFixedSharedKeyArgs {
     pub password: String,
+    pub role: Role,
 }
 
 /// Read a number of bytes given by the `from_len` range from the application

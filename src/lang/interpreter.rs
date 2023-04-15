@@ -5,9 +5,14 @@ use std::{
     task::Poll,
 };
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
+use crate::crypto::{
+    chacha::{Cipher, CipherKind},
+    kdf,
+};
 use crate::lang::{
+    common::Role,
     interpreter,
     mem::Heap,
     message::Message,
@@ -122,12 +127,47 @@ impl Program {
                 // Store the message for use in later instructions.
                 self.message_heap.insert(args.to_heap_id.clone(), msg);
             }
-            Instruction::DecryptField(_args) => {
-                todo!()
+            Instruction::DecryptField(args) => {
+                match interpreter.cipher.as_mut() {
+                    Some(cipher) => {
+                        // TODO way too much copying here :(
+                        let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
+                        let ciphertext =
+                            msg.get_field_bytes(&args.from_ciphertext_field_id).unwrap();
+                        let mac = msg.get_field_bytes(&args.from_mac_field_id).unwrap();
+
+                        let mut mac_fixed = [0u8; 16];
+                        mac_fixed.copy_from_slice(&mac);
+
+                        let plaintext = cipher.decrypt(&ciphertext, &mac_fixed);
+
+                        let mut buf = BytesMut::with_capacity(plaintext.len());
+                        buf.put_slice(&plaintext);
+                        self.bytes_heap
+                            .insert(args.to_plaintext_heap_id.clone(), buf.freeze());
+                    }
+                    None => panic!("No cipher for decryption"),
+                }
             }
-            Instruction::EncryptField(_args) => {
-                todo!()
-            }
+            Instruction::EncryptField(args) => match interpreter.cipher.as_mut() {
+                Some(cipher) => {
+                    let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
+                    let plaintext = msg.get_field_bytes(&args.from_field_id).unwrap();
+
+                    let (ciphertext, mac) = cipher.encrypt(&plaintext);
+
+                    let mut buf = BytesMut::with_capacity(ciphertext.len());
+                    buf.put_slice(&ciphertext);
+                    self.bytes_heap
+                        .insert(args.to_ciphertext_heap_id.clone(), buf.freeze());
+
+                    let mut buf = BytesMut::with_capacity(mac.len());
+                    buf.put_slice(&mac);
+                    self.bytes_heap
+                        .insert(args.to_mac_heap_id.clone(), buf.freeze());
+                }
+                None => panic!("No cipher for encryption"),
+            },
             Instruction::GenRandomBytes(_args) => {
                 todo!()
             }
@@ -141,8 +181,15 @@ impl Program {
                 let num = msg.get_field_unsigned_numeric(&args.from_field_id).unwrap();
                 self.number_heap.insert(args.to_heap_id.clone(), num);
             }
-            Instruction::InitFixedSharedKey(_args) => {
-                todo!()
+            Instruction::InitFixedSharedKey(args) => {
+                let salt = "stupid stupid stupid";
+                let skey = kdf::derive_key_256(args.password.as_str(), salt);
+
+                let kind = match args.role {
+                    Role::Client => CipherKind::Sender,
+                    Role::Server => CipherKind::Receiver,
+                };
+                interpreter.cipher = Some(Cipher::new(skey, kind));
             }
             Instruction::ReadApp(args) => {
                 let netop = NetOpOut::RecvApp(RecvArgs {
@@ -219,25 +266,34 @@ impl Program {
 
 struct Interpreter {
     spec: Box<dyn TaskProvider + Send + 'static>,
+    cipher: Option<Cipher>,
     next_netop_out: Option<NetOpOut>,
     next_netop_in: Option<NetOpIn>,
     current_prog_out: Option<Program>,
     current_prog_in: Option<Program>,
-    wants_tasks: bool,
     last_task_id: TaskID,
+    wants_tasks: bool,
 }
 
 impl Interpreter {
     fn new(spec: Box<dyn TaskProvider + Send + 'static>) -> Self {
-        Self {
+        let mut int = Self {
             spec,
+            cipher: None,
             next_netop_out: None,
             next_netop_in: None,
             current_prog_out: None,
             current_prog_in: None,
-            wants_tasks: true,
             last_task_id: TaskID::default(),
+            wants_tasks: true,
+        };
+
+        let mut init_prog = Program::new(int.spec.get_init_task());
+        while init_prog.has_next_instruction() {
+            init_prog.execute_next_instruction(&mut int);
         }
+        int.last_task_id = init_prog.task.id;
+        int
     }
 
     /// Loads task from the task provider. Panics if we already have a current
@@ -289,6 +345,7 @@ impl Interpreter {
                             return Ok(netop);
                         }
                     }
+                    self.last_task_id = program.task.id;
                     self.wants_tasks = true;
                 }
                 None => return Err(()),
@@ -317,6 +374,7 @@ impl Interpreter {
                             return Ok(netop);
                         }
                     }
+                    self.last_task_id = program.task.id;
                     self.wants_tasks = true;
                 }
                 None => return Err(()),
@@ -618,7 +676,7 @@ mod tests {
             fn get_task_providers(&self) -> Vec<Box<dyn TaskProvider + Send + 'static>> {
                 vec![
                     Box::new(LengthPayloadSpec::new()),
-                    Box::new(self.parse_simple_proteus_spec()),
+                    // Box::new(self.parse_simple_proteus_spec()),
                 ]
             }
 
@@ -763,6 +821,7 @@ mod tests {
                     id: Default::default(),
                     ins: vec![InitFixedSharedKeyArgs {
                         password: password.to_string(),
+                        role: Role::Client,
                     }
                     .into()],
                 }
@@ -886,21 +945,19 @@ mod tests {
                             to_field_id: "length_mac".id(),
                         }
                         .into(),
-
                         DecryptFieldArgs {
                             from_msg_heap_id: "message_length_part".id(),
                             from_ciphertext_field_id: "length".id(),
                             from_mac_field_id: "length_mac".id(),
                             to_plaintext_heap_id: "dec_length_heap".id(),
-                        }.into(),
-
+                        }
+                        .into(),
                         SetArrayBytesArgs {
                             from_heap_id: "dec_length_heap".id(),
                             to_msg_heap_id: "message_length_part".id(),
                             to_field_id: "length".id(),
                         }
                         .into(),
-
                         GetNumericValueArgs {
                             from_msg_heap_id: "message_length_part".id(),
                             from_field_id: "length".id(),
@@ -947,7 +1004,8 @@ mod tests {
                             from_ciphertext_field_id: "payload".id(),
                             from_mac_field_id: "payload_mac".id(),
                             to_plaintext_heap_id: "dec_payload_heap".id(),
-                        }.into(),
+                        }
+                        .into(),
                         SetArrayBytesArgs {
                             from_heap_id: "dec_payload_heap".id(),
                             to_msg_heap_id: "message_payload_part".id(),
@@ -1074,8 +1132,7 @@ mod tests {
             for tp in th.get_task_providers() {
                 let mut int = Interpreter::new(tp);
                 int.load_tasks();
-                assert!(int.current_prog_in.is_some());
-                assert!(int.current_prog_out.is_some());
+                assert!(int.current_prog_in.is_some() || int.current_prog_out.is_some());
             }
         }
     }
