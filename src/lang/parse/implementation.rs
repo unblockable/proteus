@@ -546,9 +546,10 @@ pub mod tests {
 
     #[test]
     fn test_parse_fixed_string_semantic() {
-        let test_cases = vec![
-            ("FIXED_STRING(\"foo\")", FieldSemantic::FixedString("foo".to_string()))
-        ];
+        let test_cases = vec![(
+            "FIXED_STRING(\"foo\")",
+            FieldSemantic::FixedString("foo".to_string()),
+        )];
 
         test_rule_pair(
             test_cases.iter(),
@@ -563,7 +564,10 @@ pub mod tests {
             ("PAYLOAD", FieldSemantic::Payload),
             ("PADDING", FieldSemantic::Padding),
             ("LENGTH", FieldSemantic::Length),
-            ("FIXED_STRING(\"foo\")", FieldSemantic::FixedString("foo".to_string()))
+            (
+                "FIXED_STRING(\"foo\")",
+                FieldSemantic::FixedString("foo".to_string()),
+            ),
         ];
 
         test_rule_pair(

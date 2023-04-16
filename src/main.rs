@@ -3,15 +3,23 @@ use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::lang::common::Role;
-use crate::lang::parse::proteus::ProteusParser;
-use crate::lang::parse::Parse;
-use crate::net::proto::{proteus, socks};
-use crate::net::Connection;
-use crate::pt::config::{
-    ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
+use crate::{
+    lang::{
+        common::Role,
+        parse::{proteus::ProteusParser, Parse},
+        spec::proteus::ProteusSpec,
+    },
+    net::{
+        proto::{proteus, socks},
+        Connection,
+    },
+    pt::{
+        config::{
+            ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
+        },
+        control,
+    },
 };
-use crate::pt::control;
 
 mod crypto;
 mod lang;
@@ -125,9 +133,8 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
 
             // TODO double check, I think the PSF path can change for every Tor
             // Browser connection, so we have to parse the PSF here on every connection.
-            let mut parser = ProteusParser::new();
-            // TODO replace with path to PSF, which will be in the options.
-            let spec = parser.parse(" ", Role::Client).unwrap();
+            let filepath = options.get("psf").unwrap();
+            let client_spec = ProteusParser::parse(filepath, Role::Client).unwrap();
 
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
@@ -135,7 +142,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             );
 
             // match null::run_null_client(rvs_conn, pt_conn).await {
-            match proteus::run_proteus(pt_conn, rvs_conn, options, spec).await {
+            match proteus::run_proteus(pt_conn, rvs_conn, options, client_spec).await {
                 Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
                     "Stream from peer {} failed during Proteus protocol: {}",
@@ -173,16 +180,24 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
         }
     };
 
+    let filepath = server_conf.options.get("psf").unwrap();
+    let server_spec = ProteusParser::parse(filepath, Role::Server).unwrap();
+
     // Main loop waiting for connections from proteus proxy clients.
     loop {
         let (pt_stream, _) = listener.accept().await?;
         let conf = server_conf.clone();
+        let spec = server_spec.clone();
         // A failure in a connection does not stop the server.
-        tokio::spawn(async move { handle_server_connection(pt_stream, conf).await });
+        tokio::spawn(async move { handle_server_connection(pt_stream, conf, spec).await });
     }
 }
 
-async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> io::Result<()> {
+async fn handle_server_connection(
+    pt_stream: TcpStream,
+    conf: ServerConfig,
+    spec: ProteusSpec,
+) -> io::Result<()> {
     let pt_addr = pt_stream.peer_addr()?;
     log::debug!("Accepted new stream from pt client {}", pt_addr);
 
@@ -210,11 +225,6 @@ async fn handle_server_connection(pt_stream: TcpStream, conf: ServerConfig) -> i
             // or::run_extor_client(fwd_conn).await
         }
     }
-
-    // TODO: Only load the supported PSF once for all proteus clients.
-    let mut parser = ProteusParser::new();
-    // TODO replace with path to PSF, which will be in the options
-    let spec = parser.parse(" ", Role::Server).unwrap();
 
     log::debug!(
         "Running Proteus server protocol to forward data between {} and {}",

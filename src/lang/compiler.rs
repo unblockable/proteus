@@ -22,6 +22,7 @@ use crate::lang::types::*;
 */
 type Graph = petgraph::graph::Graph<(), (Role, Identifier), Directed, usize>;
 
+#[derive(Clone)]
 pub struct TaskGraphImpl {
     graph: Graph,
     my_role: Role,

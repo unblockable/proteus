@@ -526,7 +526,10 @@ impl TryFrom<AbstractFormat> for ConcreteFormat {
 
     fn try_from(value: AbstractFormat) -> Result<Self, Self::Error> {
         match value.maybe_size_of() {
-            Some(_) => Ok(ConcreteFormat { format: value.format, fixed_fields: value.fixed_fields }),
+            Some(_) => Ok(ConcreteFormat {
+                format: value.format,
+                fixed_fields: value.fixed_fields,
+            }),
             None => Err(Self::Error {}),
         }
     }
@@ -537,7 +540,10 @@ impl TryFrom<Format> for ConcreteFormat {
 
     fn try_from(value: Format) -> Result<Self, Self::Error> {
         match value.maybe_size_of() {
-            Some(_) => Ok(ConcreteFormat { format: value, fixed_fields: vec![] }),
+            Some(_) => Ok(ConcreteFormat {
+                format: value,
+                fixed_fields: vec![],
+            }),
             None => Err(Self::Error {}),
         }
     }

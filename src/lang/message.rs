@@ -25,10 +25,13 @@ pub struct Message {
 impl Message {
     /// A message is constructed from a format with a concrete size.
     pub fn new(format: ConcreteFormat) -> Option<Self> {
-        let mut msg = format.maybe_size_of().map(|size| Message {
-            format: format.clone(),
-            data: BytesMut::zeroed(size),
-        }).unwrap();
+        let mut msg = format
+            .maybe_size_of()
+            .map(|size| Message {
+                format: format.clone(),
+                data: BytesMut::zeroed(size),
+            })
+            .unwrap();
 
         for (field_name, field_value) in &format.fixed_fields {
             if let Some(mut bytes) = msg.try_get_field_slice_mut(field_name) {

@@ -39,7 +39,7 @@ Set up ptadapter config, `pta.conf`:
     transport = proteus
     listen = 127.0.0.1:8000
     upstream = 127.0.0.1:7999
-    options-seed = 12345
+    options-psf = /Users/rjansen/Documents/research/upgen/proteus/src/lang/parse/examples/simple.psf
 
     [server]
 
@@ -52,7 +52,7 @@ Set up ptadapter config, `pta.conf`:
 
     transport = proteus
     listen = 127.0.0.1:7999
-    options-seed = 54321
+    options-psf = /Users/rjansen/Documents/research/upgen/proteus/src/lang/parse/examples/simple.psf
 
 Run web server, pt server, and pt client in separate terminals:
 

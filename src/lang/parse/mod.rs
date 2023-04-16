@@ -19,5 +19,5 @@ impl fmt::Display for Error {
 }
 
 pub trait Parse {
-    fn parse(&mut self, psf_filename: &str, role: Role) -> Result<ProteusSpec, parse::Error>;
+    fn parse(psf_filename: &str, role: Role) -> Result<ProteusSpec, parse::Error>;
 }

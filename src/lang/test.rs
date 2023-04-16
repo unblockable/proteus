@@ -1,19 +1,21 @@
-use crate::lang::{
-    common::Role,
-    interpreter::{Interpreter, NetOpIn, NetOpOut},
-    spec::test::{basic::LengthPayloadSpec, basic_enc::EncryptedLengthPayloadSpec},
-    task::TaskProvider,
-};
+use std::ops::Range;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use rand::{
     distributions::{Alphanumeric, DistString},
     Rng,
 };
 
-use std::ops::Range;
-
-use crate::lang::spec::proteus::*;
-
+use crate::lang::{
+    common::Role,
+    interpreter::{Interpreter, NetOpIn, NetOpOut},
+    spec::test::{basic::LengthPayloadSpec, basic_enc::EncryptedLengthPayloadSpec},
+    task::TaskProvider,
+    {
+        parse::{proteus::ProteusParser, Parse},
+        spec::proteus::*,
+    },
+};
 struct Network {
     client_to_server: BytesMut,
     server_to_client: BytesMut,
@@ -241,15 +243,6 @@ fn integration_static_basic() {
 }
 
 #[test]
-fn integration_psf_basic() {
-    ProtocolTester::new(
-        Box::new(parse_simple_proteus_spec(Role::Client)),
-        Box::new(parse_simple_proteus_spec(Role::Server)),
-    )
-    .test()
-}
-
-#[test]
 fn integration_static_basic_enc() {
     ProtocolTester::new(
         Box::new(EncryptedLengthPayloadSpec::new(Role::Client)),
@@ -258,20 +251,25 @@ fn integration_static_basic_enc() {
     .test()
 }
 
-#[test]
-fn integration_psf_basic_enc() {
+fn integration_with_psf(psf_filepath: &str) {
     ProtocolTester::new(
-        Box::new(parse_encrypted_proteus_spec(Role::Client)),
-        Box::new(parse_encrypted_proteus_spec(Role::Server)),
+        Box::new(ProteusParser::parse(&psf_filepath, Role::Client).unwrap()),
+        Box::new(ProteusParser::parse(&psf_filepath, Role::Server).unwrap()),
     )
     .test()
 }
 
 #[test]
+fn integration_psf_basic() {
+    integration_with_psf(&"src/lang/parse/examples/simple.psf");
+}
+
+#[test]
+fn integration_psf_basic_enc() {
+    integration_with_psf(&"src/lang/parse/examples/shadowsocks.psf");
+}
+
+#[test]
 fn integration_psf_padded_enc() {
-    ProtocolTester::new(
-        Box::new(parse_encrypted_padded_proteus_spec(Role::Client)),
-        Box::new(parse_encrypted_padded_proteus_spec(Role::Server)),
-    )
-    .test()
+    integration_with_psf(&"src/lang/parse/examples/shadowsocks_padded.psf");
 }
