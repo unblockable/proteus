@@ -85,6 +85,7 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
     // We run our socks5 forward proxy here; let the OS choose the port.
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => {
+            // Tell our parent the address info so it knows where to connect.
             control::send_to_parent(control::Message::ClientReady(listener.local_addr()?));
             listener
         }
@@ -95,6 +96,11 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
             return Err(e);
         }
     };
+
+    log::info!(
+        "Proteus client listening for SOCKS5 app connections on {:?}.",
+        listener.local_addr()?
+    );
 
     // Main loop waiting for connections from reverse socks5 clients.
     loop {
@@ -183,6 +189,11 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
     let filepath = server_conf.options.get("psf").unwrap();
     let server_spec = ProteusParser::parse(filepath, Role::Server).unwrap();
 
+    log::info!(
+        "Proteus server listening for Proteus client connections on {:?}.",
+        listener.local_addr()?
+    );
+
     // Main loop waiting for connections from proteus proxy clients.
     loop {
         let (pt_stream, _) = listener.accept().await?;
@@ -199,7 +210,7 @@ async fn handle_server_connection(
     spec: ProteusSpec,
 ) -> io::Result<()> {
     let pt_addr = pt_stream.peer_addr()?;
-    log::debug!("Accepted new stream from pt client {}", pt_addr);
+    log::debug!("Accepted new stream from Proteus client {}", pt_addr);
 
     let fwd_stream = tokio::net::TcpStream::connect(conf.forward_addr).await?;
     let fwd_addr = fwd_stream.peer_addr()?;
