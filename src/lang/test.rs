@@ -258,15 +258,15 @@ fn integration_with_psf(psf_filepath: &str) {
 
 #[test]
 fn integration_psf_basic() {
-    integration_with_psf(&"src/lang/parse/examples/simple.psf");
+    integration_with_psf(&"examples/psf/simple.psf");
 }
 
 #[test]
 fn integration_psf_basic_enc() {
-    integration_with_psf(&"src/lang/parse/examples/shadowsocks.psf");
+    integration_with_psf(&"examples/psf/shadowsocks.psf");
 }
 
 #[test]
 fn integration_psf_padded_enc() {
-    integration_with_psf(&"src/lang/parse/examples/shadowsocks_padded.psf");
+    integration_with_psf(&"examples/psf/shadowsocks_padded.psf");
 }

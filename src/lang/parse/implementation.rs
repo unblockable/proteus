@@ -776,7 +776,7 @@ pub mod tests {
     }
 
     pub fn parse_example_psf() -> PSF {
-        let filepath = "src/lang/parse/examples/example.psf";
+        let filepath = "examples/psf/example.psf";
         let input = fs::read_to_string(filepath).expect("cannot read example file");
         parse_psf(&input)
     }
@@ -787,7 +787,7 @@ pub mod tests {
     }
 
     pub fn parse_shadowsocks_psf() -> PSF {
-        let filepath = "src/lang/parse/examples/shadowsocks.psf";
+        let filepath = "examples/psf/shadowsocks.psf";
         let input = fs::read_to_string(filepath).expect("cannot read shadowsocks file");
         parse_psf(&input)
     }

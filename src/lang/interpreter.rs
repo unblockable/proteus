@@ -482,7 +482,7 @@ mod tests {
         vec![
             Box::new(LengthPayloadSpec::new(Role::Client)),
             Box::new(
-                ProteusParser::parse(&"src/lang/parse/examples/simple.psf", Role::Client).unwrap(),
+                ProteusParser::parse(&"examples/psf/simple.psf", Role::Client).unwrap(),
             ),
         ]
     }
