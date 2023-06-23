@@ -794,6 +794,6 @@ pub mod tests {
 
     #[test]
     fn test_parse_shadowsocks_psf() {
-        let psf = parse_shadowsocks_psf();
+        parse_shadowsocks_psf();
     }
 }

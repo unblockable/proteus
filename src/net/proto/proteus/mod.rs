@@ -51,11 +51,3 @@ pub async fn run_proteus(
         RunResult::Error(e) => Err(e.finish()),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test() {}
-}

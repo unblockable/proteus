@@ -344,7 +344,7 @@ fn compile_message_to_instrs(
             let maybe_hints_encryption = generate_encryption_hints(&format, crypto_spec);
 
             if let Some(ref hints_encryption) = maybe_hints_encryption {
-                if (hints_encryption.starting_format != format.name) {
+                if hints_encryption.starting_format != format.name {
                     unimplemented!();
                 }
 
@@ -471,7 +471,7 @@ fn compile_message_to_instrs(
                 let maybe_hints_encryption = generate_encryption_hints(&format, crypto_spec);
 
                 if let Some(ref hints_encryption) = maybe_hints_encryption {
-                    if (hints_encryption.starting_format != format.name) {
+                    if hints_encryption.starting_format != format.name {
                         unimplemented!();
                     }
 
@@ -513,7 +513,7 @@ fn compile_message_to_instrs(
         if has_suffix {
             // Figure out how much stuff is the the fixed-sized tail on the suffix,
             // which is covered by the length field.
-            let (suffix_dynamic_head, suffix_fixed_tail) =
+            let (_suffix_dynamic_head, suffix_fixed_tail) =
                 suffix.split_into_dynamic_prefix_and_fixed_suffix();
 
             let fixed_tail_size = suffix_fixed_tail.fixed_fields_size();
@@ -593,7 +593,7 @@ fn compile_message_to_instrs(
                     let maybe_hints_encryption = generate_encryption_hints(&format, crypto_spec);
 
                     if let Some(ref hints_encryption) = maybe_hints_encryption {
-                        if (hints_encryption.starting_format != format.name) {
+                        if hints_encryption.starting_format != format.name {
                             unimplemented!();
                         }
 

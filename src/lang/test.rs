@@ -9,12 +9,9 @@ use rand::{
 use crate::lang::{
     common::Role,
     interpreter::{Interpreter, NetOpIn, NetOpOut},
+    parse::{proteus::ProteusParser, Parse},
     spec::test::{basic::LengthPayloadSpec, basic_enc::EncryptedLengthPayloadSpec},
     task::TaskProvider,
-    {
-        parse::{proteus::ProteusParser, Parse},
-        spec::proteus::*,
-    },
 };
 struct Network {
     client_to_server: BytesMut,

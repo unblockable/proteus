@@ -273,10 +273,8 @@ pub struct DynamicArray(pub UnaryOp);
 impl DynamicArray {
     // Tries to ge tthe length field assoc. with this dynamic array.
     pub fn try_get_length_field(&self) -> Option<Identifier> {
-        if let UnaryOp::SizeOf(id) = &self.0 {
-            Some(id.clone())
-        } else {
-            None
+        match &self.0 {
+            UnaryOp::SizeOf(id) => Some(id.clone()),
         }
     }
 }
