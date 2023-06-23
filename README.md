@@ -16,7 +16,19 @@ Run proteus while logging to stderr:
 
     RUST_LOG={error,warn,info,debug,trace} cargo run
 
-# Integration Testing
+# Shadow Integration Testing
+
+If you have `shadow` and `tgen` installed and in your PATH, run the integration tests:
+
+    cargo test -- --ignored
+
+To run the shadow tests along with the unit tests:
+
+    cargo test -- --test-threads=1 --include-ignored
+
+You can inspect shadow test output in `target/test/shadow/..`
+
+# Manual Testing
 
 Use ptadapter to wrap proteus over localhost.
 

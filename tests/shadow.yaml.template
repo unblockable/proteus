@@ -1,0 +1,74 @@
+general:
+  stop_time: 5 min
+network:
+  graph:
+    type: gml
+    inline: |
+      graph [
+        directed 0
+        node [
+          id 0
+          host_bandwidth_down "1 Gbit"
+          host_bandwidth_up "1 Gbit"
+        ]
+        edge [
+          source 0
+          target 0
+          latency "50 ms"
+          jitter "0 ms"
+          packet_loss 0.0
+        ]
+      ]
+hosts:
+  server:
+    network_node_id: 0
+    ip_addr: 100.0.0.1
+    processes:
+    - path: tgen
+      environment: { OPENBLAS_NUM_THREADS: "1" }
+      args: ${TGENSERVERCONF}
+      start_time: 1
+      expected_final_state: running
+    - path: ${PROTEUSBINPATH}
+      environment: { TOR_PT_MANAGED_TRANSPORT_VER: "1",
+                     TOR_PT_STATE_LOCATION: "/tmp/proteus_server", 
+                     TOR_PT_SERVER_TRANSPORTS: "proteus",
+                     TOR_PT_SERVER_TRANSPORT_OPTIONS: "proteus:psf=${PSFPATH}",
+                     TOR_PT_SERVER_BINDADDR: "proteus-100.0.0.1:1080",
+                     TOR_PT_ORPORT: "127.0.0.1:80",
+                     RUST_BACKTRACE: "1" }
+      start_time: 60
+      expected_final_state: running
+  client:
+    network_node_id: 0
+    ip_addr: 100.0.0.2
+    processes:
+    - path: ${PROTEUSBINPATH}
+      environment: { TOR_PT_MANAGED_TRANSPORT_VER: "1",
+                     TOR_PT_STATE_LOCATION: "/tmp/proteus_client",
+                     TOR_PT_CLIENT_TRANSPORTS: "proteus", 
+                     RUST_BACKTRACE: "1" }
+      start_time: 60
+      expected_final_state: running
+    # The socks5 listen port is written to stdout by the proteus client.
+    # Here we copy the chosen port into the tgen client config before tgen starts.
+    - path: python3
+      args: |
+        -c "def getport():
+          with open('proteus.1000.stdout', 'r') as fin:
+            for line in fin:
+              if line.startswith('CMETHOD proteus socks5 127.0.0.1:'):
+                return line.strip().split(' ')[3].split(':')[1]
+          return '0'
+        with open('../../../tgen.client.graphml.xml.template','r') as fin:
+          data = fin.read().replace('${SOCKS5LISTENPORT}', getport())
+        with open('tgen.client.graphml.xml','w') as fout:
+          fout.write(data)"
+      environment: { PYTHONUNBUFFERED: "1" }
+      start_time: 61
+      expected_final_state: {exited: 0}
+    - path: tgen
+      environment: { OPENBLAS_NUM_THREADS: "1" }
+      args: tgen.client.graphml.xml
+      start_time: 120
+      expected_final_state: {exited: 0}
