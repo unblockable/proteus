@@ -18,7 +18,9 @@ Run proteus while logging to stderr:
 
 # Shadow Integration Testing
 
-If you have `shadow` and `tgen` installed and in your PATH, run the integration tests:
+If you have `shadow`, `tgen`, and `python3` installed and in your PATH, then
+cargo will build shadow integration tests. Shadow tests are ignored by default,
+but can be run with:
 
     cargo test -- --ignored
 

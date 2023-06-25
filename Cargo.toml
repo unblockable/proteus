@@ -22,3 +22,6 @@ x25519-dalek = "1" # ephemeral key exchange
 rand = "0.8.5" # randomness for local keygen
 salsa20 = "0.10.2" # CPRNG for Nonce generation
 chacha20poly1305 = "0.9.0" # AEAD cipher
+
+[build-dependencies]
+which = "4.4.0"
