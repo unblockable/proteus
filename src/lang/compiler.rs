@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_compile_task_graph() {
-        let psf = parse_example_psf();
+        let psf = parse_example_psf().unwrap();
         let graph = compile_task_graph(psf.sequence.iter());
 
         let tg = TaskGraphImpl {
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn test_compile_shadow_socks() {
-        let psf = parse_shadowsocks_psf();
+        let psf = parse_shadowsocks_psf().unwrap();
         let graph = compile_task_graph(psf.sequence.iter());
 
         let tg = TaskGraphImpl {
