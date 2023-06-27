@@ -5,21 +5,21 @@ use std::process::{Command, Stdio};
 
 
 #[test]
-#[ignore = integration::IGNORE_MSG]
+#[ignore]
 #[cfg(all(target_os = "linux", have_shadow,have_tgen,have_python3))]
 fn simple() {
     run_test(&"simple", &"examples/psf/simple.psf");
 }
 
 #[test]
-#[ignore = integration::IGNORE_MSG]
+#[ignore]
 #[cfg(all(target_os = "linux", have_shadow,have_tgen,have_python3))]
 fn shadowsocks() {
     run_test(&"shadowsocks", &"examples/psf/shadowsocks.psf");
 }
 
 #[test]
-#[ignore = integration::IGNORE_MSG]
+#[ignore]
 #[cfg(all(target_os = "linux", have_shadow,have_tgen,have_python3))]
 fn shadowsocks_padded() {
     run_test(
