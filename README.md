@@ -28,7 +28,7 @@ To run the shadow tests along with the unit tests:
 
     cargo test -- --test-threads=1 --include-ignored
 
-You can inspect shadow test output in `target/test/shadow/..`
+You can inspect integration test output in `target/tests/...`
 
 # Manual Testing
 
