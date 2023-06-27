@@ -3,24 +3,23 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-
 #[test]
 #[ignore]
-#[cfg(all(target_os = "linux", have_shadow,have_tgen,have_python3))]
+#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
 fn simple() {
     run_test(&"simple", &"examples/psf/simple.psf");
 }
 
 #[test]
 #[ignore]
-#[cfg(all(target_os = "linux", have_shadow,have_tgen,have_python3))]
+#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
 fn shadowsocks() {
     run_test(&"shadowsocks", &"examples/psf/shadowsocks.psf");
 }
 
 #[test]
 #[ignore]
-#[cfg(all(target_os = "linux", have_shadow,have_tgen,have_python3))]
+#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
 fn shadowsocks_padded() {
     run_test(
         &"shadowsocks_padded",
@@ -52,7 +51,7 @@ fn run_test(test_name: &str, psf_filepath: &str) {
 
 fn initialize_test_directory(test_name: &str, psf_filepath: &str) -> PathBuf {
     let test_dir_in = PathBuf::from("tests/linux/shadow/tgen");
-    let test_dir_out = PathBuf::from(format!("target/linux/shadow/tgen/{test_name}"));
+    let test_dir_out = PathBuf::from(format!("target/{}/{test_name}", test_dir_in.display()));
 
     let bin_path = fs::canonicalize("target/debug/proteus").expect("Canonicalize path");
 
