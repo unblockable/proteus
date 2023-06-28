@@ -4,7 +4,7 @@ fn main() {
     // Some of our integration tests require external binaries. If we can't find
     // them in our path, then those tests will be excluded from the build and
     // will not be run during `cargo test`.
-    let integration_test_bin_deps = vec!["python3", "shadow", "tgen"];
+    let integration_test_bin_deps = vec!["python3", "shadow", "tgen", "tor"];
 
     let missing = integration_test_bin_deps
         .iter()

@@ -1,0 +1,8 @@
+ORPort 0
+DirPort 0
+ClientOnly 1
+SocksPort 127.0.0.1:9000
+
+ClientTransportPlugin proteus socks5 127.0.0.1:${SOCKS5LISTENPORT}
+UseBridges 1
+Bridge proteus 100.0.0.1:443 psf=${PSFPATH}
