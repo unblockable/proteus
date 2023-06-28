@@ -63,7 +63,7 @@ fn initialize_test_directory(test_name: &str, psf_filepath: &str) -> PathBuf {
 
     // The tgen server conf does not change, so just use the one from test_dir_in.
     let tgen_server_conf =
-        fs::canonicalize(format!("{}/tgen.server.graphml.xml", test_dir_in.display()))
+        fs::canonicalize(format!("{}/tgen-server.graphml.xml", test_dir_in.display()))
             .expect("Canonicalize path");
 
     // We need to write the PSF path into the config files.
@@ -72,7 +72,7 @@ fn initialize_test_directory(test_name: &str, psf_filepath: &str) -> PathBuf {
     // Copy the tgen client config. We keep the template suffix because we only
     // partially instantiate it here and the rest happens during the sim.
     {
-        let conf = "tgen.client.graphml.xml.template";
+        let conf = "tgen-client.graphml.xml.template";
         let in_path = PathBuf::from(format!("{}/{conf}", test_dir_in.display()));
         let out_path = PathBuf::from(format!("{}/{conf}", test_dir_out.display()));
         let replacements = vec![("${PSFPATH}", psf_conf.to_str().unwrap())];

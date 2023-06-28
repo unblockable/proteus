@@ -60,15 +60,15 @@ hosts:
               if line.startswith('CMETHOD proteus socks5 127.0.0.1:'):
                 return line.strip().split(' ')[3].split(':')[1]
           return '0'
-        with open('../../../tgen.client.graphml.xml.template','r') as fin:
+        with open('../../../tgen-client.graphml.xml.template','r') as fin:
           data = fin.read().replace('${SOCKS5LISTENPORT}', getport())
-        with open('tgen.client.graphml.xml','w') as fout:
+        with open('tgen-client.graphml.xml','w') as fout:
           fout.write(data)"
       environment: { PYTHONUNBUFFERED: "1" }
       start_time: 61
       expected_final_state: {exited: 0}
     - path: tgen
       environment: { OPENBLAS_NUM_THREADS: "1" }
-      args: tgen.client.graphml.xml
+      args: tgen-client.graphml.xml
       start_time: 120
       expected_final_state: {exited: 0}
