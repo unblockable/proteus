@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
 
 #[cfg(all(target_os = "linux", have_shadow, have_tgen))]
@@ -50,18 +50,4 @@ fn count_tgen_stream_successes(tgen_log_file: PathBuf) -> u64 {
         }
     }
     count
-}
-
-fn copy_recursively(source: impl AsRef<Path>, destination: impl AsRef<Path>) -> io::Result<()> {
-    fs::create_dir_all(&destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let filetype = entry.file_type()?;
-        if filetype.is_dir() {
-            copy_recursively(entry.path(), destination.as_ref().join(entry.file_name()))?;
-        } else {
-            fs::copy(entry.path(), destination.as_ref().join(entry.file_name()))?;
-        }
-    }
-    Ok(())
 }
