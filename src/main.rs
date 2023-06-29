@@ -148,7 +148,6 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                 rvs_addr,
             );
 
-            // match null::run_null_client(rvs_conn, pt_conn).await {
             match proteus::run_proteus(pt_conn, rvs_conn, options, client_spec).await {
                 Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
@@ -245,7 +244,6 @@ async fn handle_server_connection(
         fwd_addr
     );
 
-    // match crate::net::proto::null::run_null_server(pt_conn, fwd_conn).await {
     match proteus::run_proteus(pt_conn, fwd_conn, conf.options, spec).await {
         Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
         Err(e) => log::debug!(
