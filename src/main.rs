@@ -101,6 +101,7 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
         "Proteus client listening for SOCKS5 app connections on {:?}.",
         listener.local_addr()?
     );
+    control::send_status("BOOTSTRAPPED=Success");
 
     // Main loop waiting for connections from reverse socks5 clients.
     loop {
@@ -193,6 +194,7 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
         "Proteus server listening for Proteus client connections on {:?}.",
         listener.local_addr()?
     );
+    control::send_status("BOOTSTRAPPED=Success");
 
     // Main loop waiting for connections from proteus proxy clients.
     loop {

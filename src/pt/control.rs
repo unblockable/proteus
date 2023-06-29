@@ -6,7 +6,7 @@ pub enum Message<'a> {
     Version,
     VersionError,
     EnvError(&'a str),
-    ProxyDone,
+    _ProxyDone, // Connecting through upstream proxy unimplemented
     ProxyError(&'a str),
     ClientReady(SocketAddr),
     ClientError(&'a str),
@@ -25,7 +25,7 @@ pub fn send_to_parent(msg: Message) {
         Message::Version => println!("VERSION 1"),
         Message::VersionError => println!("VERSION-ERROR no-version"),
         Message::EnvError(s) => println!("ENV-ERROR {}", s),
-        Message::ProxyDone => println!("PROXY DONE"),
+        Message::_ProxyDone => println!("PROXY DONE"),
         Message::ProxyError(s) => println!("PROXY-ERROR {}", s),
         Message::ClientReady(a) => println!("CMETHOD proteus socks5 {}\nCMETHODS DONE", a),
         Message::ClientError(s) => println!("CMETHOD-ERROR proteus {}\nCMETHODS DONE", s),
@@ -48,6 +48,10 @@ pub fn send_to_parent(msg: Message) {
             }
         },
     }
+}
+
+pub fn send_status(msg: &str) {
+    send_to_parent(Message::Status(msg));
 }
 
 static LOGGER: Logger = Logger;
