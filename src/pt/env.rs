@@ -112,11 +112,11 @@ impl From<ParseIntError> for ParseEnvError {
 }
 
 pub fn log_env_vars() {
-    for (k, v) in env::vars() {
-        log::debug!("env: key={} value={}", k, v);
+    for (k, v) in env::vars_os() {
+        log::debug!("env: key={k:?} value={v:?}");
     }
-    for a in env::args() {
-        log::debug!("arg: value={}", a);
+    for a in env::args_os() {
+        log::debug!("arg: value={a:?}");
     }
 }
 
