@@ -13,7 +13,7 @@ pub mod proto;
 pub enum Error {
     Eof,
     IoError(std::io::Error),
-    Reunite,
+    _Reunite,
 }
 
 impl fmt::Display for Error {
@@ -21,7 +21,7 @@ impl fmt::Display for Error {
         match self {
             Error::Eof => write!(f, "Reached EOF during network I/O operation"),
             Error::IoError(e) => write!(f, "I/O error during network operation: {}", e),
-            Error::Reunite => write!(f, "Error reuniting read and write stream halves"),
+            Error::_Reunite => write!(f, "Error reuniting read and write stream halves"),
         }
     }
 }
@@ -61,10 +61,10 @@ impl Connection {
     }
 
     /// Reconstructs the TCP Stream, returning any unhandled bytes in our read buffer.
-    fn into_stream(mut self) -> Result<(TcpStream, Bytes), net::Error> {
+    fn _into_stream(mut self) -> Result<(TcpStream, Bytes), net::Error> {
         match self.source.read_half.reunite(self.sink.write_half) {
             Ok(s) => Ok((s, self.source.buffer.split().freeze())),
-            Err(_) => Err(net::Error::Reunite),
+            Err(_) => Err(net::Error::_Reunite),
         }
     }
 

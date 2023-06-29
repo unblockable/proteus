@@ -16,7 +16,6 @@ mod states;
 
 #[derive(Debug)]
 pub enum Error {
-    Option(String),
     Protocol(String),
     Network(net::Error),
 }
@@ -30,7 +29,6 @@ impl From<net::Error> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Option(s) => write!(f, "Option failed: {}", s),
             Error::Protocol(s) => write!(f, "Protocol failed: {}", s),
             Error::Network(e) => write!(f, "Network error: {}", e),
         }
@@ -40,7 +38,7 @@ impl fmt::Display for Error {
 pub async fn run_proteus(
     proteus_conn: Connection,
     other_conn: Connection,
-    options: HashMap<String, String>,
+    _options: HashMap<String, String>,
     spec: ProteusSpec,
 ) -> Result<(), proteus::Error> {
     match ProteusProtocol::new(other_conn, proteus_conn, spec)
