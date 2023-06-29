@@ -86,11 +86,11 @@ impl Connection {
         self.sink.write_frame(serializer, frame).await
     }
 
-    async fn read_bytes(&mut self) -> Result<Bytes, net::Error> {
-        self.source.read_bytes().await
+    async fn _read_bytes(&mut self) -> Result<Bytes, net::Error> {
+        self.source._read_bytes().await
     }
 
-    async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
+    async fn _write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
         self.sink.write_bytes(bytes).await
     }
 }
@@ -132,7 +132,7 @@ impl NetSource {
         }
     }
 
-    async fn read_bytes(&mut self) -> Result<Bytes, net::Error> {
+    async fn _read_bytes(&mut self) -> Result<Bytes, net::Error> {
         self.read_inner().await?;
         Ok(self.buffer.split().freeze())
     }
