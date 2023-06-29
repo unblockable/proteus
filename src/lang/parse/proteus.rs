@@ -3,7 +3,7 @@ use std::fs;
 use crate::lang::{
     common::Role,
     compiler::TaskGraphImpl,
-    parse::{self, Parse},
+    parse::Parse,
     spec::proteus::ProteusSpec,
 };
 

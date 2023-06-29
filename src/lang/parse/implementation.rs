@@ -807,7 +807,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_psf() {
-        parse_example_psf();
+        assert!(parse_example_psf().is_ok());
     }
 
     pub fn parse_shadowsocks_psf() -> Result<PSF> {
@@ -818,6 +818,6 @@ pub mod tests {
 
     #[test]
     fn test_parse_shadowsocks_psf() {
-        parse_shadowsocks_psf();
+        assert!(parse_shadowsocks_psf().is_ok());
     }
 }

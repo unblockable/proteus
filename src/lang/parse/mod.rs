@@ -1,6 +1,4 @@
-use std::fmt;
-
-use crate::lang::{common::Role, parse, spec::proteus::ProteusSpec};
+use crate::lang::{common::Role, spec::proteus::ProteusSpec};
 use anyhow::Result;
 
 pub mod implementation;
