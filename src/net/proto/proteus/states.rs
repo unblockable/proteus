@@ -111,7 +111,7 @@ async fn obfuscate(
                 total_num_written += num_written;
                 log::trace!("obfuscate: wrote {} net bytes", num_written);
             }
-            NetOpOut::Close => {
+            NetOpOut::_Close => {
                 break;
             }
             NetOpOut::Error(s) => return Err(proteus::Error::Protocol(s)),
@@ -174,7 +174,7 @@ async fn deobfuscate(
                 total_num_written += num_written;
                 log::trace!("deobfuscate: wrote {} app bytes", num_written);
             }
-            NetOpIn::Close => {
+            NetOpIn::_Close => {
                 break;
             }
             NetOpIn::Error(s) => return Err(proteus::Error::Protocol(s)),

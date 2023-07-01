@@ -58,7 +58,7 @@ pub struct RecvArgs {
 pub enum NetOpOut {
     RecvApp(RecvArgs),
     SendNet(SendArgs),
-    Close,
+    _Close,
     Error(String),
 }
 
@@ -66,7 +66,7 @@ pub enum NetOpOut {
 pub enum NetOpIn {
     RecvNet(RecvArgs),
     SendApp(SendArgs),
-    Close,
+    _Close,
     Error(String),
 }
 

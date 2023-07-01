@@ -123,7 +123,7 @@ impl Host {
                         }
                     },
                     NetOpOut::SendNet(args) => net.send(&self.role, args.bytes),
-                    NetOpOut::Close => todo!(),
+                    NetOpOut::_Close => todo!(),
                     NetOpOut::Error(e) => panic!("NetOpOut error {}", e),
                 };
                 Ok(())
@@ -149,7 +149,7 @@ impl Host {
                         }
                     },
                     NetOpIn::SendApp(args) => self.write_app(args.bytes),
-                    NetOpIn::Close => todo!(),
+                    NetOpIn::_Close => todo!(),
                     NetOpIn::Error(e) => panic!("NetOpIn error {}", e),
                 };
                 Ok(())
