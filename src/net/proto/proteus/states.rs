@@ -34,6 +34,9 @@ impl InitState for ProteusProtocol<Init> {
         let (app_source, app_sink) = self.state.app_conn.into_split();
 
         let mut shared_int1 = SharedAsyncInterpreter::new(self.state.spec);
+        if let Err(e) = shared_int1.init().await {
+            return RunResult::Error(proteus::Error::Protocol(e.to_string()).into());
+        }
         let mut shared_int2 = shared_int1.clone();
 
         match tokio::try_join!(

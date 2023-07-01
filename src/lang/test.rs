@@ -74,7 +74,7 @@ impl Host {
     {
         let mut app_src = BytesMut::new();
         app_src.extend(&msg);
-        Self {
+        let mut h = Self {
             interpreter: Interpreter::new(protospec),
             role,
             app_src_orig: msg,
@@ -82,7 +82,9 @@ impl Host {
             app_dst: BytesMut::new(),
             next_op_out: None,
             next_op_in: None,
-        }
+        };
+        h.interpreter.init().unwrap();
+        h
     }
 
     fn read_app(&mut self, range: &Range<usize>) -> Result<Bytes, ()> {

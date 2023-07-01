@@ -101,7 +101,10 @@ impl Program {
     ) -> Result<(), interpreter::Error> {
         match &self.task.ins[self.next_ins_index] {
             Instruction::ComputeLength(args) => {
-                let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
+                let msg = self
+                    .message_heap
+                    .get(&args.from_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
                 let len = msg.len_suffix(&args.from_field_id);
                 self.number_heap
                     .insert(args.to_heap_id.clone(), len as u128);
@@ -111,11 +114,22 @@ impl Program {
 
                 // Get the fields that have dynamic lengths, and compute what the lengths
                 // will be now that we should have the data for each field on the heap.
-                let concrete_sizes: Vec<(Identifier, usize)> = aformat
+                let concrete_bytes: Vec<(Identifier, Option<&Bytes>)> = aformat
                     .get_dynamic_arrays()
                     .iter()
-                    .map(|id| (id.clone(), self.bytes_heap.get(&id).unwrap().len()))
+                    .map(|id| {
+                        (
+                            id.clone(),
+                            // self.bytes_heap.get(&id).unwrap().len(),
+                            self.bytes_heap.get(&id),
+                        )
+                    })
                     .collect();
+
+                let mut concrete_sizes: Vec<(Identifier, usize)> = vec![];
+                for (id, bytes_opt) in concrete_bytes {
+                    concrete_sizes.push((id, bytes_opt.ok_or(Error::ExecuteFailed)?.len()))
+                }
 
                 // Now that we know the total size, we can allocate the full format block.
                 let cformat = aformat.concretize(&concrete_sizes);
@@ -125,8 +139,11 @@ impl Program {
             }
             Instruction::CreateMessage(args) => {
                 // Create a message with an existing concrete format.
-                let cformat = self.format_heap.remove(&args.from_format_heap_id).unwrap();
-                let msg = Message::new(cformat).unwrap();
+                let cformat = self
+                    .format_heap
+                    .remove(&args.from_format_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
+                let msg = Message::new(cformat).ok_or(Error::ExecuteFailed)?;
 
                 // Store the message for use in later instructions.
                 self.message_heap.insert(args.to_heap_id.clone(), msg);
@@ -135,10 +152,16 @@ impl Program {
                 match interpreter.cipher.as_mut() {
                     Some(cipher) => {
                         // TODO way too much copying here :(
-                        let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
-                        let ciphertext =
-                            msg.get_field_bytes(&args.from_ciphertext_field_id).unwrap();
-                        let mac = msg.get_field_bytes(&args.from_mac_field_id).unwrap();
+                        let msg = self
+                            .message_heap
+                            .get(&args.from_msg_heap_id)
+                            .ok_or(Error::ExecuteFailed)?;
+                        let ciphertext = msg
+                            .get_field_bytes(&args.from_ciphertext_field_id)
+                            .map_err(|_| Error::ExecuteFailed)?;
+                        let mac = msg
+                            .get_field_bytes(&args.from_mac_field_id)
+                            .map_err(|_| Error::ExecuteFailed)?;
 
                         let mut mac_fixed = [0u8; 16];
                         mac_fixed.copy_from_slice(&mac);
@@ -155,8 +178,13 @@ impl Program {
             }
             Instruction::EncryptField(args) => match interpreter.cipher.as_mut() {
                 Some(cipher) => {
-                    let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
-                    let plaintext = msg.get_field_bytes(&args.from_field_id).unwrap();
+                    let msg = self
+                        .message_heap
+                        .get(&args.from_msg_heap_id)
+                        .ok_or(Error::ExecuteFailed)?;
+                    let plaintext = msg
+                        .get_field_bytes(&args.from_field_id)
+                        .map_err(|_| Error::ExecuteFailed)?;
 
                     let (ciphertext, mac) = cipher.encrypt(&plaintext);
 
@@ -173,16 +201,26 @@ impl Program {
                 None => panic!("No cipher for encryption"),
             },
             Instruction::GenRandomBytes(_args) => {
-                todo!()
+                unimplemented!()
             }
             Instruction::GetArrayBytes(args) => {
-                let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
-                let bytes = msg.get_field_bytes(&args.from_field_id).unwrap();
+                let msg = self
+                    .message_heap
+                    .get(&args.from_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
+                let bytes = msg
+                    .get_field_bytes(&args.from_field_id)
+                    .map_err(|_| Error::ExecuteFailed)?;
                 self.bytes_heap.insert(args.to_heap_id.clone(), bytes);
             }
             Instruction::GetNumericValue(args) => {
-                let msg = self.message_heap.get(&args.from_msg_heap_id).unwrap();
-                let num = msg.get_field_unsigned_numeric(&args.from_field_id).unwrap();
+                let msg = self
+                    .message_heap
+                    .get(&args.from_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
+                let num = msg
+                    .get_field_unsigned_numeric(&args.from_field_id)
+                    .map_err(|_| Error::ExecuteFailed)?;
                 self.number_heap.insert(args.to_heap_id.clone(), num);
             }
             Instruction::InitFixedSharedKey(args) => {
@@ -205,7 +243,7 @@ impl Program {
             Instruction::ReadNet(args) => {
                 let len = match &args.from_len {
                     ReadNetLength::Identifier(id) => {
-                        let num = self.number_heap.get(&id).unwrap();
+                        let num = self.number_heap.get(&id).ok_or(Error::ExecuteFailed)?;
                         let val = *num as usize;
                         Range {
                             start: val,
@@ -213,7 +251,7 @@ impl Program {
                         }
                     }
                     ReadNetLength::IdentifierMinus((id, sub)) => {
-                        let num = self.number_heap.get(&id).unwrap();
+                        let num = self.number_heap.get(&id).ok_or(Error::ExecuteFailed)?;
                         let val = (*num as usize) - sub;
                         Range {
                             start: val,
@@ -230,27 +268,49 @@ impl Program {
                 interpreter.next_netop_in = Some(netop);
             }
             Instruction::SetArrayBytes(args) => {
-                let bytes = self.bytes_heap.get(&args.from_heap_id).unwrap();
-                let mut msg = self.message_heap.remove(&args.to_msg_heap_id).unwrap();
-                msg.set_field_bytes(&args.to_field_id, &bytes).unwrap();
+                let bytes = self
+                    .bytes_heap
+                    .get(&args.from_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
+                let mut msg = self
+                    .message_heap
+                    .remove(&args.to_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
+                msg.set_field_bytes(&args.to_field_id, &bytes)
+                    .map_err(|_| Error::ExecuteFailed)?;
                 self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
             Instruction::SetNumericValue(args) => {
-                let val = self.number_heap.get(&args.from_heap_id).unwrap().clone();
-                let mut msg = self.message_heap.remove(&args.to_msg_heap_id).unwrap();
+                let val = self
+                    .number_heap
+                    .get(&args.from_heap_id)
+                    .ok_or(Error::ExecuteFailed)?
+                    .clone();
+                let mut msg = self
+                    .message_heap
+                    .remove(&args.to_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
                 msg.set_field_unsigned_numeric(&args.to_field_id, val)
-                    .unwrap();
+                    .map_err(|_| Error::ExecuteFailed)?;
                 self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
             Instruction::WriteApp(args) => {
-                let msg = self.message_heap.remove(&args.from_msg_heap_id).unwrap();
+                let msg = self
+                    .message_heap
+                    .remove(&args.from_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
                 let netop = NetOpIn::SendApp(SendArgs {
-                    bytes: msg.into_inner_field(&args.from_field_id).unwrap(),
+                    bytes: msg
+                        .into_inner_field(&args.from_field_id)
+                        .ok_or(Error::ExecuteFailed)?,
                 });
                 interpreter.next_netop_in = Some(netop);
             }
             Instruction::WriteNet(args) => {
-                let msg = self.message_heap.remove(&args.from_msg_heap_id).unwrap();
+                let msg = self
+                    .message_heap
+                    .remove(&args.from_msg_heap_id)
+                    .ok_or(Error::ExecuteFailed)?;
                 let netop = NetOpOut::SendNet(SendArgs {
                     bytes: msg.into_inner(),
                 });
@@ -281,7 +341,7 @@ pub struct Interpreter {
 
 impl Interpreter {
     pub fn new(spec: Box<dyn TaskProvider + Send + 'static>) -> Self {
-        let mut int = Self {
+        Self {
             spec,
             cipher: None,
             next_netop_out: None,
@@ -290,14 +350,16 @@ impl Interpreter {
             current_prog_in: None,
             last_task_id: TaskID::default(),
             wants_tasks: true,
-        };
-
-        let mut init_prog = Program::new(int.spec.get_init_task());
-        while init_prog.has_next_instruction() {
-            init_prog.execute_next_instruction(&mut int);
         }
-        int.last_task_id = init_prog.task.id;
-        int
+    }
+
+    pub fn init(&mut self) -> Result<(), interpreter::Error> {
+        let mut init_prog = Program::new(self.spec.get_init_task());
+        while init_prog.has_next_instruction() {
+            init_prog.execute_next_instruction(self)?;
+        }
+        self.last_task_id = init_prog.task.id;
+        Ok(())
     }
 
     /// Loads task from the task provider. Panics if we already have a current
@@ -415,6 +477,19 @@ impl SharedAsyncInterpreter {
         }
     }
 
+    pub async fn init(&mut self) -> Result<(), interpreter::Error> {
+        // Yield to the async runtime if we can't get the lock, or if the
+        // interpreter is not wanting to execute a command yet.
+        std::future::poll_fn(move |_| {
+            let mut inner = match self.inner.try_lock() {
+                Ok(inner) => inner,
+                Err(_) => return Poll::Pending,
+            };
+            Poll::Ready(inner.init())
+        })
+        .await
+    }
+
     pub async fn next_net_cmd_out(&mut self) -> NetOpOut {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
@@ -481,9 +556,7 @@ mod tests {
     fn get_task_providers() -> Vec<Box<dyn TaskProvider + Send + 'static>> {
         vec![
             Box::new(LengthPayloadSpec::new(Role::Client)),
-            Box::new(
-                ProteusParser::parse(&"examples/psf/simple.psf", Role::Client).unwrap(),
-            ),
+            Box::new(ProteusParser::parse(&"examples/psf/simple.psf", Role::Client).unwrap()),
         ]
     }
 
@@ -550,6 +623,7 @@ mod tests {
     fn load_tasks() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             int.load_tasks();
             assert!(int.current_prog_in.is_some() || int.current_prog_out.is_some());
         }
@@ -564,6 +638,7 @@ mod tests {
     fn read_app_write_net_once() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             read_app_write_net_pipeline(&mut int);
         }
     }
@@ -572,6 +647,7 @@ mod tests {
     fn read_app_write_net_many() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             for _ in 0..10 {
                 read_app_write_net_pipeline(&mut int);
             }
@@ -587,6 +663,7 @@ mod tests {
     fn read_net_write_app_once() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             read_net_write_app_pipeline(&mut int);
         }
     }
@@ -595,6 +672,7 @@ mod tests {
     fn read_net_write_app_many() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             for _ in 0..10 {
                 read_net_write_app_pipeline(&mut int);
             }
@@ -605,6 +683,7 @@ mod tests {
     fn interleaved_app_net_app_net() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             for _ in 0..10 {
                 let app_payload = read_app(&mut int);
                 let net_payload = read_net(&mut int);
@@ -618,6 +697,7 @@ mod tests {
     fn interleaved_net_app_net_app() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             for _ in 0..10 {
                 let net_payload = read_net(&mut int);
                 let app_payload = read_app(&mut int);
@@ -631,6 +711,7 @@ mod tests {
     fn interleaved_app_net_net_app() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             for _ in 0..10 {
                 let app_payload = read_app(&mut int);
                 let net_payload = read_net(&mut int);
@@ -644,6 +725,7 @@ mod tests {
     fn interleaved_net_app_app_net() {
         for tp in get_task_providers() {
             let mut int = Interpreter::new(tp);
+            assert!(int.init().is_ok());
             for _ in 0..10 {
                 let net_payload = read_net(&mut int);
                 let app_payload = read_app(&mut int);
