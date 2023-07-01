@@ -8,27 +8,18 @@ Release build (optimized):
 
     cargo build --release
 
-Run tests serially (because we modify environment variables):
+Run unit tests:
 
-    cargo test -- --test-threads=1
+    cargo test
+
+Run integration tests (need [`shadow`, `tgen`, `tor`, `python3`] in $PATH,
+output stored in `target/tests/...`):
+
+    cargo test -- --ignored
 
 Run proteus while logging to stderr:
 
     RUST_LOG={error,warn,info,debug,trace} cargo run
-
-# Shadow Integration Testing
-
-If you have `shadow`, `tgen`, `tor`, and `python3` installed and in your PATH,
-then cargo will build some shadow integration tests. Shadow tests are ignored by
-default, but can be run with:
-
-    cargo test -- --ignored
-
-To run the shadow tests along with the unit tests:
-
-    cargo test -- --test-threads=1 --include-ignored
-
-You can inspect integration test output in `target/tests/...`
 
 # Docs
 
