@@ -339,7 +339,11 @@ pub fn parse_crypto_segment(p: &RulePair) -> Result<CryptoSpec> {
         }
     }
 
-    Ok(CryptoSpec::new(password, cipher.unwrap(), encryption_directives.iter()))
+    Ok(CryptoSpec::new(
+        password,
+        cipher.unwrap(),
+        encryption_directives.iter(),
+    ))
 }
 
 pub fn parse_psf_impl(p: &RulePair) -> Result<PSF> {
