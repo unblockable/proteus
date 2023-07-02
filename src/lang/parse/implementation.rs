@@ -346,7 +346,7 @@ pub fn parse_crypto_segment(p: &RulePair) -> Result<CryptoSpec> {
     ))
 }
 
-pub fn parse_psf_impl(p: &RulePair) -> Result<PSF> {
+pub fn parse_psf_impl(p: &RulePair) -> Result<Psf> {
     assert!(p.as_rule() == Rule::psf);
 
     let mut formats: HashMap<Identifier, AbstractFormatAndSemantics> = Default::default();
@@ -382,18 +382,18 @@ pub fn parse_psf_impl(p: &RulePair) -> Result<PSF> {
         }
     }
 
-    Ok(PSF {
+    Ok(Psf {
         formats,
         sequence,
         crypto_spec,
     })
 }
 
-pub fn parse_psf(psf_contents: &String) -> Result<PSF> {
+pub fn parse_psf(psf_contents: &str) -> Result<Psf> {
     let rule = Rule::psf;
     let mut p = ProteusLiteParser::parse(rule, psf_contents).expect("Unsuccessful parse");
-    let mut pair = p.next().unwrap();
-    let psf = parse_psf_impl(&mut pair)?;
+    let pair = p.next().unwrap();
+    let psf = parse_psf_impl(&pair)?;
     assert!(psf.is_valid());
     Ok(psf)
 }
@@ -803,7 +803,7 @@ pub mod tests {
         );
     }
 
-    pub fn parse_example_psf() -> Result<PSF> {
+    pub fn parse_example_psf() -> Result<Psf> {
         let filepath = "examples/psf/example.psf";
         let input = fs::read_to_string(filepath).expect("cannot read example file");
         parse_psf(&input)
@@ -814,7 +814,7 @@ pub mod tests {
         assert!(parse_example_psf().is_ok());
     }
 
-    pub fn parse_shadowsocks_psf() -> Result<PSF> {
+    pub fn parse_shadowsocks_psf() -> Result<Psf> {
         let filepath = "examples/psf/shadowsocks.psf";
         let input = fs::read_to_string(filepath).expect("cannot read shadowsocks file");
         parse_psf(&input)

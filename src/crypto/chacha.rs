@@ -6,7 +6,7 @@ use salsa20::Salsa20;
 
 const MAC_NBYTES: usize = 16;
 type Payload = Vec<u8>;
-type MAC = [u8; MAC_NBYTES];
+type Mac = [u8; MAC_NBYTES];
 
 pub enum CipherKind {
     Sender,
@@ -53,7 +53,7 @@ impl Cipher {
         buf
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, MAC) {
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
         self.nbytes_encrypted += plaintext.len();
 
         let nonce = Cipher::get_nonce(&mut self.encryption_nonce_gen);
@@ -63,8 +63,7 @@ impl Cipher {
             .encrypt(&nonce.into(), plaintext)
             .expect("encryption failure");
 
-        
-        let mac: MAC = ciphertext
+        let mac: Mac = ciphertext
             .drain(ciphertext.len() - 16..ciphertext.len())
             .collect::<Vec<_>>()
             .try_into()
@@ -74,7 +73,7 @@ impl Cipher {
         (ciphertext, mac)
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &MAC) -> Vec<u8> {
+    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
         let ctext_and_mac: Vec<u8> = ciphertext.iter().chain(mac.iter()).copied().collect();
 
         self.nbytes_decrypted += ciphertext.len();

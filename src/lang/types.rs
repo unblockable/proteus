@@ -709,13 +709,13 @@ impl FromStr for Password {
 }
 
 #[derive(Clone, Debug)]
-pub struct PSF {
+pub struct Psf {
     pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
     pub sequence: Vec<SequenceSpecifier>,
     pub crypto_spec: Option<CryptoSpec>,
 }
 
-impl PSF {
+impl Psf {
     fn validate_seqs(&self) -> bool {
         for s in &self.sequence[..] {
             if !self.formats.contains_key(&s.format) {

@@ -26,14 +26,13 @@ pub enum TaskSet {
     InAndOutTasks(TaskPair),
 }
 
-#[derive(Eq, PartialEq, Clone, Copy, Debug)]
-#[derive(Default)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug, Default)]
 pub struct TaskID {
     id: usize,
 }
 
 impl TaskID {
-    pub fn into_inner(&self) -> usize {
+    pub fn into_inner(self) -> usize {
         self.id
     }
 }
@@ -49,8 +48,6 @@ impl From<usize> for TaskID {
         TaskID { id: value }
     }
 }
-
-
 
 #[derive(Debug)]
 pub struct Task {

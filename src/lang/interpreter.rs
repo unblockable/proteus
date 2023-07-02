@@ -528,7 +528,7 @@ impl SharedAsyncInterpreter {
             Ok(mut inner) => {
                 inner.store_out(addr.clone(), bytes.clone());
                 Poll::Ready(())
-            },
+            }
             Err(_) => Poll::Pending,
         })
         .await
@@ -541,7 +541,7 @@ impl SharedAsyncInterpreter {
             Ok(mut inner) => {
                 inner.store_in(addr.clone(), bytes.clone());
                 Poll::Ready(())
-            },
+            }
             Err(_) => Poll::Pending,
         })
         .await

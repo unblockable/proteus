@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
@@ -36,13 +35,11 @@ async fn main() -> io::Result<()> {
         Ok(c) => c,
         Err(e) => {
             match e {
-                ConfigError::VersionError(_) => {
-                    control::send_to_parent(control::Message::VersionError)
-                }
-                ConfigError::ProxyError(msg) => {
+                ConfigError::Version(_) => control::send_to_parent(control::Message::VersionError),
+                ConfigError::Proxy(msg) => {
                     control::send_to_parent(control::Message::ProxyError(msg.as_str()))
                 }
-                ConfigError::EnvError(msg) => {
+                ConfigError::Env(msg) => {
                     control::send_to_parent(control::Message::EnvError(msg.as_str()))
                 }
             };

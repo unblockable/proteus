@@ -32,6 +32,7 @@ pub mod socks5 {
         pub fmt: Formatter,
     }
     pub trait Init {
+        #[allow(clippy::new_ret_no_self)]
         fn new(conn: Connection) -> Init;
         fn start_server(self) -> ServerHandshake1;
     }

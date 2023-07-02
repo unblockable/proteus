@@ -19,6 +19,7 @@ pub mod proteus {
     }
     #[async_trait]
     pub trait Init {
+        #[allow(clippy::new_ret_no_self)]
         fn new(app_conn: Connection, net_conn: Connection, spec: ProteusSpec) -> Init;
         async fn run(self) -> RunResult;
     }

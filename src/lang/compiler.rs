@@ -26,11 +26,11 @@ type Graph = petgraph::graph::Graph<(), (Role, Identifier), Directed, usize>;
 pub struct TaskGraphImpl {
     graph: Graph,
     my_role: Role,
-    psf: PSF,
+    psf: Psf,
 }
 
 impl TaskGraphImpl {
-    pub fn new(graph: Graph, my_role: Role, psf: PSF) -> TaskGraphImpl {
+    pub fn new(graph: Graph, my_role: Role, psf: Psf) -> TaskGraphImpl {
         TaskGraphImpl {
             graph,
             my_role,
@@ -244,7 +244,7 @@ static CFORMAT_HEAP_NAME: &str = "cformat_on_heap";
 static MESSAGE_HEAP_NAME: &str = "message_on_heap";
 static LEN_FIELD_HEAP_NAME: &str = "length_value_on_heap";
 
-fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &PSF) -> Vec<Instruction> {
+fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<Instruction> {
     let mut instrs: Vec<Instruction> = vec![];
 
     let afs = psf.formats.get(format_id).unwrap();
@@ -327,7 +327,7 @@ fn compile_message_to_instrs(
     my_role: Role,
     edge_role: Role,
     format_id: &Identifier,
-    psf: &PSF,
+    psf: &Psf,
 ) -> Vec<Instruction> {
     let mut instrs: Vec<Instruction> = vec![];
 

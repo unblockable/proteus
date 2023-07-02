@@ -9,9 +9,9 @@ use crate::pt::config::parse::{ParseError, Parser};
 
 #[derive(Debug)]
 pub enum ConfigError {
-    VersionError(String),
-    ProxyError(String),
-    EnvError(String),
+    Version(String),
+    Proxy(String),
+    Env(String),
 }
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ pub struct ServerConfig {
 
 impl From<ParseError> for ConfigError {
     fn from(e: ParseError) -> ConfigError {
-        ConfigError::EnvError(e.to_string())
+        ConfigError::Env(e.to_string())
     }
 }
 
@@ -79,7 +79,7 @@ impl Config {
         parser.log_all();
 
         if Ok(true) != parser.is_version_supported() {
-            return Err(ConfigError::VersionError(String::from(
+            return Err(ConfigError::Version(String::from(
                 "PT version is unsupported",
             )));
         }
@@ -92,7 +92,7 @@ impl Config {
             } else if Ok(true) == parser.is_proteus_server() {
                 Mode::Server(Config::server_config_from_parser(&parser)?)
             } else {
-                return Err(ConfigError::EnvError(String::from(
+                return Err(ConfigError::Env(String::from(
                     "Unable to find supported client or server proteus transport",
                 )));
             }
@@ -132,17 +132,18 @@ impl Config {
             Ok(is_supported) => match is_supported {
                 true => match parser.proxy() {
                     Ok((user_pass_opt, addr)) => {
-                        let auth = user_pass_opt.map(|(username, password)| SocksAuth { username, password });
+                        let auth = user_pass_opt
+                            .map(|(username, password)| SocksAuth { username, password });
                         Some(SocksProxy { auth, addr })
                     }
                     Err(_) => {
-                        return Err(ConfigError::ProxyError(String::from(
+                        return Err(ConfigError::Proxy(String::from(
                             "Requested proxy URI is malformed",
                         )))
                     }
                 },
                 false => {
-                    return Err(ConfigError::ProxyError(String::from(
+                    return Err(ConfigError::Proxy(String::from(
                         "Requested proxy protocol is not supported",
                     )))
                 }
