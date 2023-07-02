@@ -45,7 +45,10 @@ pub async fn run_proteus(
         .run()
         .await
     {
-        RunResult::Success(s) => Ok(s.finish()),
+        RunResult::Success(s) => {
+            s.finish();
+            Ok(())
+        },
         RunResult::Error(e) => Err(e.finish()),
     }
 }

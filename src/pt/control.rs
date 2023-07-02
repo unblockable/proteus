@@ -34,17 +34,17 @@ pub fn send_to_parent(msg: Message) {
         Message::Status(s) => println!("STATUS TRANSPORT=proteus {}", s),
         Message::Log((l, s)) => match l {
             log::Level::Error => {
-                println!("LOG SEVERITY=error MESSAGE=\"{}\"", s.replace("\"", "'"))
+                println!("LOG SEVERITY=error MESSAGE=\"{}\"", s.replace('\"', "'"))
             }
             log::Level::Warn => {
-                println!("LOG SEVERITY=warning MESSAGE=\"{}\"", s.replace("\"", "'"))
+                println!("LOG SEVERITY=warning MESSAGE=\"{}\"", s.replace('\"', "'"))
             }
             log::Level::Info => {
-                println!("LOG SEVERITY=notice MESSAGE=\"{}\"", s.replace("\"", "'"))
+                println!("LOG SEVERITY=notice MESSAGE=\"{}\"", s.replace('\"', "'"))
             }
-            log::Level::Debug => println!("LOG SEVERITY=info MESSAGE=\"{}\"", s.replace("\"", "'")),
+            log::Level::Debug => println!("LOG SEVERITY=info MESSAGE=\"{}\"", s.replace('\"', "'")),
             log::Level::Trace => {
-                println!("LOG SEVERITY=debug MESSAGE=\"{}\"", s.replace("\"", "'"))
+                println!("LOG SEVERITY=debug MESSAGE=\"{}\"", s.replace('\"', "'"))
             }
         },
     }

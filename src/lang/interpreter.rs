@@ -121,7 +121,7 @@ impl Program {
                         (
                             id.clone(),
                             // self.bytes_heap.get(&id).unwrap().len(),
-                            self.bytes_heap.get(&id),
+                            self.bytes_heap.get(id),
                         )
                     })
                     .collect();
@@ -243,7 +243,7 @@ impl Program {
             Instruction::ReadNet(args) => {
                 let len = match &args.from_len {
                     ReadNetLength::Identifier(id) => {
-                        let num = self.number_heap.get(&id).ok_or(Error::ExecuteFailed)?;
+                        let num = self.number_heap.get(id).ok_or(Error::ExecuteFailed)?;
                         let val = *num as usize;
                         Range {
                             start: val,
@@ -251,7 +251,7 @@ impl Program {
                         }
                     }
                     ReadNetLength::IdentifierMinus((id, sub)) => {
-                        let num = self.number_heap.get(&id).ok_or(Error::ExecuteFailed)?;
+                        let num = self.number_heap.get(id).ok_or(Error::ExecuteFailed)?;
                         let val = (*num as usize) - sub;
                         Range {
                             start: val,
@@ -276,16 +276,15 @@ impl Program {
                     .message_heap
                     .remove(&args.to_msg_heap_id)
                     .ok_or(Error::ExecuteFailed)?;
-                msg.set_field_bytes(&args.to_field_id, &bytes)
+                msg.set_field_bytes(&args.to_field_id, bytes)
                     .map_err(|_| Error::ExecuteFailed)?;
                 self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
             Instruction::SetNumericValue(args) => {
-                let val = self
+                let val = *self
                     .number_heap
                     .get(&args.from_heap_id)
-                    .ok_or(Error::ExecuteFailed)?
-                    .clone();
+                    .ok_or(Error::ExecuteFailed)?;
                 let mut msg = self
                     .message_heap
                     .remove(&args.to_msg_heap_id)
@@ -526,7 +525,10 @@ impl SharedAsyncInterpreter {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
         std::future::poll_fn(move |_| match self.inner.try_lock() {
-            Ok(mut inner) => Poll::Ready(inner.store_out(addr.clone(), bytes.clone())),
+            Ok(mut inner) => {
+                inner.store_out(addr.clone(), bytes.clone());
+                Poll::Ready(())
+            },
             Err(_) => Poll::Pending,
         })
         .await
@@ -536,7 +538,10 @@ impl SharedAsyncInterpreter {
         // Yield to the async runtime if we can't get the lock, or if the
         // interpreter is not wanting to execute a command yet.
         std::future::poll_fn(move |_| match self.inner.try_lock() {
-            Ok(mut inner) => Poll::Ready(inner.store_in(addr.clone(), bytes.clone())),
+            Ok(mut inner) => {
+                inner.store_in(addr.clone(), bytes.clone());
+                Poll::Ready(())
+            },
             Err(_) => Poll::Pending,
         })
         .await

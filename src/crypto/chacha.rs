@@ -63,8 +63,8 @@ impl Cipher {
             .encrypt(&nonce.into(), plaintext)
             .expect("encryption failure");
 
-        let mac: MAC;
-        mac = ciphertext
+        
+        let mac: MAC = ciphertext
             .drain(ciphertext.len() - 16..ciphertext.len())
             .collect::<Vec<_>>()
             .try_into()
@@ -75,7 +75,7 @@ impl Cipher {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &MAC) -> Vec<u8> {
-        let ctext_and_mac: Vec<u8> = ciphertext.iter().chain(mac.iter()).map(|e| *e).collect();
+        let ctext_and_mac: Vec<u8> = ciphertext.iter().chain(mac.iter()).copied().collect();
 
         self.nbytes_decrypted += ciphertext.len();
 

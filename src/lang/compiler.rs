@@ -224,7 +224,7 @@ fn generate_encryption_hints(format: &Format, crypto_spec: &CryptoSpec) -> Optio
     let directive: Vec<_> = crypto_spec
         .directives
         .iter()
-        .filter(|(&ref k, _)| k.to_format_name == *fname)
+        .filter(|(k, _)| k.to_format_name == *fname)
         .collect();
 
     match directive.len() {
@@ -240,9 +240,9 @@ fn generate_encryption_hints(format: &Format, crypto_spec: &CryptoSpec) -> Optio
     }
 }
 
-static CFORMAT_HEAP_NAME: &'static str = "cformat_on_heap";
-static MESSAGE_HEAP_NAME: &'static str = "message_on_heap";
-static LEN_FIELD_HEAP_NAME: &'static str = "length_value_on_heap";
+static CFORMAT_HEAP_NAME: &str = "cformat_on_heap";
+static MESSAGE_HEAP_NAME: &str = "message_on_heap";
+static LEN_FIELD_HEAP_NAME: &str = "length_value_on_heap";
 
 fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &PSF) -> Vec<Instruction> {
     let mut instrs: Vec<Instruction> = vec![];
@@ -251,7 +251,7 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &PSF) -> Vec<I
     let format = &afs.format.format;
     let semantics = &afs.semantics;
 
-    let maybe_hints_dynamic_payload = generate_dynamic_payload_hints(&format, &semantics);
+    let maybe_hints_dynamic_payload = generate_dynamic_payload_hints(format, semantics);
 
     // Handle dynamic length fields
     let mut dynamic_field_names = vec![];
@@ -259,7 +259,7 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &PSF) -> Vec<I
     if let Some(ref hints_dynamic_payload) = maybe_hints_dynamic_payload {
         instrs.push(
             ReadAppArgs {
-                from_len: 1..hints_dynamic_payload.length_field_max.into(),
+                from_len: 1..hints_dynamic_payload.length_field_max,
                 to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
             }
             .into(),
@@ -337,11 +337,11 @@ fn compile_message_to_instrs(
 
     let is_sender = my_role == edge_role;
 
-    let maybe_hints_dynamic_payload = generate_dynamic_payload_hints(&format, &semantics);
+    let maybe_hints_dynamic_payload = generate_dynamic_payload_hints(format, semantics);
 
     if is_sender {
         if let Some(ref crypto_spec) = psf.crypto_spec {
-            let maybe_hints_encryption = generate_encryption_hints(&format, crypto_spec);
+            let maybe_hints_encryption = generate_encryption_hints(format, crypto_spec);
 
             if let Some(ref hints_encryption) = maybe_hints_encryption {
                 if hints_encryption.starting_format != format.name {
@@ -405,16 +405,16 @@ fn compile_message_to_instrs(
         // Is receiver
         let (prefix, suffix) = format.split_into_fixed_sized_prefix_dynamic_suffix();
 
-        let has_prefix = prefix.fields.len() > 0;
-        let has_suffix = suffix.fields.len() > 0;
+        let has_prefix = !prefix.fields.is_empty();
+        let has_suffix = !suffix.fields.is_empty();
 
-        const CFORMAT_PFX_HEAP_NAME: &'static str = "cformat_prefix_on_heap";
-        const CFORMAT_SFX_HEAP_NAME: &'static str = "cformat_suffix_on_heap";
+        const CFORMAT_PFX_HEAP_NAME: &str = "cformat_prefix_on_heap";
+        const CFORMAT_SFX_HEAP_NAME: &str = "cformat_suffix_on_heap";
 
-        const MSG_PFX_HEAP_NAME: &'static str = "message_prefix_on_heap";
-        const MSG_SFX_HEAP_NAME: &'static str = "message_suffix_on_heap";
+        const MSG_PFX_HEAP_NAME: &str = "message_prefix_on_heap";
+        const MSG_SFX_HEAP_NAME: &str = "message_suffix_on_heap";
 
-        const LENGTH_ON_HEAP_NAME: &'static str = "num_payload_bytes_on_heap";
+        const LENGTH_ON_HEAP_NAME: &str = "num_payload_bytes_on_heap";
 
         if has_prefix {
             // Read the fixed-size elements
@@ -468,7 +468,7 @@ fn compile_message_to_instrs(
             // Now, if there's anything to decrypt in the prefix, we do it here.
 
             if let Some(ref crypto_spec) = psf.crypto_spec {
-                let maybe_hints_encryption = generate_encryption_hints(&format, crypto_spec);
+                let maybe_hints_encryption = generate_encryption_hints(format, crypto_spec);
 
                 if let Some(ref hints_encryption) = maybe_hints_encryption {
                     if hints_encryption.starting_format != format.name {
@@ -590,7 +590,7 @@ fn compile_message_to_instrs(
 
                 // And then we decrypt in the suffix
                 if let Some(ref crypto_spec) = psf.crypto_spec {
-                    let maybe_hints_encryption = generate_encryption_hints(&format, crypto_spec);
+                    let maybe_hints_encryption = generate_encryption_hints(format, crypto_spec);
 
                     if let Some(ref hints_encryption) = maybe_hints_encryption {
                         if hints_encryption.starting_format != format.name {

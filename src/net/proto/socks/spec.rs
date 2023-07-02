@@ -146,55 +146,55 @@ pub mod socks5 {
 
     impl From<Init> for Socks5Protocol<Init> {
         fn from(state: Init) -> Self {
-            Socks5Protocol::<Init> { state: state }
+            Socks5Protocol::<Init> { state }
         }
     }
 
     impl From<ServerHandshake1> for Socks5Protocol<ServerHandshake1> {
         fn from(state: ServerHandshake1) -> Self {
-            Socks5Protocol::<ServerHandshake1> { state: state }
+            Socks5Protocol::<ServerHandshake1> { state }
         }
     }
 
     impl From<ServerHandshake2> for Socks5Protocol<ServerHandshake2> {
         fn from(state: ServerHandshake2) -> Self {
-            Socks5Protocol::<ServerHandshake2> { state: state }
+            Socks5Protocol::<ServerHandshake2> { state }
         }
     }
 
     impl From<ServerAuth1> for Socks5Protocol<ServerAuth1> {
         fn from(state: ServerAuth1) -> Self {
-            Socks5Protocol::<ServerAuth1> { state: state }
+            Socks5Protocol::<ServerAuth1> { state }
         }
     }
 
     impl From<ServerAuth2> for Socks5Protocol<ServerAuth2> {
         fn from(state: ServerAuth2) -> Self {
-            Socks5Protocol::<ServerAuth2> { state: state }
+            Socks5Protocol::<ServerAuth2> { state }
         }
     }
 
     impl From<ServerCommand1> for Socks5Protocol<ServerCommand1> {
         fn from(state: ServerCommand1) -> Self {
-            Socks5Protocol::<ServerCommand1> { state: state }
+            Socks5Protocol::<ServerCommand1> { state }
         }
     }
 
     impl From<ServerCommand2> for Socks5Protocol<ServerCommand2> {
         fn from(state: ServerCommand2) -> Self {
-            Socks5Protocol::<ServerCommand2> { state: state }
+            Socks5Protocol::<ServerCommand2> { state }
         }
     }
 
     impl From<Success> for Socks5Protocol<Success> {
         fn from(state: Success) -> Self {
-            Socks5Protocol::<Success> { state: state }
+            Socks5Protocol::<Success> { state }
         }
     }
 
     impl From<Error> for Socks5Protocol<Error> {
         fn from(state: Error) -> Self {
-            Socks5Protocol::<Error> { state: state }
+            Socks5Protocol::<Error> { state }
         }
     }
 }

@@ -40,7 +40,7 @@ impl Parser {
     pub(super) fn is_version_supported(&self) -> Result<bool, ParseError> {
         let versions = self.get(CommonKey::TOR_PT_MANAGED_TRANSPORT_VER)?;
         Ok(versions
-            .split(",")
+            .split(',')
             .collect::<Vec<&str>>()
             .contains(&keys::SUPPORTED_PT_VERSION))
     }
@@ -81,7 +81,7 @@ impl Parser {
     }
 
     fn name_list_has_proteus(s: String) -> bool {
-        s.split(",")
+        s.split(',')
             .collect::<Vec<&str>>()
             .contains(&keys::TRANSPORT_NAME)
     }
@@ -99,7 +99,7 @@ impl Parser {
         let val = self.get(ClientKey::TOR_PT_PROXY)?;
         let (_, mut remainder) = Self::split_in_two(val.as_str(), "://")?;
 
-        let user_pass_opt = match remainder.contains(&"@") {
+        let user_pass_opt = match remainder.contains("@") {
             true => {
                 let (user_pass, rem) = Self::split_in_two(remainder, "@")?;
                 let (u, p) = Self::split_in_two(user_pass, ":")?;
@@ -115,8 +115,8 @@ impl Parser {
 
     fn split_in_two<'a>(s: &'a str, sep: &str) -> Result<(&'a str, &'a str), ParseError> {
         let parts: Vec<&str> = s.split(sep).filter(|tok| !tok.is_empty()).collect();
-        if parts.len() == 2 && parts.get(0).is_some() && parts.get(1).is_some() {
-            Ok((parts.get(0).unwrap(), parts.get(1).unwrap()))
+        if parts.len() == 2 && parts.first().is_some() && parts.get(1).is_some() {
+            Ok((parts.first().unwrap(), parts.get(1).unwrap()))
         } else {
             Err(ParseError::VariableUnparsable)
         }
@@ -127,7 +127,7 @@ impl Parser {
 
         let mut map = HashMap::new();
 
-        for option in val.split(";").collect::<Vec<&str>>() {
+        for option in val.split(';').collect::<Vec<&str>>() {
             let (k, v) = Self::split_in_two(option, ":")?;
 
             if k == keys::TRANSPORT_NAME {
@@ -145,7 +145,7 @@ impl Parser {
     pub(super) fn server_bindaddr(&self) -> Result<SocketAddr, ParseError> {
         let val = self.get(ServerKey::TOR_PT_SERVER_BINDADDR)?;
 
-        for option in val.split(",").collect::<Vec<&str>>() {
+        for option in val.split(',').collect::<Vec<&str>>() {
             let (k, v) = Self::split_in_two(option, "-")?;
 
             if k == keys::TRANSPORT_NAME {

@@ -72,7 +72,7 @@ impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
         let methods = self.state.greeting.supported_auth_methods;
 
         // We support user/pass or none; prefer user/pass.
-        if let Some(_) = methods.iter().find(|&&val| val == SOCKS_AUTH_USERPASS) {
+        if methods.iter().find(|&&val| val == SOCKS_AUTH_USERPASS).is_some() {
             log::debug!("Choosing username/password authentication");
 
             let choice = Choice {
@@ -99,7 +99,7 @@ impl ServerHandshake2State for Socks5Protocol<ServerHandshake2> {
                     ServerHandshake2Result::Error(next.into())
                 }
             }
-        } else if let Some(_) = methods.iter().find(|&&val| val == SOCKS_AUTH_NONE) {
+        } else if methods.iter().find(|&&val| val == SOCKS_AUTH_NONE).is_some() {
             log::debug!("Choosing no authentication");
 
             let choice = Choice {
@@ -216,7 +216,7 @@ impl ServerAuth2State for Socks5Protocol<ServerAuth2> {
                 Err(e) => log::debug!("Error writing auth failure message: {}", e),
             }
 
-            let error = socks::Error::Auth(String::from(err_msg));
+            let error = socks::Error::Auth(err_msg);
             let next = Error { error };
             return ServerAuth2Result::Error(next.into());
         }

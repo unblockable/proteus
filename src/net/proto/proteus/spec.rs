@@ -43,13 +43,13 @@ pub mod proteus {
 
     impl From<Init> for ProteusProtocol<Init> {
         fn from(state: Init) -> Self {
-            ProteusProtocol::<Init> { state: state }
+            ProteusProtocol::<Init> { state }
         }
     }
 
     impl From<Success> for ProteusProtocol<Success> {
         fn from(state: Success) -> Self {
-            ProteusProtocol::<Success> { state: state }
+            ProteusProtocol::<Success> { state }
         }
     }
 

@@ -32,12 +32,12 @@ where
 
 fn parse_numeric_type(p: &RulePair) -> Result<NumericType> {
     assert!(p.as_rule() == Rule::numeric_type);
-    Ok(parse_simple(p)?)
+    parse_simple(p)
 }
 
 fn parse_primitive_type(p: &RulePair) -> Result<PrimitiveType> {
     assert!(p.as_rule() == Rule::primitive_type);
-    Ok(parse_simple(p)?)
+    parse_simple(p)
 }
 
 fn parse_positive_numeric_literal(p: &RulePair) -> Result<usize> {
@@ -47,7 +47,7 @@ fn parse_positive_numeric_literal(p: &RulePair) -> Result<usize> {
 
 fn parse_identifier(p: &RulePair) -> Result<Identifier> {
     assert!(p.as_rule() == Rule::identifier);
-    Ok(parse_simple(p)?)
+    parse_simple(p)
 }
 
 fn parse_primitive_array(p: &RulePair) -> Result<PrimitiveArray> {
@@ -101,7 +101,7 @@ fn parse_array(p: &RulePair) -> Result<Array> {
 fn parse_name_value(p: &RulePair) -> Result<Identifier> {
     assert!(p.as_rule() == Rule::name_value);
     // Unwraps OK: ITR
-    Ok(parse_identifier(&p.clone().into_inner().next().unwrap())?)
+    parse_identifier(&p.clone().into_inner().next().unwrap())
 }
 
 fn parse_type_value(p: &RulePair) -> Result<Array> {
@@ -183,7 +183,7 @@ fn parse_field_semantic(p: &RulePair) -> Result<FieldSemantic> {
 
     if let Some(ref inner_p) = maybe_inner_p {
         if inner_p.as_rule() == Rule::fixed_string_semantic {
-            parse_fixed_string_semantic(&inner_p)
+            parse_fixed_string_semantic(inner_p)
         } else {
             unimplemented!();
         }

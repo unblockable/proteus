@@ -144,7 +144,7 @@ impl NetSource {
                 0 => Err(net::Error::Eof),
                 _ => Ok(n_bytes),
             },
-            Err(e) => return Err(net::Error::IoError(e)),
+            Err(e) => Err(net::Error::IoError(e)),
         }
     }
 }
@@ -170,7 +170,7 @@ impl NetSink {
 
     async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
         let num_bytes = bytes.len();
-        match self.write_half.write_all(&bytes).await {
+        match self.write_half.write_all(bytes).await {
             Ok(_) => Ok(num_bytes),
             Err(e) => Err(net::Error::IoError(e)),
         }

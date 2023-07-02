@@ -1,4 +1,4 @@
-use log;
+
 use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
@@ -124,11 +124,11 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                 Some(username) => {
                     log::debug!("Obtained Socks5 username: {}", username);
                     let mut map = HashMap::new();
-                    for entry in username.split(";").collect::<Vec<&str>>() {
+                    for entry in username.split(';').collect::<Vec<&str>>() {
                         let parts: Vec<&str> =
-                            entry.split("=").filter(|tok| !tok.is_empty()).collect();
-                        if parts.len() == 2 && parts.get(0).is_some() && parts.get(1).is_some() {
-                            let k = parts.get(0).unwrap().to_string();
+                            entry.split('=').filter(|tok| !tok.is_empty()).collect();
+                        if parts.len() == 2 && parts.first().is_some() && parts.get(1).is_some() {
+                            let k = parts.first().unwrap().to_string();
                             let v = parts.get(1).unwrap().to_string();
                             map.insert(k, v);
                         }

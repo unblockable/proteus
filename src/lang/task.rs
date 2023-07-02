@@ -27,6 +27,7 @@ pub enum TaskSet {
 }
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
+#[derive(Default)]
 pub struct TaskID {
     id: usize,
 }
@@ -49,11 +50,7 @@ impl From<usize> for TaskID {
     }
 }
 
-impl std::default::Default for TaskID {
-    fn default() -> TaskID {
-        TaskID { id: 0 }
-    }
-}
+
 
 #[derive(Debug)]
 pub struct Task {

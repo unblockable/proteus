@@ -132,10 +132,7 @@ impl Config {
             Ok(is_supported) => match is_supported {
                 true => match parser.proxy() {
                     Ok((user_pass_opt, addr)) => {
-                        let auth = match user_pass_opt {
-                            Some((username, password)) => Some(SocksAuth { username, password }),
-                            None => None,
-                        };
+                        let auth = user_pass_opt.map(|(username, password)| SocksAuth { username, password });
                         Some(SocksProxy { auth, addr })
                     }
                     Err(_) => {
