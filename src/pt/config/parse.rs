@@ -99,7 +99,7 @@ impl Parser {
         let val = self.get(ClientKey::TOR_PT_PROXY)?;
         let (_, mut remainder) = Self::split_in_two(val.as_str(), "://")?;
 
-        let user_pass_opt = match remainder.contains("@") {
+        let user_pass_opt = match remainder.contains('@') {
             true => {
                 let (user_pass, rem) = Self::split_in_two(remainder, "@")?;
                 let (u, p) = Self::split_in_two(user_pass, ":")?;
