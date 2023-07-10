@@ -1,5 +1,7 @@
 # Proteus
 
+<img src="https://github.com/unblockable/proteus/blob/main/assets/proteus_white.png?raw=true" width="200" height="200">
+
 Debug build (also used for tests):
 
     cargo build
