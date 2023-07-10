@@ -28,3 +28,26 @@ Pluggable Transports
 
 Extended OR Port
 - https://gitweb.torproject.org/torspec.git/tree/ext-orport-spec.txt
+
+# Research
+
+You can read more technical details about our vision for Proteus in the
+following publication:
+
+[Proteus: Programmable Protocols for Censorship Circumvention](https://www.petsymposium.org/foci/2023/foci-2023-0013.pdf).  
+[Ryan Wails](https://ryanwails.com/),
+[Rob Jansen](https://www.robgjansen.com),
+[Aaron Johnson](https://www.ohmygodel.com/), and
+[Micah Sherr](https://seclab.cs.georgetown.edu/msherr/).  
+[Workshop on Free and Open Communication on the Internet, 2023](https://foci.community/foci23.html).
+
+Cite our work:
+
+```
+@inproceedings{proteus-foci2023,
+  title = {Proteus: Programmable Protocols for Censorship Circumvention},
+  author = {Wails, Ryan and Jansen, Rob and Johnson, Aaron and Sherr, Micah},
+  booktitle = {Workshop on Free and Open Communication on the Internet},
+  year = {2023},
+}
+```
