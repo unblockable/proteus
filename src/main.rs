@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::net::proto::proteus::Interpreter;
 use crate::{
     lang::{
         common::Role,
@@ -9,7 +10,7 @@ use crate::{
         spec::proteus::ProteusSpec,
     },
     net::{
-        proto::{proteus, socks},
+        proto::socks,
         Connection,
     },
     pt::{
@@ -145,7 +146,11 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                 rvs_addr,
             );
 
-            match proteus::run_proteus(pt_conn, rvs_conn, options, client_spec).await {
+            // Run the proteus protocol with the interpreter.
+            match Interpreter::new(pt_conn, rvs_conn, Box::new(client_spec), options)
+                .run()
+                .await
+            {
                 Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
                     "Stream from peer {} failed during Proteus protocol: {}",
@@ -241,7 +246,11 @@ async fn handle_server_connection(
         fwd_addr
     );
 
-    match proteus::run_proteus(pt_conn, fwd_conn, conf.options, spec).await {
+    // Run the proteus protocol with the interpreter.
+    match Interpreter::new(pt_conn, fwd_conn, Box::new(spec), conf.options)
+        .run()
+        .await
+    {
         Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
         Err(e) => log::debug!(
             "Stream from peer {} failed during Proteus protocol: {}",

@@ -1,6 +1,8 @@
 use bytes::{Buf, Bytes, BytesMut};
 use std::fmt;
 use std::io::Cursor;
+use std::ops::Range;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
@@ -42,7 +44,7 @@ trait Serializer<F> {
 }
 
 /// Trait for a formatter that can deserialize one or more protocol frames.
-trait Deserializer<F> {
+pub trait Deserializer<F> {
     fn deserialize_frame(&mut self, src: &mut Cursor<&BytesMut>) -> Option<F>;
 }
 
@@ -68,7 +70,7 @@ impl Connection {
         }
     }
 
-    fn into_split(self) -> (NetSource, NetSink) {
+    pub fn into_split(self) -> (NetSource, NetSink) {
         (self.source, self.sink)
     }
 
@@ -86,8 +88,8 @@ impl Connection {
         self.sink.write_frame(serializer, frame).await
     }
 
-    async fn _read_bytes(&mut self) -> Result<Bytes, net::Error> {
-        self.source._read_bytes().await
+    async fn _read_bytes(&mut self, len: Range<usize>) -> Result<Bytes, net::Error> {
+        self.source.read_bytes(len).await
     }
 
     async fn _write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
@@ -95,7 +97,7 @@ impl Connection {
     }
 }
 
-struct NetSource {
+pub struct NetSource {
     read_half: OwnedReadHalf,
     buffer: BytesMut,
 }
@@ -109,9 +111,17 @@ impl NetSource {
         }
     }
 
+    /// Read raw bytes from a network source, returning only after we have accumulated a
+    /// number of bytes in the given range.
+    pub async fn read_bytes(&mut self, len: Range<usize>) -> Result<Bytes, net::Error> {
+        let mut fmt = RawFormatter::new(len);
+        let data = self.read_frame(&mut fmt).await?;
+        Ok(data.into())
+    }
+
     /// Read a frame of type `F` from a network source using deserializer `D`,
     /// waiting until enough data has arrived to fill the frame.
-    async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> Result<F, net::Error>
+    pub async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> Result<F, net::Error>
     where
         D: Deserializer<F>,
     {
@@ -130,11 +140,6 @@ impl NetSource {
             // Pull more bytes in from the source.
             self.read_inner().await?;
         }
-    }
-
-    async fn _read_bytes(&mut self) -> Result<Bytes, net::Error> {
-        self.read_inner().await?;
-        Ok(self.buffer.split().freeze())
     }
 
     /// Pull more bytes in from the source into our internal buffer.
@@ -158,6 +163,12 @@ impl NetSink {
         NetSink { write_half: sink }
     }
 
+    /// Writes the given raw bytes to the network sink, returning after all
+    /// bytes have been written.
+    pub async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
+        self.write_inner(bytes).await
+    }
+
     /// Write a frame `F` to the network sink using serializer `S`.
     /// Returns the number of bytes written to the network.
     async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> Result<usize, net::Error>
@@ -165,14 +176,68 @@ impl NetSink {
         S: Serializer<F>,
     {
         let bytes = serializer.serialize_frame(frame);
-        self.write_bytes(&bytes).await
+        self.write_inner(&bytes).await
     }
 
-    async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
+    async fn write_inner(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
         let num_bytes = bytes.len();
         match self.write_half.write_all(bytes).await {
             Ok(_) => Ok(num_bytes),
             Err(e) => Err(net::Error::IoError(e)),
+        }
+    }
+}
+
+/// A default frame for supporting an API for raw bytes.
+struct RawData {
+    bytes: Bytes,
+}
+
+impl From<Bytes> for RawData {
+    fn from(bytes: Bytes) -> Self {
+        RawData { bytes }
+    }
+}
+
+impl From<RawData> for Bytes {
+    fn from(data: RawData) -> Self {
+        data.bytes
+    }
+}
+
+// We can serialize a `NetData` directly, but we can't deserialize in isolation
+// because we need to know how many bytes to read; leave that to a formatter.
+impl Serialize<RawData> for RawData {
+    fn serialize(&self) -> Bytes {
+        self.bytes.clone()
+    }
+}
+
+/// A default formatter for supporting an API for raw bytes.
+struct RawFormatter {
+    valid_read_range: Range<usize>,
+}
+
+impl RawFormatter {
+    fn new(valid_read_range: Range<usize>) -> RawFormatter {
+        RawFormatter { valid_read_range }
+    }
+}
+
+impl Serializer<RawData> for RawFormatter {
+    fn serialize_frame(&mut self, src: RawData) -> Bytes {
+        src.serialize()
+    }
+}
+
+impl Deserializer<RawData> for RawFormatter {
+    fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<RawData> {
+        match src.remaining() >= self.valid_read_range.start {
+            true => {
+                let num = std::cmp::min(src.remaining(), self.valid_read_range.end - 1);
+                Some(RawData::from(src.copy_to_bytes(num)))
+            }
+            false => None,
         }
     }
 }
