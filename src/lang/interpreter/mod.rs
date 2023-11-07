@@ -290,4 +290,14 @@ mod tests {
     async fn integration_psf_padded_enc() {
         integration_with_psf(&"examples/psf/shadowsocks_padded.psf").await
     }
+
+    #[tokio::test]
+    async fn integration_psf_handshake_no_payload() {
+        integration_with_psf(&"examples/psf/handshake_no_payload.psf").await
+    }
+
+    #[tokio::test]
+    async fn integration_psf_handshake_with_payload() {
+        integration_with_psf(&"examples/psf/handshake_with_payload.psf").await
+    }
 }

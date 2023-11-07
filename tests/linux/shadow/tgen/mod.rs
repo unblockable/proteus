@@ -11,6 +11,20 @@ fn simple() {
 #[test]
 #[ignore]
 #[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
+fn handshake_no_payload() {
+    run_test(&"handshake_no_payload", &"examples/psf/handshake_no_payload.psf");
+}
+
+#[test]
+#[ignore]
+#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
+fn handshake_with_payload() {
+    run_test(&"handshake_with_payload", &"examples/psf/handshake_with_payload.psf");
+}
+
+#[test]
+#[ignore]
+#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
 fn shadowsocks() {
     run_test(&"shadowsocks", &"examples/psf/shadowsocks.psf");
 }

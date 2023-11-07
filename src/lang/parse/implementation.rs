@@ -804,7 +804,7 @@ pub mod tests {
     }
 
     pub fn parse_example_psf() -> Result<Psf> {
-        let filepath = "examples/psf/example.psf";
+        let filepath = "examples/psf/handshake_with_payload.psf";
         let input = fs::read_to_string(filepath).expect("cannot read example file");
         parse_psf(&input)
     }

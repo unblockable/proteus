@@ -176,6 +176,11 @@ fn generate_dynamic_payload_hints(
     format: &Format,
     semantics: &Semantics,
 ) -> Option<HintsDynamicPayload> {
+
+    if semantics.find_field_id(FieldSemantic::Payload).is_none() {
+        return None;
+    }
+
     // Need to figure out if the payload field is encoded with a length
     let payload_field_id = semantics.find_field_id(FieldSemantic::Payload).unwrap();
     let payload_field = format.try_get_field_by_name(&payload_field_id).unwrap();
@@ -668,7 +673,7 @@ mod tests {
 
         let tg = TaskGraphImpl {
             graph,
-            my_role: Role::Server,
+            my_role: Role::Client,
             psf,
         };
 
@@ -676,6 +681,8 @@ mod tests {
 
         for _ in 1..10 {
             let next_task = tg.next(task_completed);
+
+            println!("{:?}\n\n", next_task);
 
             match next_task {
                 TaskSet::InTask(t) => {

@@ -1,17 +1,22 @@
 @SEGMENT.FORMATS
 
+  DEFINE HandshakeMsg
+    { NAME: padding     ; TYPE: [u8; 9] };
+
   DEFINE DataMsg
     { NAME: length  ; TYPE: u16 },
     { NAME: payload ; TYPE: [u8; length.size_of] };
 
 @SEGMENT.SEMANTICS
 
+  { FORMAT: HandshakeMsg; FIELD: padding; SEMANTIC: FIXED_STRING("foobarbaz") };
+
   { FORMAT: DataMsg; FIELD: length;  SEMANTIC: LENGTH };
   { FORMAT: DataMsg; FIELD: payload; SEMANTIC: PAYLOAD };
 
 @SEGMENT.SEQUENCE
 
-  { ROLE: CLIENT; PHASE: HANDSHAKE; FORMAT: DataMsg };
-  { ROLE: SERVER; PHASE: HANDSHAKE; FORMAT: DataMsg };
+  { ROLE: CLIENT; PHASE: HANDSHAKE; FORMAT: HandshakeMsg };
+  { ROLE: SERVER; PHASE: HANDSHAKE; FORMAT: HandshakeMsg };
   { ROLE: CLIENT; PHASE: DATA;      FORMAT: DataMsg };
   { ROLE: SERVER; PHASE: DATA;      FORMAT: DataMsg };
