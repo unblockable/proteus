@@ -43,12 +43,12 @@ impl Message {
     }
 
     fn get_field_slice(&self, offset: usize, size: usize) -> &[u8] {
-        assert!(offset < self.data.len() && offset + size <= self.data.len());
+        assert!(offset <= self.data.len() && offset + size <= self.data.len());
         &self.data.as_ref()[offset..offset + size]
     }
 
     fn get_field_slice_mut(&mut self, offset: usize, size: usize) -> &mut [u8] {
-        assert!(offset < self.data.len() && offset + size <= self.data.len());
+        assert!(offset <= self.data.len() && offset + size <= self.data.len());
         &mut self.data.as_mut()[offset..offset + size]
     }
 

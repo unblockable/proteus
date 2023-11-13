@@ -49,8 +49,19 @@ impl TaskGraphImpl {
                 let edge_role = &(edges[0].weight()).0;
                 let edge_format = &(edges[0].weight()).1;
 
-                let ins =
+                let mut ins =
                     compile_message_to_instrs(self.my_role, *edge_role, edge_format, &self.psf);
+
+                // This adjusts read app instructions during the handshake phase to not necessarily
+                // require bytes
+                for i in &mut ins {
+                    match i {
+                        Instruction::ReadApp(ReadAppArgs{from_len: x, ..}) => {
+                            *x = 0..x.end;
+                        },
+                        _ => {}
+                    }
+                }
 
                 let t = Task {
                     ins,
