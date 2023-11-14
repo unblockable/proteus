@@ -565,6 +565,7 @@ pub enum FieldSemantic {
     Padding,
     Length,
     FixedString(String),
+    FixedBytes(Vec<u8>),
 }
 
 impl TryFrom<FieldSemantic> for String {
@@ -651,20 +652,27 @@ impl Semantics {
     }
 
     pub fn get_fixed_fields(&self) -> Vec<(Identifier, Vec<u8>)> {
+        let criterion = |e: (&Identifier, &FieldSemantic)| match e.1 {
+            FieldSemantic::FixedString(_) => true,
+            FieldSemantic::FixedBytes(_) => true,
+            _ => false,
+        };
+
+        let extract = |e: (&Identifier, &FieldSemantic)| {
+            match e.1 {
+            FieldSemantic::FixedString(s) => (e.0.clone(),
+            String::try_from(s).unwrap().as_str().chars().map(|e| e as u8).collect()),
+            FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
+            _ => unimplemented!()
+            // FieldSemantic::FixedBytes(_) => true,
+            //_ => false,
+        }
+        };
+
         self.semantics
             .iter()
-            .filter(|&e| matches!(*e.1, FieldSemantic::FixedString(_)))
-            .map(|e| {
-                (
-                    e.0.clone(),
-                    String::try_from(e.1.clone())
-                        .unwrap()
-                        .as_str()
-                        .chars()
-                        .map(|e| e as u8)
-                        .collect(),
-                )
-            })
+            .filter(|&e| criterion(e))
+            .map(|e| extract(e))
             .collect()
     }
 }

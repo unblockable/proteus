@@ -21,6 +21,8 @@ numeric_literal = @{ "-"?~positive_numeric_literal }
 positive_numeric_literal = @{ ASCII_DIGIT+ }
 typed_numeric_literal = @{ numeric_literal~numeric_type }
 
+hex_literal = @{ "0x" ~ ASCII_HEX_DIGIT+ }
+
 string_literal = ${ "\"" ~ inner ~ "\"" }
 inner = @{ char* }
 char = {
@@ -33,7 +35,9 @@ format = { "DEFINE" ~ identifier ~ field ~ ("," ~ field)* ~ ";" }
 
 fixed_string_semantic = { "FIXED_STRING" ~ "(" ~ string_literal ~ ")" }
 
-field_semantic = { fixed_string_semantic | "PADDING" | "PAYLOAD" | "LENGTH" }
+fixed_bytes_semantic = { "FIXED_BYTES" ~ "(" ~ hex_literal ~ ")" }
+
+field_semantic = { fixed_string_semantic | fixed_bytes_semantic | "PADDING" | "PAYLOAD" | "LENGTH" }
 
 semantic_binding = { "{" ~
   "FORMAT" ~ ":" ~ identifier ~ ";" ~

@@ -673,7 +673,7 @@ mod tests {
 
         let tg = TaskGraphImpl {
             graph,
-            my_role: Role::Client,
+            my_role: Role::Server,
             psf,
         };
 

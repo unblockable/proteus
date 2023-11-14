@@ -45,6 +45,39 @@ fn parse_positive_numeric_literal(p: &RulePair) -> Result<usize> {
     Ok(p.as_str().parse::<usize>()?)
 }
 
+fn parse_hex_literal(p: &RulePair) -> Result<Vec<u8>> {
+    use itertools::Itertools;
+
+    let mut retval = Vec::<u8>::new();
+
+    assert!(p.as_rule() == Rule::hex_literal);
+
+    // Borrowed from <https://stackoverflow.com/a/32381836>
+    let without_prefix = p.as_str().trim_start_matches("0x");
+
+    let len = without_prefix.len();
+
+    assert!(len > 0);
+
+    let mut char_itr = without_prefix.chars();
+
+    if len % 2 == 1 {
+        // Odd number of digits; process the first digit separately
+        let c1 = char_itr.next().unwrap().to_string(); // Safe to unwrap: we checked above that there is
+                                                       // something in the string.
+        let b = u8::from_str_radix(&c1, 16).unwrap(); // Unwrap safe here by parsing rules.
+        retval.push(b);
+    }
+
+    for pair in &char_itr.chunks(2) {
+        let pair: String = pair.collect();
+        let b = u8::from_str_radix(&pair, 16).unwrap(); // Unwrap safe here by parsing rules.
+        retval.push(b);
+    }
+
+    Ok(retval)
+}
+
 fn parse_identifier(p: &RulePair) -> Result<Identifier> {
     assert!(p.as_rule() == Rule::identifier);
     parse_simple(p)
@@ -176,16 +209,29 @@ fn parse_fixed_string_semantic(p: &RulePair) -> Result<FieldSemantic> {
     Ok(FieldSemantic::FixedString(p.as_str().to_string()))
 }
 
+fn parse_fixed_bytes_semantic(p: &RulePair) -> Result<FieldSemantic> {
+    assert!(p.as_rule() == Rule::fixed_bytes_semantic);
+
+    // Unwraps OK: ITR
+    let p = p
+        .clone()
+        .into_inner()
+        .next()
+        .unwrap();
+
+    Ok(FieldSemantic::FixedBytes(parse_hex_literal(&p).unwrap()))
+}
+
 fn parse_field_semantic(p: &RulePair) -> Result<FieldSemantic> {
     assert!(p.as_rule() == Rule::field_semantic);
 
     let maybe_inner_p = p.clone().into_inner().next();
 
     if let Some(ref inner_p) = maybe_inner_p {
-        if inner_p.as_rule() == Rule::fixed_string_semantic {
-            parse_fixed_string_semantic(inner_p)
-        } else {
-            unimplemented!();
+        match inner_p.as_rule() {
+            Rule::fixed_string_semantic => parse_fixed_string_semantic(inner_p),
+            Rule::fixed_bytes_semantic => parse_fixed_bytes_semantic(inner_p),
+            _ => unimplemented!()
         }
     } else {
         parse_simple(p)
@@ -470,6 +516,24 @@ pub mod tests {
     }
 
     #[test]
+    fn test_parse_hex_literal() {
+        let test_cases = vec![
+            ("0x1234567", [1, 35, 69, 103].to_vec()),
+            ("0x1", [1].to_vec()),
+            ("0x2", [2].to_vec()),
+            ("0xA", [10].to_vec()),
+            ("0xa", [10].to_vec()),
+            ("0x01", [1].to_vec()),
+            ("0x10", [16].to_vec()),
+            ("0x0", [0].to_vec()),
+            ("0x00", [0].to_vec()),
+            ("0x000", [0, 0].to_vec()),
+        ];
+
+        test_rule_pair(test_cases.iter(), Rule::hex_literal, parse_hex_literal);
+    }
+
+    #[test]
     fn test_parse_primitive_array() {
         let test_cases = vec![("[u8; 10]", PrimitiveArray(NumericType::U8.into(), 10))];
 
@@ -595,6 +659,10 @@ pub mod tests {
             (
                 "FIXED_STRING(\"foo\")",
                 FieldSemantic::FixedString("foo".to_string()),
+            ),
+            (
+                "FIXED_BYTES(0x1)",
+                FieldSemantic::FixedBytes([1].to_vec()),
             ),
         ];
 
