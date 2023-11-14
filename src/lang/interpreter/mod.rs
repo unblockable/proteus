@@ -300,4 +300,9 @@ mod tests {
     async fn integration_psf_handshake_with_payload() {
         integration_with_psf(&"examples/psf/handshake_with_payload.psf").await
     }
+
+    #[tokio::test]
+    async fn integration_psf_tls_mimic() {
+        integration_with_psf(&"examples/psf/tls_mimic.psf").await
+    }
 }

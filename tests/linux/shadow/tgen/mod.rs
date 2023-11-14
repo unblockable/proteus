@@ -39,6 +39,16 @@ fn shadowsocks_padded() {
     );
 }
 
+#[test]
+#[ignore]
+#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
+fn tls_mimic() {
+    run_test(
+        &"tls_mimic",
+        &"examples/psf/tls_mimic.psf",
+    );
+}
+
 fn run_test(test_name: &str, psf_filepath: &str) {
     let run_dir = initialize_test_directory(test_name, psf_filepath);
     let run_dir_str = run_dir.to_string_lossy();
