@@ -1,0 +1,19 @@
+@SEGMENT.FORMATS
+
+  DEFINE DataMsg
+    { NAME: random1  ; TYPE: [u8; 32] },
+    { NAME: length  ; TYPE: u16 },
+    { NAME: random2  ; TYPE: [u8; 1] },
+    { NAME: payload ; TYPE: [u8; length.size_of] };
+
+@SEGMENT.SEMANTICS
+
+  { FORMAT: DataMsg; FIELD: length;   SEMANTIC: LENGTH };
+  { FORMAT: DataMsg; FIELD: payload;  SEMANTIC: PAYLOAD };
+  { FORMAT: DataMsg; FIELD: random1;  SEMANTIC: RANDOM(32) };
+  { FORMAT: DataMsg; FIELD: random2;  SEMANTIC: RANDOM(1) };
+
+@SEGMENT.SEQUENCE
+
+  { ROLE: CLIENT; PHASE: DATA;      FORMAT: DataMsg };
+  { ROLE: SERVER; PHASE: DATA;      FORMAT: DataMsg };

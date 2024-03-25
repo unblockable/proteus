@@ -305,4 +305,9 @@ mod tests {
     async fn integration_psf_tls_mimic() {
         integration_with_psf(&"examples/psf/tls_mimic.psf").await
     }
+
+    #[tokio::test]
+    async fn integration_psf_random() {
+        integration_with_psf(&"examples/psf/random.psf").await
+    }
 }

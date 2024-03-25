@@ -509,6 +509,7 @@ dependencies = [
  "pest_derive",
  "petgraph",
  "rand",
+ "rand_core 0.6.4",
  "salsa20",
  "sha256",
  "tokio",

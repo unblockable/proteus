@@ -222,6 +222,19 @@ fn parse_fixed_bytes_semantic(p: &RulePair) -> Result<FieldSemantic> {
     Ok(FieldSemantic::FixedBytes(parse_hex_literal(&p).unwrap()))
 }
 
+fn parse_randomness_semantic(p: &RulePair) -> Result<FieldSemantic> {
+    assert!(p.as_rule() == Rule::randomness_semantic);
+
+    // Unwraps OK: ITR
+    let p = p
+        .clone()
+        .into_inner()
+        .next()
+        .unwrap();
+
+    Ok(FieldSemantic::Random(parse_positive_numeric_literal(&p).unwrap()))
+}
+
 fn parse_field_semantic(p: &RulePair) -> Result<FieldSemantic> {
     assert!(p.as_rule() == Rule::field_semantic);
 
@@ -231,6 +244,7 @@ fn parse_field_semantic(p: &RulePair) -> Result<FieldSemantic> {
         match inner_p.as_rule() {
             Rule::fixed_string_semantic => parse_fixed_string_semantic(inner_p),
             Rule::fixed_bytes_semantic => parse_fixed_bytes_semantic(inner_p),
+            Rule::randomness_semantic => parse_randomness_semantic(inner_p),
             _ => unimplemented!()
         }
     } else {
@@ -664,6 +678,7 @@ pub mod tests {
                 "FIXED_BYTES(0x1)",
                 FieldSemantic::FixedBytes([1].to_vec()),
             ),
+            ("RANDOM(1337)", FieldSemantic::Random(1337)),
         ];
 
         test_rule_pair(

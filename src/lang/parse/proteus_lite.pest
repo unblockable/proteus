@@ -37,7 +37,10 @@ fixed_string_semantic = { "FIXED_STRING" ~ "(" ~ string_literal ~ ")" }
 
 fixed_bytes_semantic = { "FIXED_BYTES" ~ "(" ~ hex_literal ~ ")" }
 
-field_semantic = { fixed_string_semantic | fixed_bytes_semantic | "PADDING" | "PAYLOAD" | "LENGTH" }
+randomness_semantic = { "RANDOM" ~ "(" ~ positive_numeric_literal ~ ")" }
+
+field_semantic = { fixed_string_semantic | fixed_bytes_semantic |
+                   randomness_semantic | "PADDING" | "PAYLOAD" | "LENGTH" }
 
 semantic_binding = { "{" ~
   "FORMAT" ~ ":" ~ identifier ~ ";" ~

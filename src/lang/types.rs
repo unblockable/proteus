@@ -566,6 +566,7 @@ pub enum FieldSemantic {
     Length,
     FixedString(String),
     FixedBytes(Vec<u8>),
+    Random(usize),
 }
 
 impl TryFrom<FieldSemantic> for String {
@@ -655,6 +656,7 @@ impl Semantics {
         let criterion = |e: (&Identifier, &FieldSemantic)| match e.1 {
             FieldSemantic::FixedString(_) => true,
             FieldSemantic::FixedBytes(_) => true,
+            FieldSemantic::Random(_) => true,
             _ => false,
         };
 
@@ -663,6 +665,13 @@ impl Semantics {
             FieldSemantic::FixedString(s) => (e.0.clone(),
             String::try_from(s).unwrap().as_str().chars().map(|e| e as u8).collect()),
             FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
+            FieldSemantic::Random(n) => {
+                use rand_core::{RngCore, OsRng};
+                let mut bytes = Vec::<u8>::new();
+                bytes.resize(*n, 0);
+                OsRng.fill_bytes(&mut bytes);
+                (e.0.clone(), bytes)
+            },
             _ => unimplemented!()
             // FieldSemantic::FixedBytes(_) => true,
             //_ => false,
