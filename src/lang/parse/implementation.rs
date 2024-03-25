@@ -754,10 +754,11 @@ pub mod tests {
 
     #[test]
     fn test_parse_cipher_assignment() {
-        let input = "CIPHER = CHACHA20-POLY1305;";
-        let output = Cipher::ChaCha20Poly1305;
-
-        let test_cases = vec![(input, output)];
+        let test_cases = vec![
+            ("CIPHER = CHACHA20-POLY1305;", Cipher::ChaCha20Poly1305),
+            ("CIPHER = AES128GCM;", Cipher::Aes128Gcm),
+            ("CIPHER = AES256GCM;", Cipher::Aes256Gcm),
+        ];
 
         test_rule_pair(
             test_cases.iter(),

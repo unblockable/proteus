@@ -662,20 +662,26 @@ impl Semantics {
 
         let extract = |e: (&Identifier, &FieldSemantic)| {
             match e.1 {
-            FieldSemantic::FixedString(s) => (e.0.clone(),
-            String::try_from(s).unwrap().as_str().chars().map(|e| e as u8).collect()),
-            FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
-            FieldSemantic::Random(n) => {
-                use rand_core::{RngCore, OsRng};
-                let mut bytes = Vec::<u8>::new();
-                bytes.resize(*n, 0);
-                OsRng.fill_bytes(&mut bytes);
-                (e.0.clone(), bytes)
-            },
-            _ => unimplemented!()
-            // FieldSemantic::FixedBytes(_) => true,
-            //_ => false,
-        }
+                FieldSemantic::FixedString(s) => (
+                    e.0.clone(),
+                    String::try_from(s)
+                        .unwrap()
+                        .as_str()
+                        .chars()
+                        .map(|e| e as u8)
+                        .collect(),
+                ),
+                FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
+                FieldSemantic::Random(n) => {
+                    use rand_core::{OsRng, RngCore};
+                    let mut bytes = Vec::<u8>::new();
+                    bytes.resize(*n, 0);
+                    OsRng.fill_bytes(&mut bytes);
+                    (e.0.clone(), bytes)
+                }
+                _ => unimplemented!(), // FieldSemantic::FixedBytes(_) => true,
+                                       //_ => false,
+            }
         };
 
         self.semantics
@@ -752,6 +758,8 @@ impl Psf {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cipher {
     ChaCha20Poly1305,
+    Aes128Gcm,
+    Aes256Gcm,
 }
 
 impl FromStr for Cipher {
@@ -760,7 +768,37 @@ impl FromStr for Cipher {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "CHACHA20-POLY1305" => Ok(Cipher::ChaCha20Poly1305),
+            "AES128GCM" => Ok(Cipher::Aes128Gcm),
+            "AES256GCM" => Ok(Cipher::Aes256Gcm),
             _ => Err(ParseError {}),
+        }
+    }
+}
+
+impl Cipher {
+    pub fn block_size_nbytes(&self) -> Option<u8> {
+        match self {
+            Cipher::ChaCha20Poly1305 => None,
+            Cipher::Aes128Gcm | Cipher::Aes256Gcm => Some(16),
+        }
+    }
+
+    pub fn key_length_nbytes(&self) -> u8 {
+        match self {
+            Cipher::Aes128Gcm => 16,
+            Cipher::Aes256Gcm | Cipher::ChaCha20Poly1305 => 32,
+        }
+    }
+
+    pub fn iv_length_nbytes(&self) -> u8 {
+        match self {
+            Cipher::ChaCha20Poly1305 | Cipher::Aes128Gcm | Cipher::Aes256Gcm => 12,
+        }
+    }
+
+    pub fn mac_tag_nbytes(&self) -> u8 {
+        match self {
+            Cipher::ChaCha20Poly1305 | Cipher::Aes128Gcm | Cipher::Aes256Gcm => 16,
         }
     }
 }

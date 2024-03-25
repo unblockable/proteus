@@ -64,7 +64,7 @@ psf = { SOI ~ "@SEGMENT.FORMATS" ~ format+ ~
 
 password_assignment = {"PASSWORD" ~ "=" ~ string_literal ~ ";" }
 
-cipher = { "CHACHA20-POLY1305" }
+cipher = { "CHACHA20-POLY1305" | "AES256GCM" | "AES128GCM" }
 
 cipher_assignment = { "CIPHER" ~ "=" ~ cipher ~ ";" }
 
