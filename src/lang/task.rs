@@ -120,7 +120,7 @@ pub struct CreateMessageArgs {
 pub struct DecryptFieldArgs {
     pub from_msg_heap_id: Identifier,
     pub from_ciphertext_field_id: Identifier,
-    pub from_mac_field_id: Identifier,
+    pub from_mac_field_id: Option<Identifier>,
     pub to_plaintext_heap_id: Identifier,
 }
 
@@ -130,7 +130,7 @@ pub struct EncryptFieldArgs {
     pub from_msg_heap_id: Identifier,
     pub from_field_id: Identifier,
     pub to_ciphertext_heap_id: Identifier,
-    pub to_mac_heap_id: Identifier,
+    pub to_mac_heap_id: Option<Identifier>,
 }
 
 /// TODO. Generate cryptographically insecure random bytes.

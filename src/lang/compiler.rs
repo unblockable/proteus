@@ -56,9 +56,9 @@ impl TaskGraphImpl {
                 // require bytes
                 for i in &mut ins {
                     match i {
-                        Instruction::ReadApp(ReadAppArgs{from_len: x, ..}) => {
+                        Instruction::ReadApp(ReadAppArgs { from_len: x, .. }) => {
                             *x = 0..x.end;
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -176,7 +176,6 @@ fn generate_dynamic_payload_hints(
     format: &Format,
     semantics: &Semantics,
 ) -> Option<HintsDynamicPayload> {
-
     if semantics.find_field_id(FieldSemantic::Payload).is_none() {
         return None;
     }
@@ -374,7 +373,11 @@ fn compile_message_to_instrs(
                 for field_dir in &hints_encryption.enc_field_dirs {
                     let ctext_heap_id =
                         (field_dir.ctext_name.0.to_string() + "_heap").as_str().id();
-                    let mac_heap_id = (field_dir.mac_name.0.to_string() + "_heap").as_str().id();
+
+                    let mac_heap_id: Option<Identifier> = match &field_dir.mac_name {
+                        Some(x) => Some((x.0.to_string() + "_heap").as_str().id()),
+                        None => None,
+                    };
 
                     instrs.push(
                         EncryptFieldArgs {
@@ -395,14 +398,19 @@ fn compile_message_to_instrs(
                         .into(),
                     );
 
-                    instrs.push(
-                        SetArrayBytesArgs {
-                            from_heap_id: mac_heap_id,
-                            to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
-                            to_field_id: field_dir.mac_name.clone(),
-                        }
-                        .into(),
-                    );
+                    if mac_heap_id.is_some() {
+                        instrs.push(
+                            SetArrayBytesArgs {
+                                from_heap_id: mac_heap_id.unwrap(),
+                                to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                                to_field_id: field_dir
+                                    .mac_name
+                                    .clone()
+                                    .expect("mac field must be present"),
+                            }
+                            .into(),
+                        );
+                    }
                 }
             } else {
                 instrs.extend(compile_plaintext_commands_sender(format_id, psf));
@@ -501,11 +509,17 @@ fn compile_message_to_instrs(
                                 .as_str()
                                 .id();
                             // Decrypt it
+                            let from_mac_field_id =
+                                match &field_dir.mac_name {
+                                    Some(x) => Some(x.clone()),
+                                    None => None,
+                                };
+
                             instrs.push(
                                 DecryptFieldArgs {
                                     from_msg_heap_id: MSG_PFX_HEAP_NAME.id(),
                                     from_ciphertext_field_id: ctext_name.clone(),
-                                    from_mac_field_id: field_dir.mac_name.clone(),
+                                    from_mac_field_id,
                                     to_plaintext_heap_id: ptext_heap_name.clone(),
                                 }
                                 .into(),
@@ -622,12 +636,17 @@ fn compile_message_to_instrs(
                                     + "_dec_heap")
                                     .as_str()
                                     .id();
+
+                                let from_mac_field_id = match &field_dir.mac_name {
+                                    Some(x) => Some(x.clone()),
+                                    None => None
+                                };
                                 // Decrypt it
                                 instrs.push(
                                     DecryptFieldArgs {
                                         from_msg_heap_id: MSG_SFX_HEAP_NAME.id(),
                                         from_ciphertext_field_id: ctext_name.clone(),
-                                        from_mac_field_id: field_dir.mac_name.clone(),
+                                        from_mac_field_id,
                                         to_plaintext_heap_id: ptext_heap_name.clone(),
                                     }
                                     .into(),
@@ -705,7 +724,7 @@ mod tests {
 
         let tg = TaskGraphImpl {
             graph,
-            my_role: Role::Server,
+            my_role: Role::Client,
             psf,
         };
 
@@ -713,6 +732,8 @@ mod tests {
 
         for _ in 1..10 {
             let next_task = tg.next(task_completed);
+
+            println!("{:?}", next_task);
 
             match next_task {
                 TaskSet::InTask(t) => {

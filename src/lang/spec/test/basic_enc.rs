@@ -127,14 +127,14 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
                     from_msg_heap_id: "message".id(),
                     from_field_id: "length".id(),
                     to_ciphertext_heap_id: "enc_length_heap".id(),
-                    to_mac_heap_id: "length_mac_heap".id(),
+                    to_mac_heap_id: Some("length_mac_heap".id()),
                 }
                 .into(),
                 EncryptFieldArgs {
                     from_msg_heap_id: "message".id(),
                     from_field_id: "payload".id(),
                     to_ciphertext_heap_id: "enc_payload_heap".id(),
-                    to_mac_heap_id: "payload_mac_heap".id(),
+                    to_mac_heap_id: Some("payload_mac_heap".id()),
                 }
                 .into(),
                 SetArrayBytesArgs {
@@ -207,7 +207,7 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
                 DecryptFieldArgs {
                     from_msg_heap_id: "message_length_part".id(),
                     from_ciphertext_field_id: "length".id(),
-                    from_mac_field_id: "length_mac".id(),
+                    from_mac_field_id: Some("length_mac".id()),
                     to_plaintext_heap_id: "dec_length_heap".id(),
                 }
                 .into(),
@@ -258,7 +258,7 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
                 DecryptFieldArgs {
                     from_msg_heap_id: "message_payload_part".id(),
                     from_ciphertext_field_id: "payload".id(),
-                    from_mac_field_id: "payload_mac".id(),
+                    from_mac_field_id: Some("payload_mac".id()),
                     to_plaintext_heap_id: "dec_payload_heap".id(),
                 }
                 .into(),

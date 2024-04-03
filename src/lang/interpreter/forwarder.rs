@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use bytes::Bytes;
 
 use crate::{
@@ -87,46 +87,62 @@ impl<R: Reader, W: Writer> Forwarder<R, W> {
         }
     }
 
+    fn take_shared_encryptor(&self) -> anyhow::Result<EncryptionCipher> {
+        // Take care not to panic in this scope while holding the lock.
+        let mut crypt = self.state_shared.inner.lock().unwrap();
+        // Move an existing cipher out of shared state.
+        crypt
+            .encryptor
+            .take()
+            .ok_or_else(|| anyhow!("No shared encryption cipher"))
+    }
+
+    fn load_owned_encryptor(&mut self) -> anyhow::Result<&mut EncryptionCipher> {
+        if self.state_owned.encryptor.is_none() {
+            // Move an existing cipher from shared to local state.
+            self.state_owned.encryptor = Some(self.take_shared_encryptor()?);
+        }
+        self.state_owned
+            .encryptor
+            .as_mut()
+            .ok_or_else(|| anyhow!("No local encryption cipher"))
+    }
+
     pub fn encrypt(&mut self, plaintext: &[u8]) -> anyhow::Result<(Vec<u8>, [u8; 16])> {
-        // Check for cipher in our local state before checking shared state.
-        let encryptor = match self.state_owned.encryptor.as_mut() {
-            Some(cipher) => cipher,
-            None => {
-                let cipher_maybe = {
-                    // Take care not to panic in this scope while holding the lock.
-                    let mut crypt = self.state_shared.inner.lock().unwrap();
-                    // Move an existing cipher out of shared state.
-                    crypt.encryptor.take()
-                };
-                match cipher_maybe {
-                    // Store an existing cipher in local state.
-                    Some(cipher) => self.state_owned.encryptor.insert(cipher),
-                    None => bail!("No cipher for encryption"),
-                }
-            }
-        };
-        Ok(encryptor.encrypt(plaintext))
+        Ok(self.load_owned_encryptor()?.encrypt(plaintext))
+    }
+
+    pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
+        Ok(self.load_owned_encryptor()?.encrypt_unauth(plaintext))
+    }
+
+    fn take_shared_decryptor(&self) -> anyhow::Result<DecryptionCipher> {
+        // Take care not to panic in this scope while holding the lock.
+        let mut crypt = self.state_shared.inner.lock().unwrap();
+        // Move an existing cipher out of shared state.
+        crypt
+            .decryptor
+            .take()
+            .ok_or_else(|| anyhow!("No shared decryption cipher"))
+    }
+
+    fn load_owned_decryptor(&mut self) -> anyhow::Result<&mut DecryptionCipher> {
+        if self.state_owned.decryptor.is_none() {
+            // Move an existing cipher from shared to local state.
+            self.state_owned.decryptor = Some(self.take_shared_decryptor()?);
+        }
+        self.state_owned
+            .decryptor
+            .as_mut()
+            .ok_or_else(|| anyhow!("No local decryption cipher"))
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> anyhow::Result<Vec<u8>> {
-        // Check for cipher in our local state before checking shared state.
-        let decryptor = match self.state_owned.decryptor.as_mut() {
-            Some(cipher) => cipher,
-            None => {
-                let cipher_maybe = {
-                    // Take care not to panic in this scope while holding the lock.
-                    let mut crypt = self.state_shared.inner.lock().unwrap();
-                    // Move an existing cipher out of shared state.
-                    crypt.decryptor.take()
-                };
-                match cipher_maybe {
-                    // Store an existing cipher in local state.
-                    Some(cipher) => self.state_owned.decryptor.insert(cipher),
-                    None => bail!("No cipher for decryption"),
-                }
-            }
-        };
-        Ok(decryptor.decrypt(&ciphertext, &mac))
+        Ok(self.load_owned_decryptor()?.decrypt(&ciphertext, &mac))
+    }
+
+    pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
+        Ok(self.load_owned_decryptor()?.decrypt_unauth(&ciphertext))
     }
 }
 

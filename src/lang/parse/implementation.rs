@@ -317,6 +317,15 @@ fn parse_cipher(p: &RulePair) -> Result<Cipher> {
     parse_simple(p)
 }
 
+fn parse_mac_name(p: &RulePair) -> Result<Option<Identifier>> {
+    assert!(p.as_rule() == Rule::mac_name);
+
+    Ok(match p.as_str() {
+        "NULL" => None,
+        _ => Some(parse_identifier(&p.clone().into_inner().next().unwrap())?)
+    })
+}
+
 fn parse_cipher_assignment(p: &RulePair) -> Result<Cipher> {
     assert!(p.as_rule() == Rule::cipher_assignment);
     // Unwraps OK: ITR
@@ -347,7 +356,7 @@ fn parse_encryption_field_directive(p: &RulePair) -> Result<EncryptionFieldDirec
     // Unwraps OK: ITR
     let ptext_name: Identifier = parse_identifier(&p.next().unwrap())?;
     let ctext_name: Identifier = parse_identifier(&p.next().unwrap())?;
-    let mac_name: Identifier = parse_identifier(&p.next().unwrap())?;
+    let mac_name: Option<Identifier> = parse_mac_name(&p.next().unwrap())?;
 
     Ok(EncryptionFieldDirective {
         ptext_name,
@@ -645,8 +654,6 @@ pub mod tests {
             },
         )];
 
-        println!("{:?}", test_cases[0].1.maybe_size_of().unwrap());
-
         test_rule_pair(test_cases.iter(), Rule::format, parse_format);
     }
 
@@ -669,6 +676,7 @@ pub mod tests {
         let test_cases = vec![
             ("PAYLOAD", FieldSemantic::Payload),
             ("PADDING", FieldSemantic::Padding),
+            ("PADDING_LENGTH", FieldSemantic::PaddingLength),
             ("LENGTH", FieldSemantic::Length),
             (
                 "FIXED_STRING(\"foo\")",
@@ -790,7 +798,7 @@ pub mod tests {
         let output = EncryptionFieldDirective {
             ptext_name: "length".id(),
             ctext_name: "enc_length".id(),
-            mac_name: "length_mac".id(),
+            mac_name: Some("length_mac".id()),
         };
 
         let test_cases = vec![(input, output)];
@@ -818,12 +826,12 @@ pub mod tests {
             EncryptionFieldDirective {
                 ptext_name: "length".id(),
                 ctext_name: "enc_length".id(),
-                mac_name: "length_mac".id(),
+                mac_name: Some("length_mac".id()),
             },
             EncryptionFieldDirective {
                 ptext_name: "payload".id(),
                 ctext_name: "enc_payload".id(),
-                mac_name: "payload_mac".id(),
+                mac_name: Some("payload_mac".id()),
             },
         ];
 
@@ -842,13 +850,30 @@ pub mod tests {
     }
 
     #[test]
+    fn test_parse_mac_name() {
+        let test_cases = vec![
+            ("NULL", None),
+            ("NULLary", Some("NULLary".id())),
+            ("NUL", Some("NUL".id())),
+            ("null", Some("null".id())),
+            ("foo", Some("foo".id())),
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::mac_name,
+            parse_mac_name,
+        );
+    }
+
+    #[test]
     fn test_parse_crypto_segment() {
         let input = "@SEGMENT.CRYPTO\
             PASSWORD = \"hunter2\";\
             CIPHER   = CHACHA20-POLY1305;\
             ENCRYPT EncDataMsg FROM DataMsg\
             { PTEXT: length;  CTEXT: enc_length;  MAC: length_mac },\
-            { PTEXT: payload; CTEXT: enc_payload; MAC: payload_mac };";
+            { PTEXT: payload; CTEXT: enc_payload; MAC: NULL };";
 
         let enc_fmt_bnd = EncryptionFormatBinding {
             to_format_name: "EncDataMsg".id(),
@@ -862,12 +887,12 @@ pub mod tests {
             EncryptionFieldDirective {
                 ptext_name: "length".id(),
                 ctext_name: "enc_length".id(),
-                mac_name: "length_mac".id(),
+                mac_name: Some("length_mac".id()),
             },
             EncryptionFieldDirective {
                 ptext_name: "payload".id(),
                 ctext_name: "enc_payload".id(),
-                mac_name: "payload_mac".id(),
+                mac_name: None,
             },
         ];
 

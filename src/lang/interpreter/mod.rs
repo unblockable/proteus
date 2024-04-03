@@ -310,4 +310,9 @@ mod tests {
     async fn integration_psf_random() {
         integration_with_psf(&"examples/psf/random.psf").await
     }
+
+    #[tokio::test]
+    async fn integration_psf_random_noauth() {
+        integration_with_psf(&"examples/psf/random_noauth.psf").await
+    }
 }

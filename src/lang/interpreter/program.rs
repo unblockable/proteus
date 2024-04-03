@@ -115,14 +115,22 @@ impl Program {
                 let ciphertext = msg
                     .get_field_bytes(&args.from_ciphertext_field_id)
                     .map_err(|_| anyhow!("No ciphertext bytes"))?;
-                let mac = msg
-                    .get_field_bytes(&args.from_mac_field_id)
-                    .map_err(|_| anyhow!("No mac bytes"))?;
 
-                let mut mac_fixed = [0u8; 16];
-                mac_fixed.copy_from_slice(&mac);
+                // TODO Should auth and unauth encrypt be separate instructions?
+                let plaintext = if args.from_mac_field_id.is_some() {
+                    // We are doing authenticated encryption.
+                    let mac = msg
+                        .get_field_bytes(&args.from_mac_field_id.as_ref().unwrap())
+                        .map_err(|_| anyhow!("No mac bytes"))?;
 
-                let plaintext = forwarder.decrypt(&ciphertext, &mac_fixed).unwrap();
+                    let mut mac_fixed = [0u8; 16];
+                    mac_fixed.copy_from_slice(&mac);
+
+                    forwarder.decrypt(&ciphertext, &mac_fixed).unwrap()
+                } else {
+                    // We are doing unauthenticated encryption.
+                    forwarder.decrypt_unauth(&ciphertext).unwrap()
+                };
 
                 let mut buf = BytesMut::with_capacity(plaintext.len());
                 buf.put_slice(&plaintext);
@@ -138,17 +146,28 @@ impl Program {
                     .get_field_bytes(&args.from_field_id)
                     .map_err(|_| anyhow!("No field bytes"))?;
 
-                let (ciphertext, mac) = forwarder.encrypt(&plaintext).unwrap();
+                // TODO Should auth and unauth encrypt be separate instructions?
+                if args.to_mac_heap_id.is_some() {
+                    // We are doing authenticated encryption.
+                    let (ciphertext, mac) = forwarder.encrypt(&plaintext).unwrap();
 
-                let mut buf = BytesMut::with_capacity(ciphertext.len());
-                buf.put_slice(&ciphertext);
-                self.bytes_heap
-                    .insert(args.to_ciphertext_heap_id.clone(), buf.freeze());
+                    let mut buf = BytesMut::with_capacity(ciphertext.len());
+                    buf.put_slice(&ciphertext);
+                    self.bytes_heap
+                        .insert(args.to_ciphertext_heap_id.clone(), buf.freeze());
 
-                let mut buf = BytesMut::with_capacity(mac.len());
-                buf.put_slice(&mac);
-                self.bytes_heap
-                    .insert(args.to_mac_heap_id.clone(), buf.freeze());
+                    let mut buf = BytesMut::with_capacity(mac.len());
+                    buf.put_slice(&mac);
+                    self.bytes_heap
+                        .insert(args.to_mac_heap_id.as_ref().unwrap().clone(), buf.freeze());
+                } else {
+                    // We are doing unauthenticated encryption.
+                    let ciphertext = forwarder.encrypt_unauth(&plaintext).unwrap();
+                    let mut buf = BytesMut::with_capacity(ciphertext.len());
+                    buf.put_slice(&ciphertext);
+                    self.bytes_heap
+                        .insert(args.to_ciphertext_heap_id.clone(), buf.freeze());
+                }
             }
             Instruction::GenRandomBytes(_args) => {
                 unimplemented!()

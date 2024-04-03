@@ -30,6 +30,7 @@ pub struct DecryptionCipher {
 }
 
 struct CipherInner {
+    no_mac: Salsa20,
     nonce_gen: Salsa20,
     cipher: ChaCha20Poly1305,
     n_bytes_ciphered: usize,
@@ -48,14 +49,24 @@ impl Cipher {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
         self.encryptor.encrypt(plaintext)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
+    pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> Vec<u8> {
+        self.encryptor.encrypt_unauth(plaintext)
+    }
+
+    #[cfg(test)]
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
         self.decryptor.decrypt(ciphertext, mac)
+    }
+
+    #[cfg(test)]
+    pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        self.decryptor.decrypt_unauth(ciphertext)
     }
 
     pub fn into_split(self) -> (EncryptionCipher, DecryptionCipher) {
@@ -74,6 +85,7 @@ impl Cipher {
 impl CipherInner {
     fn new(secret_key: [u8; 32], nonce: [u8; 8]) -> Self {
         Self {
+            no_mac: Salsa20::new(&secret_key.into(), &nonce.into()),
             nonce_gen: Salsa20::new(&secret_key.into(), &nonce.into()),
             cipher: ChaCha20Poly1305::new(&secret_key.into()),
             n_bytes_ciphered: 0,
@@ -114,6 +126,12 @@ impl EncryptionCipher {
 
         (ciphertext, mac)
     }
+
+    pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> Vec<u8> {
+        let mut ciphertext: Vec<u8> = plaintext.to_vec();
+        self.inner.no_mac.apply_keystream(&mut ciphertext);
+        ciphertext
+    }
 }
 
 impl DecryptionCipher {
@@ -134,6 +152,12 @@ impl DecryptionCipher {
             .cipher
             .decrypt(&nonce.into(), &ctext_and_mac[..])
             .expect("decryption failure")
+    }
+
+    pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> Vec<u8> {
+        let mut plaintext: Vec<u8> = ciphertext.to_vec();
+        self.inner.no_mac.apply_keystream(&mut plaintext);
+        plaintext
     }
 }
 
@@ -179,6 +203,21 @@ pub mod tests {
 
         let (ctext, mac) = recv_enc.encrypt(&original_plain_text[..]);
         let recovered_plain_text = send_dec.decrypt(&ctext[..], &mac);
+        assert_eq!(original_plain_text, recovered_plain_text);
+    }
+
+    #[test]
+    fn test_encryption_decryption_unauth() {
+        let secret_key = make_key();
+
+        let mut send_cipher = Cipher::new(secret_key, CipherKind::Sender);
+        let mut recv_cipher = Cipher::new(secret_key, CipherKind::Receiver);
+
+        let original_plain_text: Vec<u8> = b"hello world".iter().map(|e| *e).collect();
+
+        let ctext = send_cipher.encrypt_unauth(&original_plain_text[..]);
+        let recovered_plain_text = recv_cipher.decrypt_unauth(&ctext[..]);
+
         assert_eq!(original_plain_text, recovered_plain_text);
     }
 }

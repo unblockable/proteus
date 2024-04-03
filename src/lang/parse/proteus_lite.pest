@@ -40,7 +40,8 @@ fixed_bytes_semantic = { "FIXED_BYTES" ~ "(" ~ hex_literal ~ ")" }
 randomness_semantic = { "RANDOM" ~ "(" ~ positive_numeric_literal ~ ")" }
 
 field_semantic = { fixed_string_semantic | fixed_bytes_semantic |
-                   randomness_semantic | "PADDING" | "PAYLOAD" | "LENGTH" }
+                   randomness_semantic | "PADDING_LENGTH" | "PADDING" |
+                   "PAYLOAD" | "LENGTH" }
 
 semantic_binding = { "{" ~
   "FORMAT" ~ ":" ~ identifier ~ ";" ~
@@ -66,6 +67,8 @@ password_assignment = {"PASSWORD" ~ "=" ~ string_literal ~ ";" }
 
 cipher = { "CHACHA20-POLY1305" | "AES256GCM" | "AES128GCM" }
 
+mac_name = { identifier | "NULL" }
+
 cipher_assignment = { "CIPHER" ~ "=" ~ cipher ~ ";" }
 
 encryption_format_binding = { "ENCRYPT" ~ identifier ~ "FROM" ~ identifier }
@@ -73,7 +76,7 @@ encryption_format_binding = { "ENCRYPT" ~ identifier ~ "FROM" ~ identifier }
 encryption_field_directive = { "{" ~
                                "PTEXT" ~ ":" ~ identifier ~ ";" ~
                                "CTEXT" ~ ":" ~ identifier ~ ";" ~
-                               "MAC"   ~ ":" ~ identifier ~ "}" }
+                               "MAC"   ~ ":" ~ mac_name ~ "}" }
 
 encryption_directives = { encryption_format_binding ~
                           encryption_field_directive ~

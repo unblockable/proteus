@@ -563,6 +563,7 @@ impl MaybeSized for Format {
 pub enum FieldSemantic {
     Payload,
     Padding,
+    PaddingLength,
     Length,
     FixedString(String),
     FixedBytes(Vec<u8>),
@@ -588,6 +589,7 @@ impl FromStr for FieldSemantic {
         match s {
             "PAYLOAD" => Ok(FieldSemantic::Payload),
             "PADDING" => Ok(FieldSemantic::Padding),
+            "PADDING_LENGTH" => Ok(FieldSemantic::PaddingLength),
             "LENGTH" => Ok(FieldSemantic::Length),
             _ => Err(ParseError {}),
         }
@@ -813,7 +815,7 @@ pub struct EncryptionFormatBinding {
 pub struct EncryptionFieldDirective {
     pub ptext_name: Identifier,
     pub ctext_name: Identifier,
-    pub mac_name: Identifier,
+    pub mac_name: Option<Identifier>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
