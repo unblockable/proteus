@@ -61,6 +61,8 @@ pub enum ReadNetLength {
     Identifier(Identifier),
     /// Amount to read specified in this heap variable minus the given value.
     IdentifierMinus((Identifier, usize)),
+    /// Subtract the id and the usize from the read amount.
+    IdentifierMinusMinus((Identifier, Identifier, usize)),
     /// Amount to read specified by this range.
     Range(Range<usize>),
 }
@@ -105,6 +107,8 @@ pub struct ComputeLengthArgs {
 pub struct ConcretizeFormatArgs {
     pub from_format: AbstractFormat,
     pub to_heap_id: Identifier,
+    pub padding_field: Option<Identifier>,
+    pub block_size_nbytes: Option<usize>,
 }
 
 /// Creates an allocated message from the `ConcreteFormat` on the heap given by

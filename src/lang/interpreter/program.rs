@@ -70,6 +70,39 @@ impl Program {
             Instruction::ConcretizeFormat(args) => {
                 let aformat = args.from_format.clone();
 
+                // The following block is ryans hack to support padding.
+                if let Some(padding_field_id) = &args.padding_field {
+                    let block_size = args.block_size_nbytes.unwrap();
+
+                    // Crummy hack. Infer the length of the payload field...
+                    let darrays = aformat.get_dynamic_arrays();
+                    assert!(darrays.len() == 2);
+
+                    let payload_id = darrays
+                        .iter()
+                        .filter(|&id| id != padding_field_id)
+                        .next()
+                        .unwrap();
+
+                    // We know the payload bytes are there...
+                    let payload_bytes = self.bytes_heap.get(payload_id).unwrap();
+
+                    let payload_nbytes = payload_bytes.len();
+
+                    let padding_nbytes = crate::lang::padding_nbytes(payload_nbytes, block_size);
+
+                    let mut padding: Vec<u8> = vec![];
+                    padding.resize_with(padding_nbytes, || 255);
+                    let padding = bytes::Bytes::from(padding);
+
+                    self.bytes_heap.insert(padding_field_id.clone(), padding);
+
+                    use crate::lang::types::ToIdentifier;
+                    // FIXME(rwails) MEGA HACK
+                    self.number_heap
+                        .insert("__padding_len_on_heap".id(), padding_nbytes as u128);
+                }
+
                 // Get the fields that have dynamic lengths, and compute what the lengths
                 // will be now that we should have the data for each field on the heap.
                 let concrete_bytes: Vec<(Identifier, Option<&Bytes>)> = aformat
@@ -223,6 +256,18 @@ impl Program {
                     ReadNetLength::IdentifierMinus((id, sub)) => {
                         let num = self.number_heap.get(id).ok_or(anyhow!("No num on heap"))?;
                         let val = (*num as usize) - sub;
+                        Range {
+                            start: val,
+                            end: val + 1,
+                        }
+                    }
+                    ReadNetLength::IdentifierMinusMinus((id, id_sub, sub)) => {
+                        let num = self.number_heap.get(id).ok_or(anyhow!("No num1 on heap"))?;
+                        let num2 = self
+                            .number_heap
+                            .get(id_sub)
+                            .ok_or(anyhow!("No num2 on heap"))?;
+                        let val = (*num as usize) - (*num2 as usize) - sub;
                         Range {
                             start: val,
                             end: val + 1,

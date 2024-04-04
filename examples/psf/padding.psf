@@ -1,0 +1,32 @@
+@SEGMENT.FORMATS
+
+  DEFINE DataMsg
+    { NAME: length         ; TYPE: u16 },
+    { NAME: padding_length ; TYPE: u16 },
+    { NAME: payload        ; TYPE: [u8; length.size_of] },
+    { NAME: padding        ; TYPE: [u8; padding_length.size_of] },
+    { NAME: rider          ; TYPE: [u8; 4] };
+
+@SEGMENT.SEMANTICS
+
+  { FORMAT: DataMsg; FIELD: length         ; SEMANTIC: LENGTH };
+  { FORMAT: DataMsg; FIELD: padding_length ; SEMANTIC: PADDING_LENGTH };
+  { FORMAT: DataMsg; FIELD: payload        ; SEMANTIC: PAYLOAD };
+  { FORMAT: DataMsg; FIELD: padding        ; SEMANTIC: PADDING };
+  { FORMAT: DataMsg; FIELD: rider          ; SEMANTIC: RANDOM(4) };
+
+@SEGMENT.SEQUENCE
+
+  { ROLE: CLIENT; PHASE: DATA;      FORMAT: DataMsg };
+  { ROLE: SERVER; PHASE: DATA;      FORMAT: DataMsg };
+
+@SEGMENT.CRYPTO
+
+  PASSWORD = "foobar";
+  CIPHER = AES256GCM;
+
+  ENCRYPT DataMsg FROM DataMsg
+    { PTEXT: length; CTEXT: length; MAC: NULL },
+    { PTEXT: padding_length; CTEXT: padding_length; MAC: NULL },
+    { PTEXT: payload; CTEXT: payload; MAC: NULL },
+    { PTEXT: padding; CTEXT: padding; MAC: NULL };

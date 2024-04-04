@@ -86,5 +86,5 @@ crypto_segment = {
   "@SEGMENT.CRYPTO" ~
   password_assignment? ~
   cipher_assignment ~
-  encryption_directives+
+  encryption_directives*
 }

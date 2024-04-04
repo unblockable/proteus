@@ -164,17 +164,27 @@ pub fn compile_task_graph<'a, T: Iterator<Item = &'a SequenceSpecifier>>(itr: T)
 }
 
 #[derive(Debug)]
+struct HintsPadding {
+    field_id: Identifier,
+    length_field_id: Identifier,
+    length_field_nbytes: usize,
+}
+
+#[derive(Debug)]
 struct HintsDynamicPayload {
     payload_field_name: Identifier,
     length_field_name: Identifier,
     length_field_max: usize,
     length_field_nbytes: usize,
     static_prefix_last_field: Identifier,
+    // Padding fields
+    hints_padding: Option<HintsPadding>,
 }
 
 fn generate_dynamic_payload_hints(
     format: &Format,
     semantics: &Semantics,
+    crypto: Option<&CryptoSpec>,
 ) -> Option<HintsDynamicPayload> {
     if semantics.find_field_id(FieldSemantic::Payload).is_none() {
         return None;
@@ -218,12 +228,50 @@ fn generate_dynamic_payload_hints(
         return None;
     }
 
+    let hints_padding =
+        if let Some(padding_field_id) = semantics.find_field_id(FieldSemantic::Padding) {
+            let padding_field = format.try_get_field_by_name(&padding_field_id).unwrap();
+            assert!(matches!(padding_field.dtype, Array::Dynamic(_)));
+
+            let padding_length_field_id = semantics
+                .find_field_id(FieldSemantic::PaddingLength)
+                .unwrap();
+
+            let padding_length_field = format
+                .try_get_field_by_name(&padding_length_field_id)
+                .unwrap();
+
+            let padding_len_field_type = TryInto::<NumericType>::try_into(
+                TryInto::<PrimitiveArray>::try_into(padding_length_field.dtype).unwrap(),
+            )
+            .unwrap();
+
+            Some(HintsPadding {
+                field_id: padding_field_id,
+                length_field_id: padding_length_field_id,
+                length_field_nbytes: padding_len_field_type.size_of(),
+            })
+        } else {
+            None
+        };
+
+    let padding_space = if hints_padding.is_some() {
+        if let Some(block_nbytes) = crypto.as_ref().unwrap().cipher.block_size_nbytes() {
+            block_nbytes
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
     Some(HintsDynamicPayload {
         payload_field_name: payload_field_id,
         length_field_name: length_field_id,
-        length_field_max: len_field_max,
+        length_field_max: len_field_max - (padding_space as usize),
         length_field_nbytes,
         static_prefix_last_field,
+        hints_padding,
     })
 }
 
@@ -266,7 +314,15 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<I
     let format = &afs.format.format;
     let semantics = &afs.semantics;
 
-    let maybe_hints_dynamic_payload = generate_dynamic_payload_hints(format, semantics);
+    let maybe_hints_dynamic_payload =
+        generate_dynamic_payload_hints(format, semantics, psf.crypto_spec.as_ref());
+
+    let has_padding = maybe_hints_dynamic_payload.is_some()
+        && maybe_hints_dynamic_payload
+            .as_ref()
+            .unwrap()
+            .hints_padding
+            .is_some();
 
     // Handle dynamic length fields
     let mut dynamic_field_names = vec![];
@@ -290,6 +346,33 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<I
                 fixed_fields: afs.semantics.get_fixed_fields(),
             },
             to_heap_id: CFORMAT_HEAP_NAME.id(),
+            padding_field: if has_padding {
+                Some(
+                    maybe_hints_dynamic_payload
+                        .as_ref()
+                        .unwrap()
+                        .hints_padding
+                        .as_ref()
+                        .unwrap()
+                        .field_id
+                        .clone(),
+                )
+            } else {
+                None
+            },
+            block_size_nbytes: if has_padding {
+                Some(
+                    psf.crypto_spec
+                        .as_ref()
+                        .unwrap()
+                        .cipher
+                        .block_size_nbytes()
+                        .unwrap()
+                        .into(),
+                )
+            } else {
+                None
+            },
         }
         .into(),
     );
@@ -333,6 +416,28 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<I
             }
             .into(),
         );
+
+        if let Some(ref hints_padding) = hints_dynamic_payload.hints_padding {
+            instrs.push(
+                SetNumericValueArgs {
+                    // FIXME(rwails) MEGA HACK
+                    from_heap_id: "__padding_len_on_heap".id(),
+                    to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                    to_field_id: hints_padding.length_field_id.clone(),
+                }
+                .into(),
+            );
+
+            instrs.push(
+                SetArrayBytesArgs {
+                    // FIXME(rwails) MEGA HACK
+                    from_heap_id: hints_padding.field_id.clone(),
+                    to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                    to_field_id: hints_padding.field_id.clone(),
+                }
+                .into(),
+            );
+        }
     }
 
     instrs
@@ -352,7 +457,8 @@ fn compile_message_to_instrs(
 
     let is_sender = my_role == edge_role;
 
-    let maybe_hints_dynamic_payload = generate_dynamic_payload_hints(format, semantics);
+    let maybe_hints_dynamic_payload =
+        generate_dynamic_payload_hints(format, semantics, psf.crypto_spec.as_ref());
 
     if is_sender {
         if let Some(ref crypto_spec) = psf.crypto_spec {
@@ -429,6 +535,14 @@ fn compile_message_to_instrs(
         // Is receiver
         let (prefix, suffix) = format.split_into_fixed_sized_prefix_dynamic_suffix();
 
+        let hints_padding = if let Some(payload_hints) =
+            generate_dynamic_payload_hints(format, semantics, psf.crypto_spec.as_ref())
+        {
+            payload_hints.hints_padding
+        } else {
+            None
+        };
+
         let has_prefix = !prefix.fields.is_empty();
         let has_suffix = !suffix.fields.is_empty();
 
@@ -461,6 +575,10 @@ fn compile_message_to_instrs(
                         fixed_fields: afs.semantics.get_fixed_fields(),
                     },
                     to_heap_id: CFORMAT_PFX_HEAP_NAME.id(),
+
+                    // FIXME(rwails)
+                    padding_field: None,
+                    block_size_nbytes: None,
                 }
                 .into(),
             );
@@ -509,11 +627,10 @@ fn compile_message_to_instrs(
                                 .as_str()
                                 .id();
                             // Decrypt it
-                            let from_mac_field_id =
-                                match &field_dir.mac_name {
-                                    Some(x) => Some(x.clone()),
-                                    None => None,
-                                };
+                            let from_mac_field_id = match &field_dir.mac_name {
+                                Some(x) => Some(x.clone()),
+                                None => None,
+                            };
 
                             instrs.push(
                                 DecryptFieldArgs {
@@ -560,16 +677,47 @@ fn compile_message_to_instrs(
                     .into(),
                 );
 
-                instrs.push(
-                    ReadNetArgs {
-                        from_len: ReadNetLength::IdentifierMinus((
-                            LENGTH_ON_HEAP_NAME.id(),
-                            fixed_tail_size,
-                        )),
-                        to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
-                    }
-                    .into(),
-                );
+                if let Some(ref hints_padding) = hints_padding {
+                    instrs.push(
+                        GetNumericValueArgs {
+                            from_msg_heap_id: MSG_PFX_HEAP_NAME.id(),
+                            from_field_id: hints_padding.length_field_id.clone(),
+                            to_heap_id: "__padding_len_on_heap".id(),
+                        }
+                        .into(),
+                    );
+
+                    instrs.push(
+                        ReadNetArgs {
+                            from_len: ReadNetLength::IdentifierMinusMinus((
+                                LENGTH_ON_HEAP_NAME.id(),
+                                "__padding_len_on_heap".id(),
+                                fixed_tail_size,
+                            )),
+                            to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
+                        }
+                        .into(),
+                    );
+
+                    instrs.push(
+                        ReadNetArgs {
+                            from_len: ReadNetLength::Identifier("__padding_len_on_heap".id()),
+                            to_heap_id: hints_padding.field_id.clone(),
+                        }
+                        .into(),
+                    );
+                } else {
+                    instrs.push(
+                        ReadNetArgs {
+                            from_len: ReadNetLength::IdentifierMinus((
+                                LENGTH_ON_HEAP_NAME.id(),
+                                fixed_tail_size,
+                            )),
+                            to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
+                        }
+                        .into(),
+                    );
+                }
 
                 for field in &suffix_fixed_tail.fields {
                     let field_len = field.maybe_size_of().unwrap();
@@ -590,6 +738,10 @@ fn compile_message_to_instrs(
                             fixed_fields: afs.semantics.get_fixed_fields(),
                         },
                         to_heap_id: CFORMAT_SFX_HEAP_NAME.id(),
+
+                        // FIXME
+                        padding_field: None,
+                        block_size_nbytes: None,
                     }
                     .into(),
                 );
@@ -639,7 +791,7 @@ fn compile_message_to_instrs(
 
                                 let from_mac_field_id = match &field_dir.mac_name {
                                     Some(x) => Some(x.clone()),
-                                    None => None
+                                    None => None,
                                 };
                                 // Decrypt it
                                 instrs.push(

@@ -72,6 +72,8 @@ impl TaskProvider for LengthPayloadSpec {
                 ConcretizeFormatArgs {
                     from_format: self.abs_format_out.clone(),
                     to_heap_id: "cformat".id(),
+                    padding_field: None,
+                    block_size_nbytes: None,
                 }
                 .into(),
                 CreateMessageArgs {
@@ -116,6 +118,8 @@ impl TaskProvider for LengthPayloadSpec {
                 ConcretizeFormatArgs {
                     from_format: self.abs_format_in1.clone(),
                     to_heap_id: "cformat1".id(),
+                    padding_field: None,
+                    block_size_nbytes: None,
                 }
                 .into(),
                 CreateMessageArgs {
@@ -143,6 +147,8 @@ impl TaskProvider for LengthPayloadSpec {
                 ConcretizeFormatArgs {
                     from_format: self.abs_format_in2.clone(),
                     to_heap_id: "cformat2".id(),
+                    padding_field: None,
+                    block_size_nbytes: None,
                 }
                 .into(),
                 CreateMessageArgs {
