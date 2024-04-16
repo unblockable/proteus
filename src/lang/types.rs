@@ -219,7 +219,7 @@ pub enum DataType {
     Compound(CompoundType),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Default, PartialOrd, Ord)]
 pub struct Identifier(pub String);
 
 impl FromStr for Identifier {
@@ -559,7 +559,7 @@ impl MaybeSized for Format {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum FieldSemantic {
     Payload,
     Padding,
@@ -568,6 +568,7 @@ pub enum FieldSemantic {
     FixedString(String),
     FixedBytes(Vec<u8>),
     Random(usize),
+    Pubkey(PubkeyEncoding),
 }
 
 impl TryFrom<FieldSemantic> for String {
@@ -647,6 +648,10 @@ impl Semantics {
         &mut self.semantics
     }
 
+    pub fn as_ref(&self) -> &HashMap<Identifier, FieldSemantic> {
+        &self.semantics
+    }
+
     pub fn find_field_id(&self, semantic: FieldSemantic) -> Option<Identifier> {
         self.semantics
             .iter()
@@ -659,6 +664,7 @@ impl Semantics {
             FieldSemantic::FixedString(_) => true,
             FieldSemantic::FixedBytes(_) => true,
             FieldSemantic::Random(_) => true,
+            FieldSemantic::Pubkey(_) => true,
             _ => false,
         };
 
@@ -679,6 +685,20 @@ impl Semantics {
                     let mut bytes = Vec::<u8>::new();
                     bytes.resize(*n, 0);
                     OsRng.fill_bytes(&mut bytes);
+                    (e.0.clone(), bytes)
+                }
+                FieldSemantic::Pubkey(encoding) => {
+                    let key = crate::crypto::pubkey::X25519PubKey::new();
+
+                    let bytes = match encoding {
+                        PubkeyEncoding::RAW => {
+                            <crate::crypto::pubkey::X25519PubKey as Into<[u8; 32]>>::into(key)
+                                .to_vec()
+                        }
+                        PubkeyEncoding::DER => key.to_der(),
+                        PubkeyEncoding::PEM => key.to_pem(),
+                    };
+
                     (e.0.clone(), bytes)
                 }
                 _ => unimplemented!(), // FieldSemantic::FixedBytes(_) => true,
@@ -841,6 +861,36 @@ impl CryptoSpec {
             password,
             cipher,
             directives: HashMap::from_iter(itr.map(|e| (e.enc_fmt_bnd.clone(), e.clone()))),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub enum PubkeyEncoding {
+    RAW,
+    DER,
+    PEM,
+}
+
+impl FromStr for PubkeyEncoding {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        match s {
+            "RAW" => Ok(PubkeyEncoding::RAW),
+            "DER" => Ok(PubkeyEncoding::DER),
+            "PEM" => Ok(PubkeyEncoding::PEM),
+            _ => Err(ParseError {}),
+        }
+    }
+}
+
+impl PubkeyEncoding {
+    pub fn key_length_nbytes(self) -> usize {
+        match self {
+            PubkeyEncoding::RAW => 32,
+            PubkeyEncoding::DER => 44,
+            PubkeyEncoding::PEM => 115,
         }
     }
 }

@@ -11,6 +11,9 @@ const NONCE_B: [u8; 8] = [0xBB; 8];
 type Payload = Vec<u8>;
 type Mac = [u8; MAC_NBYTES];
 
+type Key = [u8; 32];
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum CipherKind {
     Sender,
     Receiver,
@@ -23,10 +26,12 @@ pub struct Cipher {
 
 pub struct EncryptionCipher {
     inner: CipherInner,
+    kind: CipherKind,
 }
 
 pub struct DecryptionCipher {
     inner: CipherInner,
+    kind: CipherKind,
 }
 
 struct CipherInner {
@@ -34,18 +39,14 @@ struct CipherInner {
     nonce_gen: Salsa20,
     cipher: ChaCha20Poly1305,
     n_bytes_ciphered: usize,
+    key: Option<Key>,
 }
 
 impl Cipher {
-    pub fn new(secret_key: [u8; 32], cipher_kind: CipherKind) -> Self {
-        let (enc_nonce, dec_nonce) = match cipher_kind {
-            CipherKind::Sender => (NONCE_A, NONCE_B),
-            CipherKind::Receiver => (NONCE_B, NONCE_A),
-        };
-
+    pub fn new(secret_key: [u8; 32], kind: CipherKind) -> Self {
         Self {
-            encryptor: EncryptionCipher::new(secret_key, enc_nonce),
-            decryptor: DecryptionCipher::new(secret_key, dec_nonce),
+            encryptor: EncryptionCipher::new(secret_key, kind),
+            decryptor: DecryptionCipher::new(secret_key, kind),
         }
     }
 
@@ -89,6 +90,7 @@ impl CipherInner {
             nonce_gen: Salsa20::new(&secret_key.into(), &nonce.into()),
             cipher: ChaCha20Poly1305::new(&secret_key.into()),
             n_bytes_ciphered: 0,
+            key: None,
         }
     }
 
@@ -97,13 +99,39 @@ impl CipherInner {
         self.nonce_gen.apply_keystream(&mut buf);
         buf
     }
+
+    fn init_key(&mut self, key_bytes: &[u8], nonce: &[u8; 8]) {
+        if self.key.is_none() {
+            let mut key: Key = [0; 32];
+            let copy_len = core::cmp::min(key.len(), key_bytes.len());
+
+            (&mut key[..copy_len]).clone_from_slice(&key_bytes[..copy_len]);
+            self.key = Some(key);
+
+            self.nonce_gen = Salsa20::new(&key.into(), nonce.into());
+            self.no_mac = Salsa20::new(&key.into(), nonce.into());
+        }
+    }
 }
 
 impl EncryptionCipher {
-    fn new(secret_key: [u8; 32], nonce: [u8; 8]) -> Self {
+    fn new(secret_key: [u8; 32], kind: CipherKind) -> Self {
         Self {
-            inner: CipherInner::new(secret_key, nonce),
+            inner: CipherInner::new(secret_key, Self::fixed_nonce(kind)),
+            kind,
         }
+    }
+
+    fn fixed_nonce(kind: CipherKind) -> [u8; 8] {
+        match kind {
+            CipherKind::Sender => NONCE_A,
+            CipherKind::Receiver => NONCE_B,
+        }
+    }
+
+    pub fn init_key(&mut self, key_bytes: &[u8]) {
+        self.inner
+            .init_key(key_bytes, &Self::fixed_nonce(self.kind));
     }
 
     pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
@@ -135,10 +163,23 @@ impl EncryptionCipher {
 }
 
 impl DecryptionCipher {
-    fn new(secret_key: [u8; 32], nonce: [u8; 8]) -> Self {
+    fn new(secret_key: [u8; 32], kind: CipherKind) -> Self {
         Self {
-            inner: CipherInner::new(secret_key, nonce),
+            inner: CipherInner::new(secret_key, Self::fixed_nonce(kind)),
+            kind,
         }
+    }
+
+    fn fixed_nonce(kind: CipherKind) -> [u8; 8] {
+        match kind {
+            CipherKind::Sender => NONCE_B,
+            CipherKind::Receiver => NONCE_A,
+        }
+    }
+
+    pub fn init_key(&mut self, key_bytes: &[u8]) {
+        self.inner
+            .init_key(key_bytes, &Self::fixed_nonce(self.kind));
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
@@ -166,7 +207,7 @@ pub mod tests {
     use super::*;
     use crate::crypto::kdf::derive_key_256;
 
-    fn make_key() -> [u8;32] {
+    fn make_key() -> [u8; 32] {
         let password = "hunter2";
         let salt = "pepper pepper pepper";
         derive_key_256(password, salt)

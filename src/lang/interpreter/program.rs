@@ -6,7 +6,7 @@ use crate::{
         memory::Heap,
         message::Message,
         task::{Instruction, ReadNetLength, Task, TaskID},
-        types::{ConcreteFormat, Identifier},
+        types::{ConcreteFormat, Identifier, PubkeyEncoding},
         Role,
     },
     net::{Reader, Writer},
@@ -330,6 +330,37 @@ impl Program {
                     .send(data)
                     .await
                     .map_err(|e| anyhow!("WriteNet error {e}"))?;
+            }
+            Instruction::ReadKey(args) => {
+                // TODO: dead code?
+                let _msg = self
+                    .message_heap
+                    .get(&args.from_msg_heap_id)
+                    .ok_or(anyhow!("No msg on heap"))?;
+            }
+            Instruction::SaveKey(args) => {
+                let msg = self
+                    .message_heap
+                    .get(&args.from_msg_heap_id)
+                    .ok_or(anyhow!("No msg on heap"))?;
+
+                let bytes = msg
+                .get_field_bytes(&args.from_field_id)
+                .map_err(|_| anyhow!("No field bytes"))?;
+
+                let decoded_key = match args.pubkey_encoding {
+                    PubkeyEncoding::RAW => {
+                        crate::crypto::pubkey::X25519PubKey::from_bytes(&bytes)
+                    }
+                    PubkeyEncoding::PEM => {
+                        crate::crypto::pubkey::X25519PubKey::from_pem(bytes.to_vec())
+                    }
+                    PubkeyEncoding::DER => {
+                        crate::crypto::pubkey::X25519PubKey::from_der(bytes.to_vec())
+                    }
+                };
+
+                forwarder.init_key(decoded_key.as_bytes())?;
             }
         }
 

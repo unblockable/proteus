@@ -39,9 +39,13 @@ fixed_bytes_semantic = { "FIXED_BYTES" ~ "(" ~ hex_literal ~ ")" }
 
 randomness_semantic = { "RANDOM" ~ "(" ~ positive_numeric_literal ~ ")" }
 
+pubkey_encoding = { "RAW" | "DER" | "PEM" }
+
+pubkey_semantic = { "PUBKEY" ~ "(" ~ pubkey_encoding ~ ")" }
+
 field_semantic = { fixed_string_semantic | fixed_bytes_semantic |
-                   randomness_semantic | "PADDING_LENGTH" | "PADDING" |
-                   "PAYLOAD" | "LENGTH" }
+                   randomness_semantic | pubkey_semantic |
+                   "PADDING_LENGTH" | "PADDING" | "PAYLOAD" | "LENGTH" }
 
 semantic_binding = { "{" ~
   "FORMAT" ~ ":" ~ identifier ~ ";" ~

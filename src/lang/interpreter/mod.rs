@@ -320,4 +320,9 @@ mod tests {
     async fn integration_psf_padding() {
         integration_with_psf(&"examples/psf/padding.psf").await
     }
+
+    #[tokio::test]
+    async fn integration_psf_key() {
+        integration_with_psf(&"examples/psf/key.psf").await
+    }
 }

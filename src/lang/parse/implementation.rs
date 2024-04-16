@@ -213,11 +213,7 @@ fn parse_fixed_bytes_semantic(p: &RulePair) -> Result<FieldSemantic> {
     assert!(p.as_rule() == Rule::fixed_bytes_semantic);
 
     // Unwraps OK: ITR
-    let p = p
-        .clone()
-        .into_inner()
-        .next()
-        .unwrap();
+    let p = p.clone().into_inner().next().unwrap();
 
     Ok(FieldSemantic::FixedBytes(parse_hex_literal(&p).unwrap()))
 }
@@ -226,13 +222,11 @@ fn parse_randomness_semantic(p: &RulePair) -> Result<FieldSemantic> {
     assert!(p.as_rule() == Rule::randomness_semantic);
 
     // Unwraps OK: ITR
-    let p = p
-        .clone()
-        .into_inner()
-        .next()
-        .unwrap();
+    let p = p.clone().into_inner().next().unwrap();
 
-    Ok(FieldSemantic::Random(parse_positive_numeric_literal(&p).unwrap()))
+    Ok(FieldSemantic::Random(
+        parse_positive_numeric_literal(&p).unwrap(),
+    ))
 }
 
 fn parse_field_semantic(p: &RulePair) -> Result<FieldSemantic> {
@@ -245,7 +239,8 @@ fn parse_field_semantic(p: &RulePair) -> Result<FieldSemantic> {
             Rule::fixed_string_semantic => parse_fixed_string_semantic(inner_p),
             Rule::fixed_bytes_semantic => parse_fixed_bytes_semantic(inner_p),
             Rule::randomness_semantic => parse_randomness_semantic(inner_p),
-            _ => unimplemented!()
+            Rule::pubkey_semantic => parse_pubkey_semantic(inner_p),
+            _ => unimplemented!(),
         }
     } else {
         parse_simple(p)
@@ -267,6 +262,20 @@ fn parse_semantic_binding(p: &RulePair) -> Result<SemanticBinding> {
         field,
         semantic,
     })
+}
+
+fn parse_pubkey_encoding(p: &RulePair) -> Result<PubkeyEncoding> {
+    assert!(p.as_rule() == Rule::pubkey_encoding);
+    Ok(parse_simple(p)?)
+}
+
+fn parse_pubkey_semantic(p: &RulePair) -> Result<FieldSemantic> {
+    assert!(p.as_rule() == Rule::pubkey_semantic);
+
+    // Unwraps OK: ITR
+    let p = p.clone().into_inner().next().unwrap();
+
+    Ok(FieldSemantic::Pubkey(parse_pubkey_encoding(&p)?))
 }
 
 fn parse_role(p: &RulePair) -> Result<Role> {
@@ -322,7 +331,7 @@ fn parse_mac_name(p: &RulePair) -> Result<Option<Identifier>> {
 
     Ok(match p.as_str() {
         "NULL" => None,
-        _ => Some(parse_identifier(&p.clone().into_inner().next().unwrap())?)
+        _ => Some(parse_identifier(&p.clone().into_inner().next().unwrap())?),
     })
 }
 
@@ -682,11 +691,9 @@ pub mod tests {
                 "FIXED_STRING(\"foo\")",
                 FieldSemantic::FixedString("foo".to_string()),
             ),
-            (
-                "FIXED_BYTES(0x1)",
-                FieldSemantic::FixedBytes([1].to_vec()),
-            ),
+            ("FIXED_BYTES(0x1)", FieldSemantic::FixedBytes([1].to_vec())),
             ("RANDOM(1337)", FieldSemantic::Random(1337)),
+            ("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::RAW)),
         ];
 
         test_rule_pair(
@@ -712,6 +719,34 @@ pub mod tests {
             test_cases.iter(),
             Rule::semantic_binding,
             parse_semantic_binding,
+        );
+    }
+
+    #[test]
+    fn test_parse_pubkey_encoding() {
+        let test_cases = vec![
+            ("RAW", PubkeyEncoding::RAW),
+            ("DER", PubkeyEncoding::DER),
+            ("PEM", PubkeyEncoding::PEM),
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::pubkey_encoding,
+            parse_pubkey_encoding,
+        );
+    }
+
+    #[test]
+    fn test_parse_pubkey_semantic() {
+        let test_cases = vec![
+            ("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::RAW)),
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::pubkey_semantic,
+            parse_pubkey_semantic,
         );
     }
 
@@ -859,11 +894,7 @@ pub mod tests {
             ("foo", Some("foo".id())),
         ];
 
-        test_rule_pair(
-            test_cases.iter(),
-            Rule::mac_name,
-            parse_mac_name,
-        );
+        test_rule_pair(test_cases.iter(), Rule::mac_name, parse_mac_name);
     }
 
     #[test]

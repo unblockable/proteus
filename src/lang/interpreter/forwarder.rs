@@ -87,6 +87,16 @@ impl<R: Reader, W: Writer> Forwarder<R, W> {
         }
     }
 
+    pub fn init_key(&mut self, key: &[u8]) -> anyhow::Result<()> {
+        if let Some(enc) = self.state_owned.encryptor.as_mut() {
+            enc.init_key(key);
+        }
+        if let Some(dec) = self.state_owned.decryptor.as_mut() {
+            dec.init_key(key);
+        }
+        Ok(())
+    }
+
     fn take_shared_encryptor(&self) -> anyhow::Result<EncryptionCipher> {
         // Take care not to panic in this scope while holding the lock.
         let mut crypt = self.state_shared.inner.lock().unwrap();

@@ -2,7 +2,7 @@
 
 use crate::lang::{
     Role,
-    types::{AbstractFormat, Identifier},
+    types::{AbstractFormat, Identifier, PubkeyEncoding},
 };
 use std::ops::Range;
 
@@ -88,6 +88,8 @@ pub enum Instruction {
     SetNumericValue(SetNumericValueArgs),
     WriteApp(WriteAppArgs),
     WriteNet(WriteNetArgs),
+    ReadKey(ReadKeyArgs),
+    SaveKey(SaveKeyArgs),
 }
 
 /// Compute the length of all `from_msg_id` fields that are ordered after
@@ -218,4 +220,17 @@ pub struct WriteAppArgs {
 #[derive(Debug)]
 pub struct WriteNetArgs {
     pub from_msg_heap_id: Identifier,
+}
+
+#[derive(Debug)]
+pub struct ReadKeyArgs {
+    pub from_msg_heap_id: Identifier,
+    pub from_field_id: Identifier, // usually payload field
+}
+
+#[derive(Debug)]
+pub struct SaveKeyArgs {
+    pub from_msg_heap_id: Identifier,
+    pub from_field_id: Identifier, // usually payload field
+    pub pubkey_encoding: PubkeyEncoding,
 }

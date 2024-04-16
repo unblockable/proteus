@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use itertools::Itertools;
 use std::iter::Iterator;
 
 use petgraph::visit::EdgeRef;
@@ -455,6 +456,21 @@ fn compile_message_to_instrs(
     let format = &afs.format.format;
     let semantics = &afs.semantics;
 
+    let mut has_pubkey: Option<Identifier> = None;
+    let mut pubkey_enc: Option<PubkeyEncoding> = None;
+
+    for semantic in semantics.as_ref().iter().sorted() {
+        let id = semantic.0;
+        let fs = semantic.1;
+
+        if let crate::lang::types::FieldSemantic::Pubkey(enc) = fs {
+            if has_pubkey.is_none() {
+                has_pubkey = Some(id.clone());
+                pubkey_enc = Some(*enc);
+            }
+        }
+    }
+
     let is_sender = my_role == edge_role;
 
     let maybe_hints_dynamic_payload =
@@ -474,6 +490,17 @@ fn compile_message_to_instrs(
                     &hints_encryption.starting_format,
                     psf,
                 ));
+
+                if let Some(id) = has_pubkey {
+                    instrs.push(
+                        SaveKeyArgs {
+                            from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                            from_field_id: id.clone(),
+                            pubkey_encoding: pubkey_enc.unwrap(),
+                        }
+                        .into(),
+                    );
+                }
 
                 // Then encrypt whatever fields we need to encrypt
                 for field_dir in &hints_encryption.enc_field_dirs {
@@ -520,9 +547,30 @@ fn compile_message_to_instrs(
                 }
             } else {
                 instrs.extend(compile_plaintext_commands_sender(format_id, psf));
+                if let Some(id) = has_pubkey {
+                    instrs.push(
+                        SaveKeyArgs {
+                            from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                            from_field_id: id.clone(),
+                            pubkey_encoding: pubkey_enc.unwrap(),
+                        }
+                        .into(),
+                    );
+                }
             }
         } else {
             instrs.extend(compile_plaintext_commands_sender(format_id, psf));
+
+            if let Some(id) = has_pubkey {
+                instrs.push(
+                    SaveKeyArgs {
+                        from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                        from_field_id: id.clone(),
+                        pubkey_encoding: pubkey_enc.unwrap(),
+                    }
+                    .into(),
+                );
+            }
         }
 
         instrs.push(
@@ -607,6 +655,17 @@ fn compile_message_to_instrs(
                 );
             }
 
+            if let Some(id) = has_pubkey {
+                instrs.push(
+                    SaveKeyArgs {
+                        from_msg_heap_id: MSG_PFX_HEAP_NAME.id(),
+                        from_field_id: id.clone(),
+                        pubkey_encoding: pubkey_enc.unwrap(),
+                    }
+                    .into(),
+                );
+            }
+
             // Now, if there's anything to decrypt in the prefix, we do it here.
 
             if let Some(ref crypto_spec) = psf.crypto_spec {
@@ -656,6 +715,9 @@ fn compile_message_to_instrs(
                 }
             }
         } // has_prefix
+
+        // RSW - What I think I need to do is add a new instruction
+        // which happens after this point to set the key.
 
         if has_suffix {
             // Figure out how much stuff is the the fixed-sized tail on the suffix,
