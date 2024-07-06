@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::lang::common::Role;
+use crate::lang::Role;
 use crate::lang::types::*;
 use core::str::FromStr;
 use pest::iterators::{Pair, Pairs};

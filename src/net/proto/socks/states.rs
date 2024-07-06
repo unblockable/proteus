@@ -383,7 +383,7 @@ impl ServerCommand2State for Socks5Protocol<ServerCommand2> {
                         let conn = self.state.conn;
                         let next = Success {
                             conn,
-                            dest: Connection::new(stream),
+                            dest: Connection::from(stream),
                             username: self.state.username,
                         };
                         ServerCommand2Result::Success(next.into())

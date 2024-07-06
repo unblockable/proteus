@@ -5,6 +5,9 @@ use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::Salsa20;
 
 const MAC_NBYTES: usize = 16;
+const NONCE_A: [u8; 8] = [0xAA; 8];
+const NONCE_B: [u8; 8] = [0xBB; 8];
+
 type Payload = Vec<u8>;
 type Mac = [u8; MAC_NBYTES];
 
@@ -14,52 +17,91 @@ pub enum CipherKind {
 }
 
 pub struct Cipher {
-    encryption_nonce_gen: Salsa20,
-    decryption_nonce_gen: Salsa20,
-    encryption_cipher: ChaCha20Poly1305,
-    decryption_cipher: ChaCha20Poly1305,
-    nbytes_encrypted: usize,
-    nbytes_decrypted: usize,
+    encryptor: EncryptionCipher,
+    decryptor: DecryptionCipher,
+}
+
+pub struct EncryptionCipher {
+    inner: CipherInner,
+}
+
+pub struct DecryptionCipher {
+    inner: CipherInner,
+}
+
+struct CipherInner {
+    nonce_gen: Salsa20,
+    cipher: ChaCha20Poly1305,
+    n_bytes_ciphered: usize,
 }
 
 impl Cipher {
-    pub fn new(secret_key: [u8; 32], cipher_kind: CipherKind) -> Cipher {
-        const NONCE_A: [u8; 8] = [0xAA; 8];
-        const NONCE_B: [u8; 8] = [0xBB; 8];
-
-        let encryption_nonce = match cipher_kind {
-            CipherKind::Sender => NONCE_A,
-            CipherKind::Receiver => NONCE_B,
+    pub fn new(secret_key: [u8; 32], cipher_kind: CipherKind) -> Self {
+        let (enc_nonce, dec_nonce) = match cipher_kind {
+            CipherKind::Sender => (NONCE_A, NONCE_B),
+            CipherKind::Receiver => (NONCE_B, NONCE_A),
         };
 
-        let decryption_nonce = match cipher_kind {
-            CipherKind::Sender => NONCE_B,
-            CipherKind::Receiver => NONCE_A,
-        };
-
-        Cipher {
-            encryption_nonce_gen: Salsa20::new(&secret_key.into(), &encryption_nonce.into()),
-            decryption_nonce_gen: Salsa20::new(&secret_key.into(), &decryption_nonce.into()),
-            encryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
-            decryption_cipher: ChaCha20Poly1305::new(&secret_key.into()),
-            nbytes_encrypted: 0,
-            nbytes_decrypted: 0,
+        Self {
+            encryptor: EncryptionCipher::new(secret_key, enc_nonce),
+            decryptor: DecryptionCipher::new(secret_key, dec_nonce),
         }
     }
 
-    fn get_nonce(nonce_gen: &mut Salsa20) -> [u8; 12] {
+    #[allow(dead_code)]
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
+        self.encryptor.encrypt(plaintext)
+    }
+
+    #[allow(dead_code)]
+    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
+        self.decryptor.decrypt(ciphertext, mac)
+    }
+
+    pub fn into_split(self) -> (EncryptionCipher, DecryptionCipher) {
+        (self.encryptor, self.decryptor)
+    }
+
+    #[allow(dead_code)]
+    pub fn reunite(encryptor: EncryptionCipher, decryptor: DecryptionCipher) -> Cipher {
+        Cipher {
+            encryptor,
+            decryptor,
+        }
+    }
+}
+
+impl CipherInner {
+    fn new(secret_key: [u8; 32], nonce: [u8; 8]) -> Self {
+        Self {
+            nonce_gen: Salsa20::new(&secret_key.into(), &nonce.into()),
+            cipher: ChaCha20Poly1305::new(&secret_key.into()),
+            n_bytes_ciphered: 0,
+        }
+    }
+
+    fn generate_nonce(&mut self) -> [u8; 12] {
         let mut buf: [u8; 12] = [0x00; 12];
-        nonce_gen.apply_keystream(&mut buf);
+        self.nonce_gen.apply_keystream(&mut buf);
         buf
+    }
+}
+
+impl EncryptionCipher {
+    fn new(secret_key: [u8; 32], nonce: [u8; 8]) -> Self {
+        Self {
+            inner: CipherInner::new(secret_key, nonce),
+        }
     }
 
     pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
-        self.nbytes_encrypted += plaintext.len();
+        self.inner.n_bytes_ciphered += plaintext.len();
 
-        let nonce = Cipher::get_nonce(&mut self.encryption_nonce_gen);
+        let nonce = self.inner.generate_nonce();
 
         let mut ciphertext = self
-            .encryption_cipher
+            .inner
+            .cipher
             .encrypt(&nonce.into(), plaintext)
             .expect("encryption failure");
 
@@ -72,15 +114,24 @@ impl Cipher {
 
         (ciphertext, mac)
     }
+}
+
+impl DecryptionCipher {
+    fn new(secret_key: [u8; 32], nonce: [u8; 8]) -> Self {
+        Self {
+            inner: CipherInner::new(secret_key, nonce),
+        }
+    }
 
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
         let ctext_and_mac: Vec<u8> = ciphertext.iter().chain(mac.iter()).copied().collect();
 
-        self.nbytes_decrypted += ciphertext.len();
+        self.inner.n_bytes_ciphered += ciphertext.len();
 
-        let nonce = Cipher::get_nonce(&mut self.decryption_nonce_gen);
+        let nonce = self.inner.generate_nonce();
 
-        self.decryption_cipher
+        self.inner
+            .cipher
             .decrypt(&nonce.into(), &ctext_and_mac[..])
             .expect("decryption failure")
     }
@@ -91,12 +142,15 @@ pub mod tests {
     use super::*;
     use crate::crypto::kdf::derive_key_256;
 
-    #[test]
-    fn test_encryption_decryption() {
+    fn make_key() -> [u8;32] {
         let password = "hunter2";
         let salt = "pepper pepper pepper";
+        derive_key_256(password, salt)
+    }
 
-        let secret_key = derive_key_256(password, salt);
+    #[test]
+    fn test_encryption_decryption() {
+        let secret_key = make_key();
 
         let mut send_cipher = Cipher::new(secret_key, CipherKind::Sender);
         let mut recv_cipher = Cipher::new(secret_key, CipherKind::Receiver);
@@ -106,6 +160,25 @@ pub mod tests {
         let (ctext, mac) = send_cipher.encrypt(&original_plain_text[..]);
         let recovered_plain_text = recv_cipher.decrypt(&ctext[..], &mac);
 
+        assert_eq!(original_plain_text, recovered_plain_text);
+    }
+
+    #[test]
+    fn test_split_encryption_decryption() {
+        let secret_key = make_key();
+
+        let (mut send_enc, mut send_dec) = Cipher::new(secret_key, CipherKind::Sender).into_split();
+        let (mut recv_enc, mut recv_dec) =
+            Cipher::new(secret_key, CipherKind::Receiver).into_split();
+
+        let original_plain_text: Vec<u8> = b"hello world".iter().map(|e| *e).collect();
+
+        let (ctext, mac) = send_enc.encrypt(&original_plain_text[..]);
+        let recovered_plain_text = recv_dec.decrypt(&ctext[..], &mac);
+        assert_eq!(original_plain_text, recovered_plain_text);
+
+        let (ctext, mac) = recv_enc.encrypt(&original_plain_text[..]);
+        let recovered_plain_text = send_dec.decrypt(&ctext[..], &mac);
         assert_eq!(original_plain_text, recovered_plain_text);
     }
 }

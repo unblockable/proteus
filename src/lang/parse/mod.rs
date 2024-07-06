@@ -1,4 +1,4 @@
-use crate::lang::{common::Role, spec::proteus::ProteusSpec};
+use crate::lang::{Role, spec::proteus::ProteusSpec};
 use anyhow::Result;
 
 pub mod implementation;

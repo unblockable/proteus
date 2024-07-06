@@ -24,7 +24,7 @@ pub struct Message {
 
 impl Message {
     /// A message is constructed from a format with a concrete size.
-    pub fn new(format: ConcreteFormat) -> Option<Self> {
+    pub fn new(format: ConcreteFormat) -> Self {
         let mut msg = format
             .maybe_size_of()
             .map(|size| Message {
@@ -39,7 +39,7 @@ impl Message {
             }
         }
 
-        Some(msg)
+        msg
     }
 
     fn get_field_slice(&self, offset: usize, size: usize) -> &[u8] {
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_message() {
         let format = make_sized_format();
-        let mut message = Message::new(format).unwrap();
+        let mut message = Message::new(format);
 
         message
             .set_field_unsigned_numeric(&"Foo".id(), 11)
@@ -274,7 +274,7 @@ mod tests {
         .try_into()
         .unwrap();
 
-        let mut message = Message::new(format).unwrap();
+        let mut message = Message::new(format);
 
         message.set_length_field();
 

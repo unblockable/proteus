@@ -1,7 +1,17 @@
-pub mod common;
-pub mod compiler;
-pub mod message;
+mod compiler;
+pub mod interpreter;
+mod memory;
+mod message;
 pub mod parse;
 pub mod spec;
-pub mod task;
-pub mod types;
+mod task;
+mod types;
+
+// #[cfg(test)]
+// mod test;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Role {
+    Client,
+    Server,
+}

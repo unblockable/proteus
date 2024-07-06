@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::lang::{
-    common::Role,
+    Role,
     types::{AbstractFormat, Identifier},
 };
 use std::ops::Range;
@@ -65,7 +65,7 @@ pub enum ReadNetLength {
     Range(Range<usize>),
 }
 
-// Auto-generates from implementations like
+// Auto-generates `From` implementations like
 //   `impl From<WriteAppArgs> for Instruction`
 // so we can upcast from args to the instruction variant.
 #[enum_from::enum_from]

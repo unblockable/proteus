@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::lang::common::Role;
+use crate::lang::Role;
 use std::collections::hash_map::HashMap;
 use std::convert::{From, TryFrom};
 use std::str::FromStr;

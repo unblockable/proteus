@@ -7,8 +7,8 @@ use rand::{
 };
 
 use crate::lang::{
-    common::Role,
-    interpreter::{Interpreter, NetOpIn, NetOpOut},
+    Role,
+    interpreter::{Interpreter},
     parse::{proteus::ProteusParser, Parse},
     spec::test::{basic::LengthPayloadSpec, basic_enc::EncryptedLengthPayloadSpec},
     task::TaskProvider,

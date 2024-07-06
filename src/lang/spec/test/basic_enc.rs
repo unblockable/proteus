@@ -1,4 +1,4 @@
-use crate::lang::{common::Role, task::*, types::*};
+use crate::lang::{Role, task::*, types::*};
 
 pub struct EncryptedLengthPayloadSpec {
     role: Role,

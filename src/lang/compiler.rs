@@ -5,7 +5,7 @@ use std::iter::Iterator;
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
-use crate::lang::common::Role;
+use crate::lang::Role;
 use crate::lang::task::*;
 use crate::lang::types::*;
 

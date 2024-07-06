@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::{io, process};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::net::proto::proteus::Interpreter;
 use crate::{
     lang::{
-        common::Role,
+        Role,
+        interpreter::Interpreter,
         parse::{proteus::ProteusParser, Parse},
         spec::proteus::ProteusSpec,
     },
@@ -114,7 +114,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
     let rvs_addr = rvs_stream.peer_addr()?;
     log::debug!("Accepted new stream from client {}", rvs_addr);
 
-    match socks::run_socks5_server(Connection::new(rvs_stream)).await {
+    match socks::run_socks5_server(Connection::from(rvs_stream)).await {
         Ok((rvs_conn, pt_conn, username_opt)) => {
             log::debug!("Socks5 with peer {} succeeded", rvs_addr);
 
@@ -147,9 +147,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             );
 
             // Run the proteus protocol with the interpreter.
-            match Interpreter::new(pt_conn, rvs_conn, Box::new(client_spec), options)
-                .run()
-                .await
+            match Interpreter::run(pt_conn, rvs_conn, Box::new(client_spec), options).await
             {
                 Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
@@ -219,8 +217,8 @@ async fn handle_server_connection(
     let fwd_addr = fwd_stream.peer_addr()?;
     log::debug!("Connected to forward server {}", fwd_addr);
 
-    let pt_conn = Connection::new(pt_stream);
-    let fwd_conn = Connection::new(fwd_stream);
+    let pt_conn = Connection::from(pt_stream);
+    let fwd_conn = Connection::from(fwd_stream);
 
     match conf.forward_proto {
         ForwardProtocol::Basic => {
@@ -247,9 +245,7 @@ async fn handle_server_connection(
     );
 
     // Run the proteus protocol with the interpreter.
-    match Interpreter::new(pt_conn, fwd_conn, Box::new(spec), conf.options)
-        .run()
-        .await
+    match Interpreter::run(pt_conn, fwd_conn, Box::new(spec), conf.options).await
     {
         Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
         Err(e) => log::debug!(

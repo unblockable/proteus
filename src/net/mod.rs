@@ -3,8 +3,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::ops::Range;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::net;
@@ -54,20 +53,9 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream) -> Connection {
-        let (read_half, write_half) = stream.into_split();
-        Connection {
-            source: NetSource::new(read_half),
-            sink: NetSink::new(write_half),
-        }
-    }
-
-    /// Reconstructs the TCP Stream, returning any unhandled bytes in our read buffer.
-    fn _into_stream(mut self) -> Result<(TcpStream, Bytes), net::Error> {
-        match self.source.read_half.reunite(self.sink.write_half) {
-            Ok(s) => Ok((s, self.source.buffer.split().freeze())),
-            Err(_) => Err(net::Error::_Reunite),
-        }
+    #[cfg(test)]
+    pub fn new(source: NetSource, sink: NetSink) -> Connection {
+        Connection { source, sink }
     }
 
     pub fn into_split(self) -> (NetSource, NetSink) {
@@ -88,25 +76,37 @@ impl Connection {
         self.sink.write_frame(serializer, frame).await
     }
 
-    async fn _read_bytes(&mut self, len: Range<usize>) -> Result<Bytes, net::Error> {
+    #[cfg(test)]
+    async fn read_bytes(&mut self, len: Range<usize>) -> Result<Bytes, net::Error> {
         self.source.read_bytes(len).await
     }
 
-    async fn _write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
+    #[cfg(test)]
+    async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
         self.sink.write_bytes(bytes).await
     }
 }
 
+impl From<TcpStream> for Connection {
+    fn from(stream: TcpStream) -> Self {
+        let (read_half, write_half) = stream.into_split();
+        Connection {
+            source: NetSource::new(Box::new(read_half)),
+            sink: NetSink::new(Box::new(write_half)),
+        }
+    }
+}
+
 pub struct NetSource {
-    read_half: OwnedReadHalf,
+    source: Box<dyn AsyncRead + Send + Unpin>,
     buffer: BytesMut,
 }
 
 impl NetSource {
-    fn new(source: OwnedReadHalf) -> NetSource {
+    fn new(reader: Box<dyn AsyncRead + Send + Unpin>) -> NetSource {
         let cap = 2usize.pow(22u32); // 4 MiB
         NetSource {
-            read_half: source,
+            source: reader,
             buffer: BytesMut::with_capacity(cap),
         }
     }
@@ -144,7 +144,7 @@ impl NetSource {
 
     /// Pull more bytes in from the source into our internal buffer.
     async fn read_inner(&mut self) -> Result<usize, net::Error> {
-        match self.read_half.read_buf(&mut self.buffer).await {
+        match self.source.read_buf(&mut self.buffer).await {
             Ok(n_bytes) => match n_bytes {
                 0 => Err(net::Error::Eof),
                 _ => Ok(n_bytes),
@@ -155,12 +155,12 @@ impl NetSource {
 }
 
 pub struct NetSink {
-    write_half: OwnedWriteHalf,
+    sink: Box<dyn AsyncWrite + Send + Unpin>,
 }
 
 impl NetSink {
-    fn new(sink: OwnedWriteHalf) -> NetSink {
-        NetSink { write_half: sink }
+    fn new(writer: Box<dyn AsyncWrite + Send + Unpin>) -> NetSink {
+        NetSink { sink: writer }
     }
 
     /// Writes the given raw bytes to the network sink, returning after all
@@ -181,7 +181,7 @@ impl NetSink {
 
     async fn write_inner(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
         let num_bytes = bytes.len();
-        match self.write_half.write_all(bytes).await {
+        match self.sink.write_all(bytes).await {
             Ok(_) => Ok(num_bytes),
             Err(e) => Err(net::Error::IoError(e)),
         }
