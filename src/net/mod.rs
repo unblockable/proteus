@@ -53,10 +53,10 @@ pub struct Connection {
 }
 
 impl Connection {
-    #[cfg(test)]
-    pub fn new(source: NetSource, sink: NetSink) -> Connection {
-        Connection { source, sink }
-    }
+    // #[cfg(test)]
+    // pub fn new<'a,'b>(source: NetSource<'a>, sink: NetSink<'b>) -> Connection<'a,'b> {
+    //     Connection { source, sink }
+    // }
 
     pub fn into_split(self) -> (NetSource, NetSink) {
         (self.source, self.sink)
@@ -91,8 +91,8 @@ impl From<TcpStream> for Connection {
     fn from(stream: TcpStream) -> Self {
         let (read_half, write_half) = stream.into_split();
         Connection {
-            source: NetSource::new(Box::new(read_half)),
-            sink: NetSink::new(Box::new(write_half)),
+            source: NetSource::new(read_half),
+            sink: NetSink::new(write_half),
         }
     }
 }
@@ -103,10 +103,13 @@ pub struct NetSource {
 }
 
 impl NetSource {
-    fn new(reader: Box<dyn AsyncRead + Send + Unpin>) -> NetSource {
+    fn new<R>(reader: R) -> NetSource
+    where
+        R: AsyncRead + Send + Unpin + 'static,
+    {
         let cap = 2usize.pow(22u32); // 4 MiB
         NetSource {
-            source: reader,
+            source: Box::new(reader),
             buffer: BytesMut::with_capacity(cap),
         }
     }
@@ -159,8 +162,13 @@ pub struct NetSink {
 }
 
 impl NetSink {
-    fn new(writer: Box<dyn AsyncWrite + Send + Unpin>) -> NetSink {
-        NetSink { sink: writer }
+    fn new<W>(writer: W) -> NetSink
+    where
+        W: AsyncWrite + Send + Unpin + 'static,
+    {
+        NetSink {
+            sink: Box::new(writer),
+        }
     }
 
     /// Writes the given raw bytes to the network sink, returning after all
@@ -205,8 +213,8 @@ impl From<RawData> for Bytes {
     }
 }
 
-// We can serialize a `NetData` directly, but we can't deserialize in isolation
-// because we need to know how many bytes to read; leave that to a formatter.
+// We can serialize a `RawData` directly, but we can't deserialize in isolation
+// because we need to know how many bytes to read; leave that to `RawFormatter`.
 impl Serialize<RawData> for RawData {
     fn serialize(&self) -> Bytes {
         self.bytes.clone()
@@ -232,12 +240,54 @@ impl Serializer<RawData> for RawFormatter {
 
 impl Deserializer<RawData> for RawFormatter {
     fn deserialize_frame(&mut self, src: &mut std::io::Cursor<&BytesMut>) -> Option<RawData> {
-        match src.remaining() >= self.valid_read_range.start {
-            true => {
-                let num = std::cmp::min(src.remaining(), self.valid_read_range.end - 1);
-                Some(RawData::from(src.copy_to_bytes(num)))
-            }
-            false => None,
+        if self.valid_read_range.start >= self.valid_read_range.end
+            || self.valid_read_range.end <= 1
+        {
+            Some(RawData::from(Bytes::new()))
+        } else if src.remaining() >= self.valid_read_range.start {
+            let num = std::cmp::min(src.remaining(), self.valid_read_range.end - 1);
+            Some(RawData::from(src.copy_to_bytes(num)))
+        } else {
+            None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BufMut;
+
+    #[tokio::test]
+    async fn test_network_source() {
+        let data = [8, 6, 7, 5, 3, 0, 9];
+        let mem_stream = Cursor::new(data.clone());
+        let mut src = NetSource::new(Box::new(mem_stream));
+
+        let bytes = src.read_bytes(0..0).await.unwrap();
+        assert_eq!(&bytes[..], [0u8; 0]);
+        let bytes = src.read_bytes(0..1).await.unwrap();
+        assert_eq!(&bytes[..], [0u8; 0]);
+        let bytes = src.read_bytes(5..1).await.unwrap();
+        assert_eq!(&bytes[..], [0u8; 0]);
+
+        let bytes = src.read_bytes(7..8).await.unwrap();
+        assert_eq!(&bytes[..], data);
+    }
+
+    #[tokio::test]
+    async fn test_network_sink() {
+        let mut buf = BytesMut::new();
+        buf.put(&b"Hello sink"[..]);
+        let buf = buf.freeze();
+
+        let v = Vec::<u8>::new();
+        let c = Cursor::new(v);
+        let mut sink = NetSink::new(c);
+        sink.write_bytes(&buf).await.unwrap();
+
+        // OK great, now we need to assert that the data matches
+        // TODO, we cannot assert because v was moved into the cursor.
+        // assert_eq!(&buf[..], &v[..]);
     }
 }
