@@ -7,11 +7,9 @@ edition = "2021"
 
 [dependencies]
 enum-from = { path = "lib/enum-from" }
-async-trait = "0.1.0"
 bytes = "1.4.0"
 log = "0.4.0"
 tokio = { version = "1.17.0", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time"] }
-typestate = "0.8.0"
 pest = "2.0"
 pest_derive = "2.0"
 petgraph = "0.6.3"
