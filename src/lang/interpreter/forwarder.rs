@@ -8,20 +8,20 @@ use bytes::Bytes;
 
 use crate::{
     crypto::chacha::{Cipher, CipherKind, DecryptionCipher, EncryptionCipher},
-    net::{NetSink, NetSource},
+    net::{Reader, Writer},
 };
 
-pub struct Forwarder {
-    src: NetSource,
+pub struct Forwarder<R: Reader, W: Writer> {
+    src: R,
     n_recv_src: usize,
-    dst: NetSink,
+    dst: W,
     n_sent_dst: usize,
     state_owned: ForwardingState,
     state_shared: SharedForwardingState,
 }
 
-impl Forwarder {
-    pub fn new(src: NetSource, dst: NetSink, state: Option<SharedForwardingState>) -> Self {
+impl<R: Reader, W: Writer> Forwarder<R, W> {
+    pub fn new(src: R, dst: W, state: Option<SharedForwardingState>) -> Self {
         Self {
             src: src,
             n_recv_src: 0,

@@ -9,6 +9,7 @@ use crate::{
         types::{ConcreteFormat, Identifier},
         Role,
     },
+    net::{Reader, Writer},
 };
 
 use anyhow::anyhow;
@@ -37,7 +38,10 @@ impl Program {
         }
     }
 
-    pub async fn execute(&mut self, forwarder: &mut Forwarder) -> anyhow::Result<()> {
+    pub async fn execute<R: Reader, W: Writer>(
+        &mut self,
+        forwarder: &mut Forwarder<R, W>,
+    ) -> anyhow::Result<()> {
         while self.next_ins_index < self.task.ins.len() {
             self.execute_next_instruction(forwarder).await?;
             self.next_ins_index += 1;
@@ -45,7 +49,10 @@ impl Program {
         Ok(())
     }
 
-    async fn execute_next_instruction(&mut self, forwarder: &mut Forwarder) -> anyhow::Result<()> {
+    async fn execute_next_instruction<R: Reader, W: Writer>(
+        &mut self,
+        forwarder: &mut Forwarder<R, W>,
+    ) -> anyhow::Result<()> {
         match &self.task.ins[self.next_ins_index] {
             Instruction::ComputeLength(args) => {
                 let msg = self

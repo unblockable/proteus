@@ -1,4 +1,4 @@
-use std::{fmt, io, net::SocketAddr};
+use std::{fmt, net::SocketAddr};
 
 use address::Socks5Address;
 use anyhow::bail;
@@ -6,22 +6,24 @@ use formatter::Formatter;
 use frames::{
     Choice, ConnectRequest, ConnectResponse, Greeting, UserPassAuthRequest, UserPassAuthResponse,
 };
-use tokio::net::TcpStream;
 
-use crate::net::{self, proto::socks, Connection};
+use crate::net::{self, proto::socks, Connection, Connector, Reader, Writer};
 
 mod address;
 mod formatter;
 mod frames;
 
 #[allow(dead_code)]
-pub async fn run_socks5_client(_conn: Connection) -> anyhow::Result<(Connection, Connection)> {
+pub async fn run_socks5_client<R: Reader, W: Writer>(
+    _conn: Connection<R, W>,
+) -> anyhow::Result<(Connection<R, W>, Connection<R, W>)> {
     unimplemented!()
 }
 
-pub async fn run_socks5_server(
-    conn: Connection,
-) -> anyhow::Result<(Connection, Connection, Option<String>)> {
+pub async fn run_socks5_server<R: Reader, W: Writer, C: Connector<R, W>>(
+    conn: Connection<R, W>,
+    connector: C,
+) -> anyhow::Result<(Connection<R, W>, Connection<R, W>, Option<String>)> {
     let proto = Init::new(conn).start_server();
 
     let proto = proto.recv_greeting().await?;
@@ -32,7 +34,7 @@ pub async fn run_socks5_server(
     };
 
     let proto = proto.recv_connect_request().await?;
-    let result = proto.send_connect_response().await?;
+    let result = proto.send_connect_response(connector).await?;
 
     Ok(result)
 }
@@ -47,7 +49,7 @@ const SOCKS_AUTH_STATUS_SUCCESS: u8 = 0x00;
 const SOCKS_AUTH_STATUS_FAILURE: u8 = 0x01;
 const SOCKS_COMMAND_CONNECT: u8 = 0x01;
 const SOCKS_STATUS_REQ_GRANTED: u8 = 0x00;
-const SOCKS_STATUS_GEN_FAILURE: u8 = 0x01;
+const _SOCKS_STATUS_GEN_FAILURE: u8 = 0x01;
 const SOCKS_STATUS_PROTO_ERR: u8 = 0x07;
 const SOCKS_STATUS_ADDR_ERR: u8 = 0x08;
 
@@ -81,20 +83,20 @@ impl fmt::Display for socks::Error {
     }
 }
 
-struct Init {
-    conn: Connection,
+struct Init<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
 }
 
-impl Init {
-    fn new(conn: Connection) -> Init {
+impl<R: Reader, W: Writer> Init<R, W> {
+    fn new(conn: Connection<R, W>) -> Init<R, W> {
         Init {
             conn,
             fmt: Formatter::new(),
         }
     }
 
-    fn start_server(self) -> ServerHandshake1 {
+    fn start_server(self) -> ServerHandshake1<R, W> {
         ServerHandshake1 {
             conn: self.conn,
             fmt: self.fmt,
@@ -102,17 +104,18 @@ impl Init {
     }
 }
 
-struct ServerHandshake1 {
-    conn: Connection,
+struct ServerHandshake1<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
 }
 
-impl ServerHandshake1 {
-    async fn recv_greeting(mut self) -> anyhow::Result<ServerHandshake2> {
+impl<R: Reader, W: Writer> ServerHandshake1<R, W> {
+    async fn recv_greeting(mut self) -> anyhow::Result<ServerHandshake2<R, W>> {
         log::debug!("Waiting for greeting");
 
         match self
             .conn
+            .src
             .read_frame::<Greeting, Formatter>(&mut self.fmt)
             .await
         {
@@ -129,14 +132,14 @@ impl ServerHandshake1 {
     }
 }
 
-struct ServerHandshake2 {
-    conn: Connection,
+struct ServerHandshake2<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
     greeting: Greeting,
 }
 
-impl ServerHandshake2 {
-    async fn send_choice(mut self) -> anyhow::Result<AuthOrCommand> {
+impl<R: Reader, W: Writer> ServerHandshake2<R, W> {
+    async fn send_choice(mut self) -> anyhow::Result<AuthOrCommand<R, W>> {
         // Must be socks version 5, or we close the connection without a response.
         if self.greeting.version != SOCKS_VERSION_5 {
             bail!("{}", Error::Version);
@@ -156,6 +159,7 @@ impl ServerHandshake2 {
 
             match self
                 .conn
+                .dst
                 .write_frame::<Choice, Formatter>(&mut self.fmt, choice)
                 .await
             {
@@ -175,6 +179,7 @@ impl ServerHandshake2 {
 
             match self
                 .conn
+                .dst
                 .write_frame::<Choice, Formatter>(&mut self.fmt, choice)
                 .await
             {
@@ -199,6 +204,7 @@ impl ServerHandshake2 {
             // Do not propagate any net error; the socks error is more precise.
             match self
                 .conn
+                .dst
                 .write_frame::<Choice, Formatter>(&mut self.fmt, choice)
                 .await
             {
@@ -211,22 +217,23 @@ impl ServerHandshake2 {
     }
 }
 
-enum AuthOrCommand {
-    Auth(ServerAuth1),
-    Command(ServerCommand1),
+enum AuthOrCommand<R: Reader, W: Writer> {
+    Auth(ServerAuth1<R, W>),
+    Command(ServerCommand1<R, W>),
 }
 
-struct ServerAuth1 {
-    conn: Connection,
+struct ServerAuth1<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
 }
 
-impl ServerAuth1 {
-    async fn recv_auth_request(mut self) -> anyhow::Result<ServerAuth2> {
+impl<R: Reader, W: Writer> ServerAuth1<R, W> {
+    async fn recv_auth_request(mut self) -> anyhow::Result<ServerAuth2<R, W>> {
         log::debug!("Waiting for auth request");
 
         match self
             .conn
+            .src
             .read_frame::<UserPassAuthRequest, Formatter>(&mut self.fmt)
             .await
         {
@@ -243,14 +250,14 @@ impl ServerAuth1 {
     }
 }
 
-struct ServerAuth2 {
-    conn: Connection,
+struct ServerAuth2<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
     auth_request: UserPassAuthRequest,
 }
 
-impl ServerAuth2 {
-    async fn send_auth_response(mut self) -> anyhow::Result<ServerCommand1> {
+impl<R: Reader, W: Writer> ServerAuth2<R, W> {
+    async fn send_auth_response(mut self) -> anyhow::Result<ServerCommand1<R, W>> {
         let err_msg_opt = {
             if self.auth_request.version != SOCKS_AUTH_USERPASS_VERSION {
                 Some(String::from("Invalid username/password auth version"))
@@ -272,6 +279,7 @@ impl ServerAuth2 {
             // Do not propagate any net error; the socks error is more precise.
             match self
                 .conn
+                .dst
                 .write_frame::<UserPassAuthResponse, Formatter>(&mut self.fmt, response)
                 .await
             {
@@ -289,6 +297,7 @@ impl ServerAuth2 {
 
         match self
             .conn
+            .dst
             .write_frame::<UserPassAuthResponse, Formatter>(&mut self.fmt, response)
             .await
         {
@@ -302,18 +311,19 @@ impl ServerAuth2 {
     }
 }
 
-struct ServerCommand1 {
-    conn: Connection,
+struct ServerCommand1<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
     username: Option<String>,
 }
 
-impl ServerCommand1 {
-    async fn recv_connect_request(mut self) -> anyhow::Result<ServerCommand2> {
+impl<R: Reader, W: Writer> ServerCommand1<R, W> {
+    async fn recv_connect_request(mut self) -> anyhow::Result<ServerCommand2<R, W>> {
         log::debug!("Waiting for connect request");
 
         match self
             .conn
+            .src
             .read_frame::<ConnectRequest, Formatter>(&mut self.fmt)
             .await
         {
@@ -331,49 +341,18 @@ impl ServerCommand1 {
     }
 }
 
-async fn do_connect(addr: SocketAddr) -> io::Result<(TcpStream, SocketAddr)> {
-    let stream = TcpStream::connect(addr).await?;
-    let local_addr = stream.local_addr()?;
-    Ok((stream, local_addr))
-}
-
-async fn connect_to_host(
-    addr: Socks5Address,
-    port: u16,
-) -> Result<(TcpStream, SocketAddr), (socks::Error, u8)> {
-    let dest_addr = match addr {
-        Socks5Address::IpAddr(a) => SocketAddr::new(a, port),
-        _ => {
-            return Err((
-                socks::Error::Connect(String::from("Address type not supported")),
-                SOCKS_STATUS_ADDR_ERR,
-            ));
-        }
-    };
-
-    match do_connect(dest_addr).await {
-        Ok((stream, local_addr)) => Ok((stream, local_addr)),
-        Err(e) => {
-            // TODO: check the network error and be more precise here.
-            Err((
-                socks::Error::Network(net::Error::IoError(e)),
-                SOCKS_STATUS_GEN_FAILURE,
-            ))
-        }
-    }
-}
-
-struct ServerCommand2 {
-    conn: Connection,
+struct ServerCommand2<R: Reader, W: Writer> {
+    conn: Connection<R, W>,
     fmt: Formatter,
     username: Option<String>,
     request: ConnectRequest,
 }
 
-impl ServerCommand2 {
-    async fn send_connect_response(
+impl<R: Reader, W: Writer> ServerCommand2<R, W> {
+    async fn send_connect_response<C: Connector<R, W>>(
         mut self,
-    ) -> anyhow::Result<(Connection, Connection, Option<String>)> {
+        connector: C,
+    ) -> anyhow::Result<(Connection<R, W>, Connection<R, W>, Option<String>)> {
         if self.request.version != SOCKS_VERSION_5 {
             try_write_connect_err(&mut self.conn, &mut self.fmt, SOCKS_STATUS_PROTO_ERR).await;
             bail!("{}", Error::Version);
@@ -386,34 +365,41 @@ impl ServerCommand2 {
         }
 
         // TODO: we should follow the bind addr configured in the env, if any.
-        match connect_to_host(self.request.dest_addr, self.request.dest_port).await {
-            Ok((stream, local_addr)) => {
-                let response = ConnectResponse {
-                    version: SOCKS_VERSION_5,
-                    status: SOCKS_STATUS_REQ_GRANTED,
-                    reserved: SOCKS_NULL,
-                    bind_addr: Socks5Address::IpAddr(local_addr.ip()),
-                    bind_port: local_addr.port(),
-                };
 
-                match self
-                    .conn
-                    .write_frame::<ConnectResponse, Formatter>(&mut self.fmt, response)
-                    .await
-                {
-                    Ok(_) => Ok((self.conn, Connection::from(stream), self.username)),
-                    Err(net_err) => bail!(net_err),
-                }
+        let dest_addr = match self.request.dest_addr {
+            Socks5Address::IpAddr(a) => SocketAddr::new(a, self.request.dest_port),
+            _ => {
+                try_write_connect_err(&mut self.conn, &mut self.fmt, SOCKS_STATUS_ADDR_ERR).await;
+                bail!(
+                    "{}",
+                    Error::Connect(String::from("Address type not supported"))
+                );
             }
-            Err((error, status)) => {
-                try_write_connect_err(&mut self.conn, &mut self.fmt, status).await;
-                bail!("{}", error);
-            }
-        }
+        };
+
+        let (new_conn, local_addr) = connector.connect(dest_addr).await?;
+
+        let response = ConnectResponse {
+            version: SOCKS_VERSION_5,
+            status: SOCKS_STATUS_REQ_GRANTED,
+            reserved: SOCKS_NULL,
+            bind_addr: Socks5Address::IpAddr(local_addr.ip()),
+            bind_port: local_addr.port(),
+        };
+
+        self.conn
+            .dst
+            .write_frame::<ConnectResponse, Formatter>(&mut self.fmt, response)
+            .await?;
+        Ok((self.conn, new_conn, self.username))
     }
 }
 
-async fn try_write_connect_err(conn: &mut Connection, fmt: &mut Formatter, status: u8) {
+async fn try_write_connect_err<R: Reader, W: Writer>(
+    conn: &mut Connection<R, W>,
+    fmt: &mut Formatter,
+    status: u8,
+) {
     let response = ConnectResponse {
         version: SOCKS_VERSION_5,
         status,
@@ -424,6 +410,7 @@ async fn try_write_connect_err(conn: &mut Connection, fmt: &mut Formatter, statu
 
     // Do not propagate any net error; the socks error is more precise.
     match conn
+        .dst
         .write_frame::<ConnectResponse, Formatter>(fmt, response)
         .await
     {

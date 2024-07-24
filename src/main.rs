@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::{io, process};
+use net::TcpConnector;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
@@ -114,7 +115,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
     let rvs_addr = rvs_stream.peer_addr()?;
     log::debug!("Accepted new stream from client {}", rvs_addr);
 
-    match socks::run_socks5_server(Connection::from(rvs_stream)).await {
+    match socks::run_socks5_server(Connection::from(rvs_stream), TcpConnector::new()).await {
         Ok((rvs_conn, pt_conn, username_opt)) => {
             log::debug!("Socks5 with peer {} succeeded", rvs_addr);
 

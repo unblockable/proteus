@@ -1,7 +1,11 @@
+use anyhow::bail;
+use async_trait::async_trait;
 use bytes::{Buf, Bytes, BytesMut};
 use std::fmt;
 use std::io::Cursor;
+use std::net::SocketAddr;
 use std::ops::Range;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -38,7 +42,7 @@ trait Deserialize<F> {
 }
 
 /// Trait for a formatter that can serialize one or more protocol frames.
-trait Serializer<F> {
+pub trait Serializer<F> {
     fn serialize_frame(&mut self, src: F) -> Bytes;
 }
 
@@ -47,86 +51,58 @@ pub trait Deserializer<F> {
     fn deserialize_frame(&mut self, src: &mut Cursor<&BytesMut>) -> Option<F>;
 }
 
-pub struct Connection {
-    source: NetSource,
-    sink: NetSink,
+#[async_trait]
+pub trait Connector<R: Reader, W: Writer> {
+    async fn connect(&self, addr: SocketAddr) -> anyhow::Result<(Connection<R, W>, SocketAddr)>;
 }
 
-impl Connection {
-    // #[cfg(test)]
-    // pub fn new<'a,'b>(source: NetSource<'a>, sink: NetSink<'b>) -> Connection<'a,'b> {
-    //     Connection { source, sink }
-    // }
-
-    pub fn into_split(self) -> (NetSource, NetSink) {
-        (self.source, self.sink)
-    }
-
-    async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> Result<F, net::Error>
+#[async_trait]
+pub trait Reader {
+    async fn read_bytes(&mut self, len: Range<usize>) -> anyhow::Result<Bytes>;
+    async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> anyhow::Result<F>
     where
-        D: Deserializer<F>,
-    {
-        self.source.read_frame(deserializer).await
-    }
+        D: Deserializer<F> + Send;
+}
 
-    async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> Result<usize, net::Error>
+#[async_trait]
+pub trait Writer {
+    async fn write_bytes(&mut self, bytes: &Bytes) -> anyhow::Result<usize>;
+    async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> anyhow::Result<usize>
     where
-        S: Serializer<F>,
-    {
-        self.sink.write_frame(serializer, frame).await
-    }
-
-    #[cfg(test)]
-    async fn read_bytes(&mut self, len: Range<usize>) -> Result<Bytes, net::Error> {
-        self.source.read_bytes(len).await
-    }
-
-    #[cfg(test)]
-    async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
-        self.sink.write_bytes(bytes).await
-    }
+        S: Serializer<F> + Send,
+        F: Send;
 }
 
-impl From<TcpStream> for Connection {
-    fn from(stream: TcpStream) -> Self {
-        let (read_half, write_half) = stream.into_split();
-        Connection {
-            source: NetSource::new(read_half),
-            sink: NetSink::new(write_half),
-        }
-    }
-}
-
-pub struct NetSource {
-    source: Box<dyn AsyncRead + Send + Unpin>,
+pub struct BufReader<R: AsyncRead + Send + Unpin> {
+    source: R,
     buffer: BytesMut,
 }
 
-impl NetSource {
-    fn new<R>(reader: R) -> NetSource
-    where
-        R: AsyncRead + Send + Unpin + 'static,
-    {
-        let cap = 2usize.pow(22u32); // 4 MiB
-        NetSource {
-            source: Box::new(reader),
-            buffer: BytesMut::with_capacity(cap),
-        }
+impl<R: AsyncRead + Send + Unpin> BufReader<R> {
+    fn new(source: R) -> Self {
+        let cap = 2usize.pow(14u32); // 16 KiB
+        BufReader::with_capacity(source, cap)
     }
 
-    /// Read raw bytes from a network source, returning only after we have accumulated a
-    /// number of bytes in the given range.
-    pub async fn read_bytes(&mut self, len: Range<usize>) -> Result<Bytes, net::Error> {
+    fn with_capacity(source: R, capacity: usize) -> Self {
+        BufReader {
+            source,
+            buffer: BytesMut::with_capacity(capacity),
+        }
+    }
+}
+
+#[async_trait]
+impl<R: AsyncRead + Send + Unpin> Reader for BufReader<R> {
+    async fn read_bytes(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
         let mut fmt = RawFormatter::new(len);
         let data = self.read_frame(&mut fmt).await?;
         Ok(data.into())
     }
 
-    /// Read a frame of type `F` from a network source using deserializer `D`,
-    /// waiting until enough data has arrived to fill the frame.
-    pub async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> Result<F, net::Error>
+    async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> anyhow::Result<F>
     where
-        D: Deserializer<F>,
+        D: Deserializer<F> + Send,
     {
         loop {
             // Get a cursor to seek over the buffered bytes.
@@ -141,57 +117,79 @@ impl NetSource {
             }
 
             // Pull more bytes in from the source.
-            self.read_inner().await?;
-        }
-    }
-
-    /// Pull more bytes in from the source into our internal buffer.
-    async fn read_inner(&mut self) -> Result<usize, net::Error> {
-        match self.source.read_buf(&mut self.buffer).await {
-            Ok(n_bytes) => match n_bytes {
-                0 => Err(net::Error::Eof),
-                _ => Ok(n_bytes),
-            },
-            Err(e) => Err(net::Error::IoError(e)),
+            // self.read_inner().await?;
+            let _ = match self.source.read_buf(&mut self.buffer).await {
+                Ok(n_bytes) => match n_bytes {
+                    0 => bail!(net::Error::Eof),
+                    _ => n_bytes,
+                },
+                Err(e) => bail!(net::Error::IoError(e)),
+            };
         }
     }
 }
 
-pub struct NetSink {
-    sink: Box<dyn AsyncWrite + Send + Unpin>,
-}
-
-impl NetSink {
-    fn new<W>(writer: W) -> NetSink
-    where
-        W: AsyncWrite + Send + Unpin + 'static,
-    {
-        NetSink {
-            sink: Box::new(writer),
+#[async_trait]
+impl<W: AsyncWrite + Send + Unpin> Writer for W {
+    async fn write_bytes(&mut self, bytes: &Bytes) -> anyhow::Result<usize> {
+        let num_bytes = bytes.len();
+        match self.write_all(bytes).await {
+            Ok(_) => Ok(num_bytes),
+            Err(e) => bail!(net::Error::IoError(e)),
         }
     }
 
-    /// Writes the given raw bytes to the network sink, returning after all
-    /// bytes have been written.
-    pub async fn write_bytes(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
-        self.write_inner(bytes).await
-    }
-
-    /// Write a frame `F` to the network sink using serializer `S`.
-    /// Returns the number of bytes written to the network.
-    async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> Result<usize, net::Error>
+    async fn write_frame<F, S>(&mut self, serializer: &mut S, frame: F) -> anyhow::Result<usize>
     where
-        S: Serializer<F>,
+        S: Serializer<F> + Send,
+        F: Send,
     {
         let bytes = serializer.serialize_frame(frame);
-        self.write_inner(&bytes).await
+        Ok(self.write_bytes(&bytes).await?)
     }
+}
 
-    async fn write_inner(&mut self, bytes: &Bytes) -> Result<usize, net::Error> {
-        let num_bytes = bytes.len();
-        match self.sink.write_all(bytes).await {
-            Ok(_) => Ok(num_bytes),
-            Err(e) => Err(net::Error::IoError(e)),
+pub struct Connection<R: Reader, W: Writer> {
+    pub src: R,
+    pub dst: W,
+}
+
+impl<R: Reader, W: Writer> Connection<R, W> {
+    pub fn into_split(self) -> (R, W) {
+        (self.src, self.dst)
+    }
+}
+
+pub struct TcpConnector {}
+
+impl TcpConnector {
+    pub fn new() -> Self {
+        TcpConnector {}
+    }
+}
+
+#[async_trait]
+impl Connector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpConnector {
+    async fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> anyhow::Result<(
+        Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf>,
+        SocketAddr,
+    )> {
+        let stream = TcpStream::connect(addr).await?;
+        let local_addr = stream.local_addr()?;
+        let conn = Connection::from(stream);
+        Ok((conn, local_addr))
+    }
+}
+
+impl From<TcpStream> for Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf> {
+    fn from(stream: TcpStream) -> Self {
+        let (read_half, write_half) = stream.into_split();
+        Connection {
+            src: BufReader::new(read_half),
+            dst: write_half,
         }
     }
 }
@@ -259,10 +257,10 @@ mod tests {
     use bytes::BufMut;
 
     #[tokio::test]
-    async fn test_network_source() {
+    async fn source() {
         let data = [8, 6, 7, 5, 3, 0, 9];
         let mem_stream = Cursor::new(data.clone());
-        let mut src = NetSource::new(Box::new(mem_stream));
+        let mut src = BufReader::new(mem_stream);
 
         let bytes = src.read_bytes(0..0).await.unwrap();
         assert_eq!(&bytes[..], [0u8; 0]);
@@ -276,18 +274,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_network_sink() {
+    async fn sink() {
         let mut buf = BytesMut::new();
         buf.put(&b"Hello sink"[..]);
         let buf = buf.freeze();
 
         let v = Vec::<u8>::new();
-        let c = Cursor::new(v);
-        let mut sink = NetSink::new(c);
-        sink.write_bytes(&buf).await.unwrap();
+        let mut c = Cursor::new(v);
+        c.write_bytes(&buf).await.unwrap();
+        let v = c.into_inner();
 
-        // OK great, now we need to assert that the data matches
-        // TODO, we cannot assert because v was moved into the cursor.
-        // assert_eq!(&buf[..], &v[..]);
+        assert_eq!(&buf[..], &v[..]);
     }
 }

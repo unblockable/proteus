@@ -7,7 +7,7 @@ use forwarder::Forwarder;
 use loader::{Loader, LoaderResult};
 
 use crate::lang::task::TaskProvider;
-use crate::net::Connection;
+use crate::net::{Connection, Reader, Writer};
 
 mod forwarder;
 mod loader;
@@ -24,9 +24,9 @@ pub struct Interpreter {}
 impl Interpreter {
     /// Run the configured proteus protocol instance to completion. This returns
     /// when the proteus protocol terminates and all connections can be closed.
-    pub async fn run(
-        proteus_conn: Connection,
-        other_conn: Connection,
+    pub async fn run<R: Reader, W: Writer>(
+        proteus_conn: Connection<R, W>,
+        other_conn: Connection<R, W>,
         spec: Box<dyn TaskProvider + Send + 'static>,
         _options: HashMap<String, String>,
     ) -> anyhow::Result<()> {
@@ -60,9 +60,9 @@ impl Interpreter {
         }
     }
 
-    async fn execute(
+    async fn execute<R: Reader, W: Writer>(
         loader: Arc<Mutex<Loader>>,
-        mut forwarder: Forwarder,
+        mut forwarder: Forwarder<R, W>,
         direction: ForwardingDirection,
     ) -> anyhow::Result<()> {
         loop {
