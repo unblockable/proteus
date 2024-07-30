@@ -1,13 +1,13 @@
-use anyhow::bail;
-use async_trait::async_trait;
-use bytes::{Buf, Bytes, BytesMut};
 use std::fmt;
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::ops::Range;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
+use anyhow::bail;
+use async_trait::async_trait;
+use bytes::{Buf, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 
 use crate::net;
@@ -85,7 +85,7 @@ impl<R: AsyncRead + Send + Unpin> BufReader<R> {
     }
 
     fn with_capacity(source: R, capacity: usize) -> Self {
-        BufReader {
+        Self {
             source,
             buffer: BytesMut::with_capacity(capacity),
         }
@@ -155,6 +155,11 @@ pub struct Connection<R: Reader, W: Writer> {
 }
 
 impl<R: Reader, W: Writer> Connection<R, W> {
+    #[cfg(test)]
+    pub fn new(src: R, dst: W) -> Self {
+        Self { src, dst }
+    }
+
     pub fn into_split(self) -> (R, W) {
         (self.src, self.dst)
     }
@@ -225,8 +230,8 @@ struct RawFormatter {
 }
 
 impl RawFormatter {
-    fn new(valid_read_range: Range<usize>) -> RawFormatter {
-        RawFormatter { valid_read_range }
+    fn new(valid_read_range: Range<usize>) -> Self {
+        Self { valid_read_range }
     }
 }
 
@@ -254,36 +259,111 @@ impl Deserializer<RawData> for RawFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::BufMut;
+    use rand::{
+        distributions::{Alphanumeric, DistString},
+        Rng,
+    };
+    use tokio::io::DuplexStream;
 
-    #[tokio::test]
-    async fn source() {
-        let data = [8, 6, 7, 5, 3, 0, 9];
-        let mem_stream = Cursor::new(data.clone());
-        let mut src = BufReader::new(mem_stream);
+    const MIN_TRANSFER_SIZE: usize = 100;
+    const MAX_TRANSFER_SIZE: usize = 100_000;
 
-        let bytes = src.read_bytes(0..0).await.unwrap();
-        assert_eq!(&bytes[..], [0u8; 0]);
-        let bytes = src.read_bytes(0..1).await.unwrap();
-        assert_eq!(&bytes[..], [0u8; 0]);
-        let bytes = src.read_bytes(5..1).await.unwrap();
-        assert_eq!(&bytes[..], [0u8; 0]);
+    fn create_mock_connection_pair() -> (
+        Connection<BufReader<DuplexStream>, DuplexStream>,
+        Connection<BufReader<DuplexStream>, DuplexStream>,
+    ) {
+        let (client_w, server_r) = tokio::io::duplex(MAX_TRANSFER_SIZE);
+        let (server_w, client_r) = tokio::io::duplex(MAX_TRANSFER_SIZE);
 
-        let bytes = src.read_bytes(7..8).await.unwrap();
-        assert_eq!(&bytes[..], data);
+        let client = Connection::new(BufReader::new(client_r), client_w);
+        let server = Connection::new(BufReader::new(server_r), server_w);
+
+        (client, server)
+    }
+
+    fn generate_payload(len_range: Range<usize>) -> Bytes {
+        let mut rng = rand::thread_rng();
+        let len = rng.gen_range(len_range);
+        let s = Alphanumeric.sample_string(&mut rng, len);
+        Bytes::from(s)
+    }
+
+    async fn transfer_bytes_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R) {
+        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+
+        let num_written = dst.write_bytes(&payload).await.unwrap();
+        assert_eq!(num_written, payload.len());
+
+        let transferred = src.read_bytes(num_written..num_written + 1).await.unwrap();
+        assert_eq!(num_written, transferred.len());
+
+        assert_eq!(&payload[..], &transferred[..]);
     }
 
     #[tokio::test]
-    async fn sink() {
-        let mut buf = BytesMut::new();
-        buf.put(&b"Hello sink"[..]);
-        let buf = buf.freeze();
+    async fn transfer_bytes() {
+        let (mut client, mut server) = create_mock_connection_pair();
+        for _ in 0..5 {
+            transfer_bytes_helper(&mut client.dst, &mut server.src).await;
+            transfer_bytes_helper(&mut server.dst, &mut client.src).await;
+        }
+    }
 
-        let v = Vec::<u8>::new();
-        let mut c = Cursor::new(v);
-        c.write_bytes(&buf).await.unwrap();
-        let v = c.into_inner();
+    async fn transfer_frame_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R) {
+        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
 
-        assert_eq!(&buf[..], &v[..]);
+        let frame_out = RawData::from(payload.clone());
+        let mut fmt = RawFormatter::new(payload.len()..payload.len() + 1);
+
+        let num_written = dst.write_frame(&mut fmt, frame_out).await.unwrap();
+        assert_eq!(num_written, payload.len());
+
+        let frame_in = src.read_frame(&mut fmt).await.unwrap();
+        let transferred = Bytes::from(frame_in);
+        assert_eq!(num_written, transferred.len());
+
+        assert_eq!(&payload[..], &transferred[..]);
+    }
+
+    #[tokio::test]
+    async fn transfer_frame() {
+        let (mut client, mut server) = create_mock_connection_pair();
+        for _ in 0..5 {
+            transfer_frame_helper(&mut client.dst, &mut server.src).await;
+            transfer_frame_helper(&mut server.dst, &mut client.src).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn reader() {
+        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+
+        let mem_stream = Cursor::new(payload.clone());
+        let mut src = BufReader::new(mem_stream);
+
+        let bytes = src.read_bytes(0..0).await.unwrap();
+        assert_eq!(bytes.len(), 0);
+        let bytes = src.read_bytes(0..1).await.unwrap();
+        assert_eq!(bytes.len(), 0);
+        let bytes = src.read_bytes(5..1).await.unwrap();
+        assert_eq!(bytes.len(), 0);
+
+        let bytes = src
+            .read_bytes(payload.len()..payload.len() + 1)
+            .await
+            .unwrap();
+        assert_eq!(&payload[..], &bytes[..]);
+    }
+
+    #[tokio::test]
+    async fn writer() {
+        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+
+        let buf = Vec::<u8>::new();
+        let mut dst = Cursor::new(buf);
+        dst.write_bytes(&payload).await.unwrap();
+        let bytes = dst.into_inner();
+
+        assert_eq!(&payload[..], &bytes[..]);
     }
 }
