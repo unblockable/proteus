@@ -169,7 +169,7 @@ pub struct TcpConnector {}
 
 impl TcpConnector {
     pub fn new() -> Self {
-        TcpConnector {}
+        Self {}
     }
 }
 

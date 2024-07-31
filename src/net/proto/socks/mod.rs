@@ -13,32 +13,6 @@ mod address;
 mod formatter;
 mod frames;
 
-#[allow(dead_code)]
-pub async fn run_socks5_client<R: Reader, W: Writer>(
-    _conn: Connection<R, W>,
-) -> anyhow::Result<(Connection<R, W>, Connection<R, W>)> {
-    unimplemented!()
-}
-
-pub async fn run_socks5_server<R: Reader, W: Writer, C: Connector<R, W>>(
-    conn: Connection<R, W>,
-    connector: C,
-) -> anyhow::Result<(Connection<R, W>, Connection<R, W>, Option<String>)> {
-    let proto = Init::new(conn).start_server();
-
-    let proto = proto.recv_greeting().await?;
-
-    let proto = match proto.send_choice().await? {
-        AuthOrCommand::Auth(s) => s.recv_auth_request().await?.send_auth_response().await?,
-        AuthOrCommand::Command(s) => s,
-    };
-
-    let proto = proto.recv_connect_request().await?;
-    let result = proto.send_connect_response(connector).await?;
-
-    Ok(result)
-}
-
 const SOCKS_NULL: u8 = 0x00;
 const SOCKS_VERSION_5: u8 = 0x05;
 const SOCKS_AUTH_NONE: u8 = 0x00;
@@ -81,6 +55,32 @@ impl fmt::Display for socks::Error {
             Error::Network(e) => write!(f, "Network error: {}", e),
         }
     }
+}
+
+#[allow(dead_code)]
+pub async fn run_socks5_client<R: Reader, W: Writer>(
+    _conn: Connection<R, W>,
+) -> anyhow::Result<(Connection<R, W>, Connection<R, W>)> {
+    unimplemented!()
+}
+
+pub async fn run_socks5_server<R: Reader, W: Writer, C: Connector<R, W>>(
+    conn: Connection<R, W>,
+    connector: C,
+) -> anyhow::Result<(Connection<R, W>, Connection<R, W>, Option<String>)> {
+    let proto = Init::new(conn).start_server();
+
+    let proto = proto.recv_greeting().await?;
+
+    let proto = match proto.send_choice().await? {
+        AuthOrCommand::Auth(s) => s.recv_auth_request().await?.send_auth_response().await?,
+        AuthOrCommand::Command(s) => s,
+    };
+
+    let proto = proto.recv_connect_request().await?;
+    let result = proto.send_connect_response(connector).await?;
+
+    Ok(result)
 }
 
 struct Init<R: Reader, W: Writer> {
@@ -416,5 +416,141 @@ async fn try_write_connect_err<R: Reader, W: Writer>(
     {
         Ok(_) => log::debug!("Success writing connect failure message"),
         Err(e) => log::debug!("Error writing connect failure message: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+    use bytes::Bytes;
+    use net::{BufReader, Serialize};
+    use tokio_test::io::{Builder, Mock};
+
+    use super::*;
+
+    pub struct MockConnector {}
+
+    impl MockConnector {
+        pub fn new() -> Self {
+            Self {}
+        }
+
+        fn default_addr() -> SocketAddr {
+            "127.0.0.1:12345".parse().expect("Valid socket addr")
+        }
+    }
+
+    #[async_trait]
+    impl Connector<BufReader<Mock>, Mock> for MockConnector {
+        async fn connect(
+            &self,
+            _addr: SocketAddr,
+        ) -> anyhow::Result<(Connection<BufReader<Mock>, Mock>, SocketAddr)> {
+            let client = Connection::new(
+                BufReader::new(Builder::new().build()),
+                Builder::new().build(),
+            );
+            Ok((client, MockConnector::default_addr()))
+        }
+    }
+
+    fn greeting(auth_method: u8) -> Greeting {
+        Greeting {
+            version: SOCKS_VERSION_5,
+            num_auth_methods: 1,
+            supported_auth_methods: Bytes::from(vec![auth_method]),
+        }
+    }
+
+    fn choice(auth_method: u8) -> Choice {
+        Choice {
+            version: SOCKS_VERSION_5,
+            auth_method,
+        }
+    }
+
+    fn userpass_auth_request() -> UserPassAuthRequest {
+        UserPassAuthRequest {
+            version: SOCKS_AUTH_USERPASS_VERSION,
+            username: String::from("my_username"),
+            password: String::from("my_password"),
+        }
+    }
+
+    fn userpass_auth_response() -> UserPassAuthResponse {
+        UserPassAuthResponse {
+            version: SOCKS_AUTH_USERPASS_VERSION,
+            status: SOCKS_AUTH_STATUS_SUCCESS,
+        }
+    }
+
+    fn connect_request() -> ConnectRequest {
+        let sock_addr: SocketAddr = "127.0.0.1:54321".parse().expect("Valid socket addr");
+        ConnectRequest {
+            version: SOCKS_VERSION_5,
+            command: SOCKS_COMMAND_CONNECT,
+            reserved: SOCKS_NULL,
+            dest_addr: Socks5Address::IpAddr(sock_addr.ip()),
+            dest_port: sock_addr.port(),
+        }
+    }
+
+    fn connect_response() -> ConnectResponse {
+        let sock_addr = MockConnector::default_addr();
+        ConnectResponse {
+            version: SOCKS_VERSION_5,
+            status: SOCKS_STATUS_REQ_GRANTED,
+            reserved: SOCKS_NULL,
+            bind_addr: Socks5Address::IpAddr(sock_addr.ip()),
+            bind_port: sock_addr.port(),
+        }
+    }
+
+    #[tokio::test]
+    async fn userpass_auth_method() {
+        let reader = Builder::new()
+            .read(&greeting(SOCKS_AUTH_USERPASS).serialize())
+            .read(&userpass_auth_request().serialize())
+            .read(&connect_request().serialize())
+            .build();
+        let writer = Builder::new()
+            .write(&choice(SOCKS_AUTH_USERPASS).serialize())
+            .write(&userpass_auth_response().serialize())
+            .write(&connect_response().serialize())
+            .build();
+        let conn = Connection::new(BufReader::new(reader), writer);
+
+        let s = run_socks5_server(conn, MockConnector::new()).await;
+        assert!(s.is_ok())
+    }
+
+    #[tokio::test]
+    async fn none_auth_method() {
+        let reader = Builder::new()
+            .read(&greeting(SOCKS_AUTH_NONE).serialize())
+            .read(&connect_request().serialize())
+            .build();
+        let writer = Builder::new()
+            .write(&choice(SOCKS_AUTH_NONE).serialize())
+            .write(&connect_response().serialize())
+            .build();
+        let conn = Connection::new(BufReader::new(reader), writer);
+
+        let s = run_socks5_server(conn, MockConnector::new()).await;
+        assert!(s.is_ok())
+    }
+
+    #[tokio::test]
+    async fn unsupported_auth_method() {
+        let reader = Builder::new()
+            .read(&greeting(SOCKS_AUTH_UNSUPPORTED).serialize())
+            .build();
+        let writer = Builder::new()
+            .write(&choice(SOCKS_AUTH_UNSUPPORTED).serialize())
+            .build();
+        let conn = Connection::new(BufReader::new(reader), writer);
+
+        let s = run_socks5_server(conn, MockConnector::new()).await;
+        assert!(s.is_err())
     }
 }
