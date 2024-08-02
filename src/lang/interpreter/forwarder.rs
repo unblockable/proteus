@@ -23,9 +23,9 @@ pub struct Forwarder<R: Reader, W: Writer> {
 impl<R: Reader, W: Writer> Forwarder<R, W> {
     pub fn new(src: R, dst: W, state: Option<SharedForwardingState>) -> Self {
         Self {
-            src: src,
+            src,
             n_recv_src: 0,
-            dst: dst,
+            dst,
             n_sent_dst: 0,
             state_owned: ForwardingState::empty(),
             state_shared: state.unwrap_or(SharedForwardingState::empty()),

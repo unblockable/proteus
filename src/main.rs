@@ -148,7 +148,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             );
 
             // Run the proteus protocol with the interpreter.
-            match Interpreter::run(pt_conn, rvs_conn, Box::new(client_spec), options).await
+            match Interpreter::run(pt_conn, rvs_conn, client_spec, options).await
             {
                 Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
                 Err(e) => log::debug!(
@@ -246,7 +246,7 @@ async fn handle_server_connection(
     );
 
     // Run the proteus protocol with the interpreter.
-    match Interpreter::run(pt_conn, fwd_conn, Box::new(spec), conf.options).await
+    match Interpreter::run(pt_conn, fwd_conn, spec, conf.options).await
     {
         Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
         Err(e) => log::debug!(

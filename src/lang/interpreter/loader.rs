@@ -8,16 +8,16 @@ pub enum LoaderResult {
     Pending,
 }
 
-pub struct Loader {
-    spec: Box<dyn TaskProvider + Send + 'static>,
+pub struct Loader<T: TaskProvider + Send> {
+    spec: T,
     current_out: Option<TaskID>,
     previous_out: Option<TaskID>,
     current_in: Option<TaskID>,
     previous_in: Option<TaskID>,
 }
 
-impl Loader {
-    pub fn new(spec: Box<dyn TaskProvider + Send + 'static>) -> Self {
+impl<T: TaskProvider + Send> Loader<T> {
+    pub fn new(spec: T) -> Self {
         Self {
             spec,
             current_out: None,

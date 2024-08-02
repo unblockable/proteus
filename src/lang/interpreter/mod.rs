@@ -24,31 +24,36 @@ pub struct Interpreter {}
 impl Interpreter {
     /// Run the configured proteus protocol instance to completion. This returns
     /// when the proteus protocol terminates and all connections can be closed.
-    pub async fn run<R: Reader, W: Writer>(
-        proteus_conn: Connection<R, W>,
-        other_conn: Connection<R, W>,
-        spec: Box<dyn TaskProvider + Send + 'static>,
+    pub async fn run<R, W, T>(
+        net_conn: Connection<R, W>,
+        app_conn: Connection<R, W>,
+        protospec: T,
         _options: HashMap<String, String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        R: Reader,
+        W: Writer,
+        T: TaskProvider + Send,
+    {
         // Get the source and sink ends so that we can forward data in both
         // directions concurrently.
-        let (net_src, net_dst) = proteus_conn.into_split();
-        let (app_src, app_dst) = other_conn.into_split();
+        let (net_src, net_dst) = net_conn.into_split();
+        let (app_src, app_dst) = app_conn.into_split();
 
         // Buffers for data we are proxying. The inner src is unobfuscated data
         // typically read from a local process over a localhost connection, while
         // the inner dst is to a proteus process typically running on a remote
-        // host. The data written to the dst will be observable to a censor.
+        // host. The data written to the dst will be network-observable.
         let app_to_net = Forwarder::new(app_src, net_dst, None);
 
         // Buffers for data we are proxying. The inner src is from a proteus
         // process typically running on a remote host, while the inner dst is
         // is unobfuscated data typically written to a local process over a localhost connection.
-        // The data read from the src was observable by the censor.
+        // The data read from the src was network-observable.
         let net_to_app = Forwarder::new(net_src, app_dst, Some(app_to_net.share()));
 
         // Creates programs out of tasks from the protocol specification.
-        let loader = Arc::new(Mutex::new(Loader::new(spec)));
+        let loader = Arc::new(Mutex::new(Loader::new(protospec)));
 
         // Execute both forwarding directions concurrently.
         match tokio::try_join!(
@@ -60,11 +65,16 @@ impl Interpreter {
         }
     }
 
-    async fn execute<R: Reader, W: Writer>(
-        loader: Arc<Mutex<Loader>>,
+    async fn execute<R, W, T>(
+        loader: Arc<Mutex<Loader<T>>>,
         mut forwarder: Forwarder<R, W>,
         direction: ForwardingDirection,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        R: Reader,
+        W: Writer,
+        T: TaskProvider + Send,
+    {
         loop {
             let loader_result = {
                 match loader.lock() {
