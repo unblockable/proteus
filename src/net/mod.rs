@@ -90,6 +90,12 @@ impl<R: AsyncRead + Send + Unpin> BufReader<R> {
             buffer: BytesMut::with_capacity(capacity),
         }
     }
+
+    #[cfg(test)]
+    /// Note that this will lose buffered bytes if there are any.
+    pub fn into_inner(self) -> R {
+        self.source
+    }
 }
 
 #[async_trait]
@@ -257,7 +263,7 @@ impl Deserializer<RawData> for RawFormatter {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use rand::{
         distributions::{Alphanumeric, DistString},
@@ -268,7 +274,7 @@ mod tests {
     const MIN_TRANSFER_SIZE: usize = 100;
     const MAX_TRANSFER_SIZE: usize = 100_000;
 
-    fn create_mock_connection_pair() -> (
+    pub fn create_mock_connection_pair() -> (
         Connection<BufReader<DuplexStream>, DuplexStream>,
         Connection<BufReader<DuplexStream>, DuplexStream>,
     ) {
@@ -281,7 +287,7 @@ mod tests {
         (client, server)
     }
 
-    fn generate_payload(len_range: Range<usize>) -> Bytes {
+    pub fn generate_payload(len_range: Range<usize>) -> Bytes {
         let mut rng = rand::thread_rng();
         let len = rng.gen_range(len_range);
         let s = Alphanumeric.sample_string(&mut rng, len);

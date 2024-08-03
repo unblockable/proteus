@@ -184,7 +184,7 @@ impl Program {
                 let data = forwarder
                     .recv(args.from_len.clone())
                     .await
-                    .map_err(|e| anyhow!("Recv error {e}"))?;
+                    .map_err(|e| anyhow!("ReadApp error {e}"))?;
                 self.bytes_heap.insert(args.to_heap_id.clone(), data);
             }
             Instruction::ReadNet(args) => {
@@ -210,7 +210,7 @@ impl Program {
                 let data = forwarder
                     .recv(len)
                     .await
-                    .map_err(|e| anyhow!("Recv error {e}"))?;
+                    .map_err(|e| anyhow!("ReadNet error {e}"))?;
                 self.bytes_heap.insert(args.to_heap_id.clone(), data);
             }
             Instruction::SetArrayBytes(args) => {
@@ -250,7 +250,7 @@ impl Program {
                 forwarder
                     .send(data)
                     .await
-                    .map_err(|e| anyhow!("Send error {e}"))?;
+                    .map_err(|e| anyhow!("WriteApp error {e}"))?;
             }
             Instruction::WriteNet(args) => {
                 let msg = self
@@ -261,7 +261,7 @@ impl Program {
                 forwarder
                     .send(data)
                     .await
-                    .map_err(|e| anyhow!("Send error {e}"))?;
+                    .map_err(|e| anyhow!("WriteNet error {e}"))?;
             }
         }
 
