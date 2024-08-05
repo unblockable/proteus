@@ -1,5 +1,6 @@
 use crate::lang::{Role, task::*, types::*};
 
+#[derive(Clone)]
 pub struct EncryptedLengthPayloadSpec {
     role: Role,
     abs_format_out: AbstractFormat,

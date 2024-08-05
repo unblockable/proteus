@@ -1,5 +1,6 @@
 use crate::lang::{Role, task::*, types::*};
 
+#[derive(Clone)]
 pub struct LengthPayloadSpec {
     _role: Role, // both sides are identical
     abs_format_out: AbstractFormat,

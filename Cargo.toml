@@ -9,7 +9,7 @@ edition = "2021"
 enum-from = { path = "lib/enum-from" }
 bytes = "1.4.0"
 log = "0.4.0"
-tokio = { version = "1.17.0", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time"] }
+tokio = { version = "1.17.0", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "sync"] }
 pest = "2.0"
 pest_derive = "2.0"
 petgraph = "0.6.3"

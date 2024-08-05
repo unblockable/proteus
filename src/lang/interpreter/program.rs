@@ -5,7 +5,7 @@ use crate::{
     lang::{
         memory::Heap,
         message::Message,
-        task::{Instruction, ReadNetLength, Task},
+        task::{Instruction, ReadNetLength, Task, TaskID},
         types::{ConcreteFormat, Identifier},
         Role,
     },
@@ -36,6 +36,10 @@ impl Program {
             message_heap: Heap::new(),
             number_heap: Heap::new(),
         }
+    }
+
+    pub fn task_id(&self) -> TaskID {
+        self.task.id
     }
 
     pub async fn execute<R: Reader, W: Writer>(
