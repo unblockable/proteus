@@ -13,7 +13,6 @@ tokio = { version = "1.17.0", features = ["macros", "rt", "rt-multi-thread", "io
 pest = "2.0"
 pest_derive = "2.0"
 petgraph = "0.6.3"
-argon2 = "0.5.0"
 anyhow = "1.0"
 
 # Crypto dependencies
@@ -22,6 +21,8 @@ rand = "0.8.5" # randomness for local keygen
 salsa20 = "0.10.2" # CPRNG for Nonce generation
 chacha20poly1305 = "0.9.0" # AEAD cipher
 async-trait = "0.1.81"
+sha256 = "1.5.0"
+hex = "0.4.3"
 
 [build-dependencies]
 which = "4.4.0"

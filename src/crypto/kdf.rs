@@ -1,13 +1,5 @@
-use argon2::Argon2;
-
-pub fn derive_key_256(password: &str, salt: &str) -> [u8; 32] {
-    let mut output_key_material = [0u8; 32]; // Can be any desired size
-    Argon2::default()
-        .hash_password_into(
-            password.as_bytes(),
-            salt.as_bytes(),
-            &mut output_key_material,
-        )
-        .unwrap();
+pub fn derive_key_256(password: &str, _: &str) -> [u8; 32] {
+    let mut output_key_material = [0u8; 32];
+    output_key_material.clone_from_slice(hex::decode(sha256::digest(password)).unwrap().as_slice());
     output_key_material
 }
