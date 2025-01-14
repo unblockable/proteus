@@ -50,6 +50,10 @@ impl<R: Reader, W: Writer> Forwarder<R, W> {
         Ok(num_written)
     }
 
+    pub async fn flush(&mut self) -> anyhow::Result<()> {
+        self.dst.flush().await
+    }
+
     pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
         log::trace!("Trying to receive {len:?} bytes from src",);
 

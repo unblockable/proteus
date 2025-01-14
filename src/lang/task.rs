@@ -88,6 +88,7 @@ pub enum Instruction {
     SetNumericValue(SetNumericValueArgs),
     WriteApp(WriteAppArgs),
     WriteNet(WriteNetArgs),
+    WriteNetTwice(WriteNetTwiceArgs),
     ReadKey(ReadKeyArgs),
     SaveKey(SaveKeyArgs),
 }
@@ -220,6 +221,15 @@ pub struct WriteAppArgs {
 #[derive(Debug)]
 pub struct WriteNetArgs {
     pub from_msg_heap_id: Identifier,
+}
+
+/// Write the bytes from the message stored on the heap at `from_msg_heap_id` to
+/// the network in two write operations. We will write len_first_write first,
+/// and then the remaining bytes second.
+#[derive(Debug)]
+pub struct WriteNetTwiceArgs {
+    pub from_msg_heap_id: Identifier,
+    pub len_first_write: usize,
 }
 
 #[derive(Debug)]

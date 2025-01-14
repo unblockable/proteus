@@ -71,6 +71,7 @@ pub trait Writer {
     where
         S: Serializer<F> + Send,
         F: Send;
+    async fn flush(&mut self) -> anyhow::Result<()>;
 }
 
 pub struct BufReader<R: AsyncRead + Send + Unpin> {
@@ -152,6 +153,10 @@ impl<W: AsyncWrite + Send + Unpin> Writer for W {
     {
         let bytes = serializer.serialize_frame(frame);
         Ok(self.write_bytes(&bytes).await?)
+    }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+       Ok(AsyncWriteExt::flush(&mut self).await?)
     }
 }
 

@@ -459,6 +459,15 @@ fn compile_message_to_instrs(
     let mut has_pubkey: Option<Identifier> = None;
     let mut pubkey_enc: Option<PubkeyEncoding> = None;
 
+    let mut length_present_and_nbytes: (bool, usize) = (false, 0);
+
+    for field in &format.fields {
+        //field.name
+        if field.name.0 == "length" {
+            length_present_and_nbytes = (true, field.dtype.maybe_size_of().unwrap());
+        }
+    }
+
     for semantic in semantics.as_ref().iter().sorted() {
         let id = semantic.0;
         let fs = semantic.1;
@@ -573,12 +582,25 @@ fn compile_message_to_instrs(
             }
         }
 
-        instrs.push(
-            WriteNetArgs {
-                from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
-            }
-            .into(),
-        );
+        if psf.options.is_some()
+            && psf.options.as_ref().unwrap().separate_length_field_setting
+            && length_present_and_nbytes.0
+        {
+            instrs.push(
+                WriteNetTwiceArgs {
+                    from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                    len_first_write: length_present_and_nbytes.1
+                }
+                .into(),
+            );
+        } else {
+            instrs.push(
+                WriteNetArgs {
+                    from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
+                }
+                .into(),
+            );
+        }
     } else {
         // Is receiver
         let (prefix, suffix) = format.split_into_fixed_sized_prefix_dynamic_suffix();

@@ -109,6 +109,33 @@ pub trait NumericallyBounded {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+pub enum BoolType {
+    True,
+    False
+}
+
+impl FromStr for BoolType {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "true" => Ok(BoolType::True),
+            "false" => Ok(BoolType::False),
+            _ => Err(ParseError {}),
+        }
+    }
+}
+
+impl std::convert::From<BoolType> for bool {
+    fn from(value: BoolType) -> Self {
+        match value {
+            BoolType::True => true,
+            BoolType::False => false,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum NumericType {
     U8,
     U16,
@@ -758,6 +785,7 @@ pub struct Psf {
     pub formats: HashMap<Identifier, AbstractFormatAndSemantics>,
     pub sequence: Vec<SequenceSpecifier>,
     pub crypto_spec: Option<CryptoSpec>,
+    pub options: Option<Options>,
 }
 
 impl Psf {
@@ -892,6 +920,17 @@ impl PubkeyEncoding {
             PubkeyEncoding::DER => 44,
             PubkeyEncoding::PEM => 115,
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Options {
+    pub separate_length_field_setting: bool,
+}
+
+impl Options {
+    pub fn new(separate_length_field_setting: bool) -> Self {
+        Options { separate_length_field_setting }
     }
 }
 

@@ -331,6 +331,34 @@ impl Program {
                     .await
                     .map_err(|e| anyhow!("WriteNet error {e}"))?;
             }
+            Instruction::WriteNetTwice(args) => {
+                let msg = self
+                    .message_heap
+                    .remove(&args.from_msg_heap_id)
+                    .ok_or(anyhow!("No msg on heap"))?;
+
+                let mut data: Bytes = msg.into_inner();
+                let more = data.split_off(args.len_first_write);
+
+                forwarder
+                    .send(data)
+                    .await
+                    .map_err(|e| anyhow!("WriteNetTwice error on first write {e}"))?;
+
+                if more.len() > 0 {
+                    forwarder
+                        .flush()
+                        .await
+                        .map_err(|e| anyhow!("WriteNetTwice flush error {e}"))?;
+                    // If we decide we need a delay to ensure the second write
+                    // is sent in a separate packet, we can use the following.
+                    // std::thread::sleep(std::time::Duration::from_millis(1));
+                    forwarder
+                        .send(more)
+                        .await
+                        .map_err(|e| anyhow!("WriteNetTwice error on second write {e}"))?;
+                }
+            }
             Instruction::ReadKey(args) => {
                 // TODO: dead code?
                 let _msg = self
@@ -345,13 +373,11 @@ impl Program {
                     .ok_or(anyhow!("No msg on heap"))?;
 
                 let bytes = msg
-                .get_field_bytes(&args.from_field_id)
-                .map_err(|_| anyhow!("No field bytes"))?;
+                    .get_field_bytes(&args.from_field_id)
+                    .map_err(|_| anyhow!("No field bytes"))?;
 
                 let decoded_key = match args.pubkey_encoding {
-                    PubkeyEncoding::RAW => {
-                        crate::crypto::pubkey::X25519PubKey::from_bytes(&bytes)
-                    }
+                    PubkeyEncoding::RAW => crate::crypto::pubkey::X25519PubKey::from_bytes(&bytes),
                     PubkeyEncoding::PEM => {
                         crate::crypto::pubkey::X25519PubKey::from_pem(bytes.to_vec())
                     }

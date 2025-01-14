@@ -65,6 +65,7 @@ psf = { SOI ~ "@SEGMENT.FORMATS" ~ format+ ~
         "@SEGMENT.SEMANTICS" ~ semantic_binding* ~
         "@SEGMENT.SEQUENCE" ~ sequence_specifier+ ~
         crypto_segment? ~
+        options_segment? ~
         EOI }
 
 password_assignment = {"PASSWORD" ~ "=" ~ string_literal ~ ";" }
@@ -91,4 +92,15 @@ crypto_segment = {
   password_assignment? ~
   cipher_assignment ~
   encryption_directives*
+}
+
+boolean = {"true" | "false"}
+
+separate_length_field_setting = {
+  "SEPARATE_LENGTH_FIELD" ~ "=" ~ boolean ~ ";"
+}
+
+options_segment = {
+  "@SEGMENT.OPTIONS" ~
+  separate_length_field_setting?
 }

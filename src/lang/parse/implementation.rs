@@ -424,12 +424,37 @@ pub fn parse_crypto_segment(p: &RulePair) -> Result<CryptoSpec> {
     ))
 }
 
+fn parse_separate_length_field_setting(p: &RulePair) -> Result<BoolType> {
+    assert!(p.as_rule() == Rule::separate_length_field_setting);
+    let mut p = p.clone().into_inner();
+    let value: BoolType = parse_simple(&p.next().unwrap())?;
+    Ok(value)
+}
+
+pub fn parse_options_segment(p: &RulePair) -> Result<Options> {
+    assert!(p.as_rule() == Rule::options_segment);
+
+    let mut separate_length_fields = false;
+
+    for e in p.clone().into_inner() {
+        match e.as_rule() {
+            Rule::separate_length_field_setting => {
+                separate_length_fields = parse_separate_length_field_setting(&e).unwrap().into();
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    Ok(Options::new(separate_length_fields))
+}
+
 pub fn parse_psf_impl(p: &RulePair) -> Result<Psf> {
     assert!(p.as_rule() == Rule::psf);
 
     let mut formats: HashMap<Identifier, AbstractFormatAndSemantics> = Default::default();
     let mut sequence: Vec<SequenceSpecifier> = vec![];
     let mut crypto_spec: Option<CryptoSpec> = None;
+    let mut options: Option<Options> = None;
 
     let p = p.clone().into_inner();
 
@@ -456,6 +481,9 @@ pub fn parse_psf_impl(p: &RulePair) -> Result<Psf> {
             Rule::crypto_segment => {
                 crypto_spec = Some(parse_crypto_segment(&x)?);
             }
+            Rule::options_segment => {
+                options = Some(parse_options_segment(&x)?);
+            }
             _ => {}
         }
     }
@@ -464,6 +492,7 @@ pub fn parse_psf_impl(p: &RulePair) -> Result<Psf> {
         formats,
         sequence,
         crypto_spec,
+        options,
     })
 }
 
@@ -739,9 +768,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_pubkey_semantic() {
-        let test_cases = vec![
-            ("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::RAW)),
-        ];
+        let test_cases = vec![("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::RAW))];
 
         test_rule_pair(
             test_cases.iter(),
@@ -940,6 +967,40 @@ pub mod tests {
             test_cases.iter(),
             Rule::crypto_segment,
             parse_crypto_segment,
+        );
+    }
+
+    #[test]
+    fn test_parse_separate_length_field_setting() {
+        let test_cases = vec![
+            ("SEPARATE_LENGTH_FIELD = true;", BoolType::True),
+            ("SEPARATE_LENGTH_FIELD = false;", BoolType::False),
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::separate_length_field_setting,
+            parse_separate_length_field_setting,
+        );
+    }
+
+    #[test]
+    fn test_parse_options_segment() {
+        let test_cases = vec![
+            (
+                "@SEGMENT.OPTIONS SEPARATE_LENGTH_FIELD = true;",
+                Options::new(true),
+            ),
+            (
+                "@SEGMENT.OPTIONS SEPARATE_LENGTH_FIELD = false;",
+                Options::new(false),
+            ),
+        ];
+
+        test_rule_pair(
+            test_cases.iter(),
+            Rule::options_segment,
+            parse_options_segment,
         );
     }
 
