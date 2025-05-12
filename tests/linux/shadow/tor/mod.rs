@@ -36,7 +36,7 @@ fn run_test(test_name: &str, psf_filepath: &str) {
     assert!(super::run_shadow(&rel_run_dir, args).success());
 
     let client = PathBuf::from(format!(
-        "{rel_run_dir_str}/shadow.data/hosts/client/tgen.1004.stdout",
+        "{rel_run_dir_str}/shadow.data/hosts/client/tgen.1006.stdout",
     ));
     let server = PathBuf::from(format!(
         "{rel_run_dir_str}/shadow.data/hosts/server/tgen.1000.stdout",
