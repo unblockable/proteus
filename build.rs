@@ -11,6 +11,7 @@ fn main() {
         .filter_map(|bin| {
             if which(bin).is_ok() {
                 println!("cargo:rustc-cfg=have_{bin}");
+                println!("cargo:rustc-check-cfg=cfg(have_{bin})");
                 None
             } else {
                 Some(bin.to_string())
