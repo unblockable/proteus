@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[ignore]
 #[cfg(all(target_os = "linux", have_shadow, have_tgen, have_tor, have_python3))]
 fn simple() {
-    run_test(&"simple", &"examples/psf/simple.psf");
+    run_test(&"simple", &"tests/fixtures/simple.psf");
 }
 
 #[test]
@@ -14,7 +14,7 @@ fn simple() {
 fn handshake_no_payload() {
     run_test(
         &"handshake_no_payload",
-        &"examples/psf/handshake_no_payload.psf",
+        &"tests/fixtures/handshake_no_payload.psf",
     );
 }
 
@@ -24,7 +24,7 @@ fn handshake_no_payload() {
 fn handshake_with_payload() {
     run_test(
         &"handshake_with_payload",
-        &"examples/psf/handshake_with_payload.psf",
+        &"tests/fixtures/handshake_with_payload.psf",
     );
 }
 
@@ -32,7 +32,7 @@ fn handshake_with_payload() {
 #[ignore]
 #[cfg(all(target_os = "linux", have_shadow, have_tgen, have_tor, have_python3))]
 fn shadowsocks() {
-    run_test(&"shadowsocks", &"examples/psf/shadowsocks.psf");
+    run_test(&"shadowsocks", &"tests/fixtures/shadowsocks.psf");
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn shadowsocks() {
 fn shadowsocks_padded() {
     run_test(
         &"shadowsocks_padded",
-        &"examples/psf/shadowsocks_padded.psf",
+        &"tests/fixtures/shadowsocks_padded.psf",
     );
 }
 
@@ -49,7 +49,7 @@ fn shadowsocks_padded() {
 #[ignore]
 #[cfg(all(target_os = "linux", have_shadow, have_tgen, have_tor, have_python3))]
 fn tls_mimic() {
-    run_test(&"tls_mimic", &"examples/psf/tls_mimic.psf");
+    run_test(&"tls_mimic", &"tests/fixtures/tls_mimic.psf");
 }
 
 fn run_test(test_name: &str, psf_filepath: &str) {

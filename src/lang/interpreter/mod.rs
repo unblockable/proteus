@@ -278,56 +278,56 @@ mod tests {
 
     #[tokio::test]
     async fn integration_psf_basic() {
-        integration_with_psf(&"examples/psf/simple.psf").await
+        integration_with_psf(&"tests/fixtures/simple.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_basic_enc() {
-        integration_with_psf(&"examples/psf/shadowsocks.psf").await
+        integration_with_psf(&"tests/fixtures/shadowsocks.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_padded_enc() {
-        integration_with_psf(&"examples/psf/shadowsocks_padded.psf").await
+        integration_with_psf(&"tests/fixtures/shadowsocks_padded.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_handshake_no_payload() {
-        integration_with_psf(&"examples/psf/handshake_no_payload.psf").await
+        integration_with_psf(&"tests/fixtures/handshake_no_payload.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_handshake_with_payload() {
-        integration_with_psf(&"examples/psf/handshake_with_payload.psf").await
+        integration_with_psf(&"tests/fixtures/handshake_with_payload.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_tls_mimic() {
-        integration_with_psf(&"examples/psf/tls_mimic.psf").await
+        integration_with_psf(&"tests/fixtures/tls_mimic.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_random() {
-        integration_with_psf(&"examples/psf/random.psf").await
+        integration_with_psf(&"tests/fixtures/random.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_random_noauth() {
-        integration_with_psf(&"examples/psf/random_noauth.psf").await
+        integration_with_psf(&"tests/fixtures/random_noauth.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_padding() {
-        integration_with_psf(&"examples/psf/padding.psf").await
+        integration_with_psf(&"tests/fixtures/padding.psf").await
     }
 
     #[tokio::test]
     async fn integration_psf_key() {
-        integration_with_psf(&"examples/psf/key.psf").await
+        integration_with_psf(&"tests/fixtures/key.psf").await
     }
 
     #[tokio::test]
     async fn integration_separate_length_field() {
-        integration_with_psf(&"examples/psf/separate.psf").await
+        integration_with_psf(&"tests/fixtures/separate.psf").await
     }
 }
