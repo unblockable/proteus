@@ -543,6 +543,7 @@ dependencies = [
  "rand_core",
  "salsa20",
  "sha256",
+ "test_each_file",
  "tokio",
  "tokio-test",
  "which",
@@ -699,6 +700,18 @@ checksum = "8ce2b7fc941b3a24138a0a7cf8e858bfc6a992e7978a068a5c760deb0ed43caf"
 dependencies = [
  "proc-macro2",
  "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "test_each_file"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5b980155ee175f5b054bafd14e434b89c151ffae1a8bd9d607425a7a6911e2b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
  "unicode-ident",
 ]
 

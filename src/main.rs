@@ -140,7 +140,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             // TODO double check, I think the PSF path can change for every Tor
             // Browser connection, so we have to parse the PSF here on every connection.
             let filepath = options.get("psf").unwrap();
-            let client_spec = ProteusParser::parse(filepath, Role::Client).unwrap();
+            let client_spec = ProteusParser::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
@@ -188,7 +188,7 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
     };
 
     let filepath = server_conf.options.get("psf").unwrap();
-    let server_spec = ProteusParser::parse(filepath, Role::Server).unwrap();
+    let server_spec = ProteusParser::parse_path(filepath, Role::Server).unwrap();
 
     log::info!(
         "Proteus server listening for Proteus client connections on {:?}.",

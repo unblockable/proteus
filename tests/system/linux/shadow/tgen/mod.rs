@@ -1,79 +1,18 @@
+use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn simple() {
-    run_test(&"simple", &"tests/fixtures/simple.psf");
+use test_each_file::test_each_path;
+
+// Run a tgen test in shadow for each psf in the fixtures directory.
+test_each_path! {
+    // The test can only be run if our dependencies are satisfied.
+    #[ignore, cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
+    for ["psf"] in "tests/fixtures" => run_test
 }
 
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn handshake_no_payload() {
-    run_test(
-        &"handshake_no_payload",
-        &"tests/fixtures/handshake_no_payload.psf",
-    );
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn handshake_with_payload() {
-    run_test(
-        &"handshake_with_payload",
-        &"tests/fixtures/handshake_with_payload.psf",
-    );
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn shadowsocks() {
-    run_test(&"shadowsocks", &"tests/fixtures/shadowsocks.psf");
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn shadowsocks_padded() {
-    run_test(
-        &"shadowsocks_padded",
-        &"tests/fixtures/shadowsocks_padded.psf",
-    );
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn tls_mimic() {
-    run_test(&"tls_mimic", &"tests/fixtures/tls_mimic.psf");
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn random() {
-    run_test(&"random", &"tests/fixtures/random.psf");
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn random_noauth() {
-    run_test(&"random_noauth", &"tests/fixtures/random_noauth.psf");
-}
-
-#[test]
-#[ignore]
-#[cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-fn padding() {
-    run_test(&"padding", &"tests/fixtures/padding.psf");
-}
-
-fn run_test(test_name: &str, psf_filepath: &str) {
+fn run_test([psf_filepath]: [&Path; 1]) {
+    let test_name = psf_filepath.file_stem().unwrap();
     let run_dir = initialize_test_directory(test_name, psf_filepath);
     let run_dir_str = run_dir.to_string_lossy();
 
@@ -90,10 +29,10 @@ fn run_test(test_name: &str, psf_filepath: &str) {
     assert_eq!(super::count_tgen_stream_successes(server), 5);
 }
 
-fn initialize_test_directory(test_name: &str, psf_filepath: &str) -> PathBuf {
+fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> PathBuf {
     // Set up our paths
-    let in_dir_path = PathBuf::from("tests/linux/shadow/tgen");
-    let out_dir_path = PathBuf::from(format!("target/{}/{test_name}", in_dir_path.display()));
+    let in_dir_path = PathBuf::from("tests/system/linux/shadow/tgen");
+    let out_dir_path = PathBuf::from(format!("target/{}/{test_name:?}", in_dir_path.display()));
 
     // We need to write the proteus bin and PSF paths into the config files.
     let bin_path = fs::canonicalize("target/debug/proteus").expect("Canonicalize path");

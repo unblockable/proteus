@@ -270,8 +270,8 @@ mod tests {
 
     async fn integration_with_psf(psf_filepath: &str) {
         test_protocol(
-            ProteusParser::parse(&psf_filepath, Role::Client).unwrap(),
-            ProteusParser::parse(&psf_filepath, Role::Server).unwrap(),
+            ProteusParser::parse_path(&psf_filepath, Role::Client).unwrap(),
+            ProteusParser::parse_path(&psf_filepath, Role::Server).unwrap(),
         )
         .await
     }

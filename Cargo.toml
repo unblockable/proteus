@@ -33,4 +33,5 @@ pem = "3.0"
 which = "4.4.0"
 
 [dev-dependencies]
+test_each_file = "0.3.0"
 tokio-test = "0.4.4"
