@@ -1,23 +1,20 @@
-use net::TcpConnector;
 use std::collections::HashMap;
 use std::{io, process};
+
+use net::TcpConnector;
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::{
-    lang::{
-        interpreter::Interpreter,
-        parse::{proteus::ProteusParser, Parse},
-        spec::proteus::ProteusSpec,
-        Role,
-    },
-    net::{proto::socks, Connection},
-    pt::{
-        config::{
-            ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
-        },
-        control,
-    },
+use crate::lang::interpreter::Interpreter;
+use crate::lang::parse::proteus::ProteusParser;
+use crate::lang::parse::Parse;
+use crate::lang::spec::proteus::ProteusSpec;
+use crate::lang::Role;
+use crate::net::proto::socks;
+use crate::net::Connection;
+use crate::pt::config::{
+    ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
 };
+use crate::pt::control;
 
 mod crypto;
 mod lang;

@@ -1,8 +1,7 @@
+use std::io::Cursor;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::{
-    io::Cursor,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-};
 
 use crate::net::{Deserialize, Serialize};
 

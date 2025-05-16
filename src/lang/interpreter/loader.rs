@@ -3,10 +3,9 @@ use std::sync::{Arc, Mutex};
 use anyhow::bail;
 use tokio::sync::Notify;
 
+use super::ForwardingDirection;
 use crate::lang::interpreter::program::Program;
 use crate::lang::task::{Task, TaskID, TaskProvider, TaskSet};
-
-use super::ForwardingDirection;
 
 // Each forwarding direction concurrently runs a loader to step through the
 // task graph and asynchronously load new programs to execute the tasks.

@@ -1,5 +1,7 @@
-use crate::lang::{spec::proteus::ProteusSpec, Role};
 use anyhow::Result;
+
+use crate::lang::spec::proteus::ProteusSpec;
+use crate::lang::Role;
 
 pub mod implementation;
 pub mod proteus;

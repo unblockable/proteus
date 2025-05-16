@@ -240,8 +240,9 @@ impl From<AddrParseError> for ParseError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::IpAddr;
+
+    use super::*;
 
     #[test]
     fn common_version() {

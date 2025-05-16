@@ -1,7 +1,5 @@
-use crate::lang::{
-    compiler::*,
-    task::{Task, TaskID, TaskProvider, TaskSet},
-};
+use crate::lang::compiler::*;
+use crate::lang::task::{Task, TaskID, TaskProvider, TaskSet};
 
 // Holds the immutable part of a proteus protocol as parsed from a PSF. This is
 // used as input to a ProteusProtocol, which is newly created for each

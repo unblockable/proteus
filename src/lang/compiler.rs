@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use itertools::Itertools;
 use std::iter::Iterator;
 
+use itertools::Itertools;
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 

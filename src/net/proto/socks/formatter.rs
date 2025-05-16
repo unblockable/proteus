@@ -1,6 +1,7 @@
 use bytes::{Bytes, BytesMut};
 
-use crate::net::{proto::socks::frames::*, Deserialize, Deserializer, Serialize, Serializer};
+use crate::net::proto::socks::frames::*;
+use crate::net::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy)]
 pub struct Formatter {

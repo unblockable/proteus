@@ -1,4 +1,5 @@
-use std::{ffi::OsString, fmt};
+use std::ffi::OsString;
+use std::fmt;
 
 pub(crate) const TRANSPORT_NAME: &str = "proteus";
 pub(crate) const SUPPORTED_PT_VERSION: &str = "1";

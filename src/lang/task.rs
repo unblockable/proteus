@@ -1,12 +1,10 @@
 #![allow(dead_code)]
 
-use crate::lang::{
-    types::{AbstractFormat, Identifier, PubkeyEncoding},
-    Role,
-};
+use std::convert::From;
 use std::ops::Range;
 
-use std::convert::From;
+use crate::lang::types::{AbstractFormat, Identifier, PubkeyEncoding};
+use crate::lang::Role;
 
 pub trait TaskProvider {
     fn get_init_task(&self) -> Task;

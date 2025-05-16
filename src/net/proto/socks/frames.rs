@@ -1,7 +1,9 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 
-use crate::net::{proto::socks::address::Socks5Address, Deserialize, Serialize};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+use crate::net::proto::socks::address::Socks5Address;
+use crate::net::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq)]
 pub struct Greeting {
@@ -195,8 +197,9 @@ impl Deserialize<ConnectResponse> for ConnectResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    use super::*;
 
     #[test]
     fn greeting() {

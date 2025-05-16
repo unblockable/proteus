@@ -1,4 +1,5 @@
-use std::{fmt, net::SocketAddr};
+use std::fmt;
+use std::net::SocketAddr;
 
 use address::Socks5Address;
 use anyhow::bail;
@@ -7,7 +8,8 @@ use frames::{
     Choice, ConnectRequest, ConnectResponse, Greeting, UserPassAuthRequest, UserPassAuthResponse,
 };
 
-use crate::net::{self, proto::socks, Connection, Connector, Reader, Writer};
+use crate::net::proto::socks;
+use crate::net::{self, Connection, Connector, Reader, Writer};
 
 mod address;
 mod formatter;

@@ -89,27 +89,22 @@ impl Interpreter {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, future::Future};
+    use std::collections::HashMap;
+    use std::future::Future;
 
     use bytes::{Bytes, BytesMut};
     use tokio::io::{AsyncWriteExt, DuplexStream};
 
-    use crate::{
-        lang::{
-            interpreter::Interpreter,
-            parse::{proteus::ProteusParser, Parse},
-            spec::{
-                proteus::ProteusSpec,
-                test::{basic::LengthPayloadSpec, basic_enc::EncryptedLengthPayloadSpec},
-            },
-            task::TaskProvider,
-            Role,
-        },
-        net::{
-            tests::{create_mock_connection_pair, generate_payload},
-            BufReader, Connection, Reader,
-        },
-    };
+    use crate::lang::interpreter::Interpreter;
+    use crate::lang::parse::proteus::ProteusParser;
+    use crate::lang::parse::Parse;
+    use crate::lang::spec::proteus::ProteusSpec;
+    use crate::lang::spec::test::basic::LengthPayloadSpec;
+    use crate::lang::spec::test::basic_enc::EncryptedLengthPayloadSpec;
+    use crate::lang::task::TaskProvider;
+    use crate::lang::Role;
+    use crate::net::tests::{create_mock_connection_pair, generate_payload};
+    use crate::net::{BufReader, Connection, Reader};
 
     async fn application_read(mut reader: BufReader<DuplexStream>) -> anyhow::Result<Bytes> {
         let mut payload = BytesMut::new();

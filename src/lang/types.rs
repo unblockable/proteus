@@ -1,9 +1,10 @@
 #![allow(dead_code)]
 
-use crate::lang::Role;
 use std::collections::hash_map::HashMap;
 use std::convert::{From, TryFrom};
 use std::str::FromStr;
+
+use crate::lang::Role;
 
 pub trait StaticallySized {
     fn size_of(&self) -> usize;

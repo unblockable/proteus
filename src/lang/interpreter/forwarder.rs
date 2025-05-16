@@ -1,15 +1,11 @@
-use std::{
-    ops::Range,
-    sync::{Arc, Mutex},
-};
+use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail};
 use bytes::Bytes;
 
-use crate::{
-    crypto::chacha::{Cipher, CipherKind, DecryptionCipher, EncryptionCipher},
-    net::{Reader, Writer},
-};
+use crate::crypto::chacha::{Cipher, CipherKind, DecryptionCipher, EncryptionCipher};
+use crate::net::{Reader, Writer};
 
 pub struct Forwarder<R: Reader, W: Writer> {
     src: R,

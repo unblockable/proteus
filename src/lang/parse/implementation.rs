@@ -1,15 +1,16 @@
 #![allow(dead_code)]
 
-use crate::lang::types::*;
-use crate::lang::Role;
 use core::str::FromStr;
-use pest::iterators::{Pair, Pairs};
-use pest::Parser;
-use pest_derive::Parser;
 use std::collections::hash_map::HashMap;
 use std::fmt::Debug;
 
 use anyhow::Result;
+use pest::iterators::{Pair, Pairs};
+use pest::Parser;
+use pest_derive::Parser;
+
+use crate::lang::types::*;
+use crate::lang::Role;
 
 #[derive(Parser)]
 #[grammar = "lang/parse/proteus_lite.pest"]
@@ -507,10 +508,12 @@ pub fn parse_psf(psf_contents: &str) -> Result<Psf> {
 
 #[cfg(test)]
 pub mod tests {
-    use super::*;
-    use pest::Parser;
     use std::fs;
     use std::iter::Iterator;
+
+    use pest::Parser;
+
+    use super::*;
 
     fn test_rule_pair<
         'a,

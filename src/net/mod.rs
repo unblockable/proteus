@@ -269,12 +269,11 @@ impl Deserializer<RawData> for RawFormatter {
 
 #[cfg(test)]
 pub mod tests {
-    use super::*;
-    use rand::{
-        distributions::{Alphanumeric, DistString},
-        Rng,
-    };
+    use rand::distributions::{Alphanumeric, DistString};
+    use rand::Rng;
     use tokio::io::DuplexStream;
+
+    use super::*;
 
     const MIN_TRANSFER_SIZE: usize = 100;
     const MAX_TRANSFER_SIZE: usize = 100_000;

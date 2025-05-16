@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use crate::lang::types::*;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+use crate::lang::types::*;
 
 #[derive(Debug)]
 pub enum SetFieldError {
