@@ -44,7 +44,7 @@ fn run_test([psf_filepath]: [&Path; 1]) {
 fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> (PathBuf, PathBuf) {
     // Set up our paths
     let in_dir_path = PathBuf::from("tests/system/linux/shadow/tor");
-    let out_dir_path = PathBuf::from(format!("target/{}/{test_name:?}", in_dir_path.display()));
+    let out_dir_path = PathBuf::from("target").join(&in_dir_path).join(test_name);
 
     // We need to write the proteus bin and PSF paths into the config files.
     let bin_path = fs::canonicalize("target/debug/proteus").expect("Canonicalize path");
