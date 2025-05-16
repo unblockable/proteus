@@ -38,6 +38,7 @@ hosts:
                      TOR_PT_SERVER_BINDADDR: "proteus-100.0.0.1:443",
                      TOR_PT_ORPORT: "127.0.0.1:9111",
                      RUST_BACKTRACE: "1" }
+      args: pt
       start_time: 1
       expected_final_state: running
   exit1:
@@ -105,6 +106,7 @@ hosts:
                      TOR_PT_STATE_LOCATION: "/tmp/proteus_client",
                      TOR_PT_CLIENT_TRANSPORTS: "proteus", 
                      RUST_BACKTRACE: "1" }
+      args: pt
       start_time: 1
       expected_final_state: running
     # The socks5 listen port is written to stdout by the proteus client.

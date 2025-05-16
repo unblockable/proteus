@@ -7,7 +7,7 @@ use std::net::{AddrParseError, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use crate::pt::config::keys::{self, ClientKey, CommonKey, ServerKey};
+use super::keys::{self, ClientKey, CommonKey, ServerKey};
 
 /// Parses PT config options. A `Parser` is created from an iterator of
 /// `(String, String)` or `(&str, &str)` representing (key, value) pairs, or

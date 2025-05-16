@@ -5,9 +5,10 @@ use std::path::PathBuf;
 mod keys;
 mod parse;
 
-use crate::pt::config::parse::{ParseError, Parser};
+use parse::{ParseError, Parser};
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ConfigError {
     Version(String),
     Proxy(String),
@@ -27,12 +28,14 @@ pub enum ForwardProtocol {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SocksAuth {
     pub username: String,
     pub password: String,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SocksProxy {
     pub auth: Option<SocksAuth>,
     pub addr: SocketAddr,
@@ -45,6 +48,7 @@ pub struct Config {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CommonConfig {
     pub state_location: PathBuf,
     pub exit_on_stdin_close: bool,
@@ -187,9 +191,9 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use crate::pt::config::keys::{ClientKey, CommonKey, ServerKey};
-    use crate::pt::config::parse::Parser;
-    use crate::pt::config::{Config, ConfigError};
+    use super::keys::{ClientKey, CommonKey, ServerKey};
+    use super::parse::Parser;
+    use super::{Config, ConfigError};
 
     fn make_config(v: Vec<(&str, &str)>) -> Result<Config, ConfigError> {
         Config::from_parser(Parser::from_iter(v))
