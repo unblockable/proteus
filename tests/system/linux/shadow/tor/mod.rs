@@ -20,7 +20,14 @@ fn run_test([psf_filepath]: [&Path; 1]) {
     let abs_test_dir_str = abs_test_dir.to_string_lossy();
 
     let template_opt = format!("--template-directory={abs_test_dir_str}/shadow.data.template",);
-    let args = [template_opt.as_str(), "--parallelism=4", "shadow.yaml"];
+    // We disable CPU pinning because we are running many Shadow sims at the same time and we
+    // don't want them all to pin to the same set of CPUs.
+    let args = [
+        template_opt.as_str(),
+        "--parallelism=4",
+        "--use-cpu-pinning=false",
+        "shadow.yaml",
+    ];
     assert!(super::run_shadow(&rel_run_dir, args).success());
 
     let client = PathBuf::from(format!(

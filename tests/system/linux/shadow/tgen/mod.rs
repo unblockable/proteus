@@ -16,7 +16,13 @@ fn run_test([psf_filepath]: [&Path; 1]) {
     let run_dir = initialize_test_directory(test_name, psf_filepath);
     let run_dir_str = run_dir.to_string_lossy();
 
-    assert!(super::run_shadow(&run_dir, ["--parallelism=4", "shadow.yaml"]).success());
+    // We disable CPU pinning because we are running many Shadow sims at the same time and we
+    // don't want them all to pin to the same set of CPUs.
+    assert!(super::run_shadow(
+        &run_dir,
+        ["--parallelism=4", "--use-cpu-pinning=false", "shadow.yaml"]
+    )
+    .success());
 
     let client = PathBuf::from(format!(
         "{run_dir_str}/shadow.data/hosts/client/tgen.1003.stdout",
