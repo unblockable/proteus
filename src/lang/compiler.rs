@@ -6,9 +6,9 @@ use std::iter::Iterator;
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
-use crate::lang::Role;
 use crate::lang::task::*;
 use crate::lang::types::*;
+use crate::lang::Role;
 
 /*
  * Some assumptions the compiler is making that the parser should check for:
@@ -589,7 +589,7 @@ fn compile_message_to_instrs(
             instrs.push(
                 WriteNetTwiceArgs {
                     from_msg_heap_id: MESSAGE_HEAP_NAME.id(),
-                    len_first_write: length_present_and_nbytes.1
+                    len_first_write: length_present_and_nbytes.1,
                 }
                 .into(),
             );

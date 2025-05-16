@@ -1,4 +1,4 @@
-use crate::lang::{Role, task::*, types::*};
+use crate::lang::{task::*, types::*, Role};
 
 #[derive(Clone)]
 pub struct EncryptedLengthPayloadSpec {

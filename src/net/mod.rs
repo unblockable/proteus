@@ -156,7 +156,7 @@ impl<W: AsyncWrite + Send + Unpin> Writer for W {
     }
 
     async fn flush(&mut self) -> anyhow::Result<()> {
-       Ok(AsyncWriteExt::flush(&mut self).await?)
+        Ok(AsyncWriteExt::flush(&mut self).await?)
     }
 }
 

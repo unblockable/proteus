@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use crate::lang::{
-    Role,
     types::{AbstractFormat, Identifier, PubkeyEncoding},
+    Role,
 };
 use std::ops::Range;
 

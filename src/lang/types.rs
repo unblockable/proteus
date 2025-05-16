@@ -111,7 +111,7 @@ pub trait NumericallyBounded {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BoolType {
     True,
-    False
+    False,
 }
 
 impl FromStr for BoolType {
@@ -930,7 +930,9 @@ pub struct Options {
 
 impl Options {
     pub fn new(separate_length_field_setting: bool) -> Self {
-        Options { separate_length_field_setting }
+        Options {
+            separate_length_field_setting,
+        }
     }
 }
 
