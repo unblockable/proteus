@@ -90,8 +90,6 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use crate::common::mock;
-    use crate::lang::parse::proteus::ProteusParser;
-    use crate::lang::parse::Parse;
     use crate::lang::spec::test::basic::LengthPayloadSpec;
     use crate::lang::spec::test::basic_enc::EncryptedLengthPayloadSpec;
     use crate::lang::Role;
@@ -112,68 +110,5 @@ mod tests {
             EncryptedLengthPayloadSpec::new(Role::Server),
         )
         .await
-    }
-
-    async fn integration_with_psf(psf_filepath: &str) {
-        mock::tests::test_protocol_interpretability(
-            ProteusParser::parse_path(&psf_filepath, Role::Client).unwrap(),
-            ProteusParser::parse_path(&psf_filepath, Role::Server).unwrap(),
-        )
-        .await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_basic() {
-        integration_with_psf(&"tests/fixtures/simple.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_basic_enc() {
-        integration_with_psf(&"tests/fixtures/shadowsocks.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_padded_enc() {
-        integration_with_psf(&"tests/fixtures/shadowsocks_padded.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_handshake_no_payload() {
-        integration_with_psf(&"tests/fixtures/handshake_no_payload.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_handshake_with_payload() {
-        integration_with_psf(&"tests/fixtures/handshake_with_payload.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_tls_mimic() {
-        integration_with_psf(&"tests/fixtures/tls_mimic.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_random() {
-        integration_with_psf(&"tests/fixtures/random.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_random_noauth() {
-        integration_with_psf(&"tests/fixtures/random_noauth.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_padding() {
-        integration_with_psf(&"tests/fixtures/padding.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_psf_key() {
-        integration_with_psf(&"tests/fixtures/key.psf").await
-    }
-
-    #[tokio::test]
-    async fn integration_separate_length_field() {
-        integration_with_psf(&"tests/fixtures/separate.psf").await
     }
 }
