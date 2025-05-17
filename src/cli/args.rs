@@ -36,11 +36,18 @@ pub struct CliArgs {
         long,
         global = true,
         value_name = "LEVEL",
-        default_value = "info"
+        default_value = "info",
+        display_order = 0
     )]
     pub log_level: EnumerableLevelFilter,
     /// Override log filters using RUST_LOG directives supported by the env_logger crate.
-    #[arg(short = 'f', long, global = true, value_name = "FILTERS")]
+    #[arg(
+        short = 'f',
+        long,
+        global = true,
+        value_name = "FILTERS",
+        display_order = 1
+    )]
     pub log_filter: Option<String>,
     #[command(subcommand)]
     pub command: Command,
@@ -68,6 +75,15 @@ pub struct CheckArgs {
     /// The path to a specification file that defines the protocol to use
     #[arg(required = true)]
     pub protocol: PathBuf,
+    /// Number of bytes to transfer using the protocol.
+    #[arg(
+        short,
+        long,
+        value_name = "N",
+        default_value = "1024",
+        display_order = 2
+    )]
+    pub num_bytes: usize,
 }
 
 pub fn parse_cli_args() -> CliArgs {

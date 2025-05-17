@@ -14,11 +14,11 @@ pub type MockPayload = Bytes;
 
 pub struct Result {
     /// Holds the app payloads that were (read, written).
-    client_app: anyhow::Result<(MockPayload, MockPayload)>,
-    client_proxy: anyhow::Result<()>,
-    server_proxy: anyhow::Result<()>,
+    pub client_app: anyhow::Result<(MockPayload, MockPayload)>,
+    pub client_proxy: anyhow::Result<()>,
+    pub server_proxy: anyhow::Result<()>,
     /// Holds the app payloads that were (read, written).
-    server_app: anyhow::Result<(MockPayload, MockPayload)>,
+    pub server_app: anyhow::Result<(MockPayload, MockPayload)>,
 }
 
 pub fn connection_pair(max_buf_size: usize) -> (MockConnection, MockConnection) {
