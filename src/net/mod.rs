@@ -80,7 +80,7 @@ pub struct BufReader<R: AsyncRead + Send + Unpin> {
 }
 
 impl<R: AsyncRead + Send + Unpin> BufReader<R> {
-    fn new(source: R) -> Self {
+    pub fn new(source: R) -> Self {
         let cap = 2usize.pow(14u32); // 16 KiB
         BufReader::with_capacity(source, cap)
     }
@@ -166,7 +166,6 @@ pub struct Connection<R: Reader, W: Writer> {
 }
 
 impl<R: Reader, W: Writer> Connection<R, W> {
-    #[cfg(test)]
     pub fn new(src: R, dst: W) -> Self {
         Self { src, dst }
     }
@@ -269,37 +268,12 @@ impl Deserializer<RawData> for RawFormatter {
 
 #[cfg(test)]
 pub mod tests {
-    use rand::distributions::{Alphanumeric, DistString};
-    use rand::Rng;
-    use tokio::io::DuplexStream;
+    use crate::common::mock;
 
     use super::*;
 
-    const MIN_TRANSFER_SIZE: usize = 100;
-    const MAX_TRANSFER_SIZE: usize = 100_000;
-
-    pub fn create_mock_connection_pair() -> (
-        Connection<BufReader<DuplexStream>, DuplexStream>,
-        Connection<BufReader<DuplexStream>, DuplexStream>,
-    ) {
-        let (client_w, server_r) = tokio::io::duplex(MAX_TRANSFER_SIZE);
-        let (server_w, client_r) = tokio::io::duplex(MAX_TRANSFER_SIZE);
-
-        let client = Connection::new(BufReader::new(client_r), client_w);
-        let server = Connection::new(BufReader::new(server_r), server_w);
-
-        (client, server)
-    }
-
-    pub fn generate_payload(len_range: Range<usize>) -> Bytes {
-        let mut rng = rand::thread_rng();
-        let len = rng.gen_range(len_range);
-        let s = Alphanumeric.sample_string(&mut rng, len);
-        Bytes::from(s)
-    }
-
-    async fn transfer_bytes_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R) {
-        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+    async fn transfer_bytes_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R, len: usize) {
+        let payload = mock::payload(len);
 
         let num_written = dst.write_bytes(&payload).await.unwrap();
         assert_eq!(num_written, payload.len());
@@ -312,15 +286,16 @@ pub mod tests {
 
     #[tokio::test]
     async fn transfer_bytes() {
-        let (mut client, mut server) = create_mock_connection_pair();
-        for _ in 0..5 {
-            transfer_bytes_helper(&mut client.dst, &mut server.src).await;
-            transfer_bytes_helper(&mut server.dst, &mut client.src).await;
+        let max_len = mock::tests::payload_len_iter().max().unwrap();
+        let (mut client, mut server) = mock::connection_pair(max_len);
+        for len in mock::tests::payload_len_iter() {
+            transfer_bytes_helper(&mut client.dst, &mut server.src, len).await;
+            transfer_bytes_helper(&mut server.dst, &mut client.src, len).await;
         }
     }
 
-    async fn transfer_frame_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R) {
-        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+    async fn transfer_frame_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R, len: usize) {
+        let payload = mock::payload(len);
 
         let frame_out = RawData::from(payload.clone());
         let mut fmt = RawFormatter::new(payload.len()..payload.len() + 1);
@@ -337,16 +312,18 @@ pub mod tests {
 
     #[tokio::test]
     async fn transfer_frame() {
-        let (mut client, mut server) = create_mock_connection_pair();
-        for _ in 0..5 {
-            transfer_frame_helper(&mut client.dst, &mut server.src).await;
-            transfer_frame_helper(&mut server.dst, &mut client.src).await;
+        let max_len = mock::tests::payload_len_iter().max().unwrap();
+        let (mut client, mut server) = mock::connection_pair(max_len);
+        for len in mock::tests::payload_len_iter() {
+            transfer_frame_helper(&mut client.dst, &mut server.src, len).await;
+            transfer_frame_helper(&mut server.dst, &mut client.src, len).await;
         }
     }
 
     #[tokio::test]
     async fn reader() {
-        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+        let max_len = mock::tests::payload_len_iter().max().unwrap();
+        let payload = mock::payload(max_len);
 
         let mem_stream = Cursor::new(payload.clone());
         let mut src = BufReader::new(mem_stream);
@@ -367,7 +344,8 @@ pub mod tests {
 
     #[tokio::test]
     async fn writer() {
-        let payload = generate_payload(MIN_TRANSFER_SIZE..MAX_TRANSFER_SIZE);
+        let max_len = mock::tests::payload_len_iter().max().unwrap();
+        let payload = mock::payload(max_len);
 
         let buf = Vec::<u8>::new();
         let mut dst = Cursor::new(buf);
