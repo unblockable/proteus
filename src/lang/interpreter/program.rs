@@ -369,11 +369,11 @@ impl Program {
                     .map_err(|_| anyhow!("No field bytes"))?;
 
                 let decoded_key = match args.pubkey_encoding {
-                    PubkeyEncoding::RAW => crate::crypto::pubkey::X25519PubKey::from_bytes(&bytes),
-                    PubkeyEncoding::PEM => {
+                    PubkeyEncoding::Raw => crate::crypto::pubkey::X25519PubKey::from_bytes(&bytes),
+                    PubkeyEncoding::Pem => {
                         crate::crypto::pubkey::X25519PubKey::from_pem(bytes.to_vec())
                     }
-                    PubkeyEncoding::DER => {
+                    PubkeyEncoding::Der => {
                         crate::crypto::pubkey::X25519PubKey::from_der(bytes.to_vec())
                     }
                 };

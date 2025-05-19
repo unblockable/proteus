@@ -42,7 +42,7 @@ impl X25519PubKey {
         &self.value
     }
 
-    pub fn to_der(self) -> Vec<u8> {
+    pub fn into_der(self) -> Vec<u8> {
         // <https://datatracker.ietf.org/doc/html/rfc8410#section-3>
         let key_asn = X25519KeyASN {
             algorithm: asn1::oid!(1, 3, 101, 110),
@@ -75,8 +75,8 @@ impl X25519PubKey {
         }
     }
 
-    pub fn to_pem(self) -> Vec<u8> {
-        let pem = pem::Pem::new("PUBLIC KEY", self.to_der());
+    pub fn into_pem(self) -> Vec<u8> {
+        let pem = pem::Pem::new("PUBLIC KEY", self.into_der());
         let encoded = pem::encode(&pem);
         let mut bytes = encoded.trim().as_bytes().to_vec();
         bytes.push(b'\0');
@@ -103,7 +103,7 @@ pub mod tests {
     #[test]
     fn test_der() {
         let key = X25519PubKey::new();
-        let der = key.clone().to_der();
+        let der = key.clone().into_der();
         let key2 = X25519PubKey::from_der(der);
         assert!(key == key2);
     }
@@ -111,7 +111,7 @@ pub mod tests {
     #[test]
     fn test_pem() {
         let key = X25519PubKey::new();
-        let pem = key.clone().to_pem();
+        let pem = key.clone().into_pem();
         let key2 = X25519PubKey::from_pem(pem);
         assert!(key == key2);
     }

@@ -725,7 +725,7 @@ pub mod tests {
             ),
             ("FIXED_BYTES(0x1)", FieldSemantic::FixedBytes([1].to_vec())),
             ("RANDOM(1337)", FieldSemantic::Random(1337)),
-            ("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::RAW)),
+            ("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::Raw)),
         ];
 
         test_rule_pair(
@@ -757,9 +757,9 @@ pub mod tests {
     #[test]
     fn test_parse_pubkey_encoding() {
         let test_cases = vec![
-            ("RAW", PubkeyEncoding::RAW),
-            ("DER", PubkeyEncoding::DER),
-            ("PEM", PubkeyEncoding::PEM),
+            ("RAW", PubkeyEncoding::Raw),
+            ("DER", PubkeyEncoding::Der),
+            ("PEM", PubkeyEncoding::Pem),
         ];
 
         test_rule_pair(
@@ -771,7 +771,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_pubkey_semantic() {
-        let test_cases = vec![("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::RAW))];
+        let test_cases = vec![("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::Raw))];
 
         test_rule_pair(
             test_cases.iter(),

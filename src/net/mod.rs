@@ -17,7 +17,7 @@ pub mod proto;
 #[derive(std::fmt::Debug)]
 pub enum Error {
     Eof,
-    IoError(std::io::Error),
+    Io(std::io::Error),
     _Reunite,
 }
 
@@ -25,7 +25,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Eof => write!(f, "Reached EOF during network I/O operation"),
-            Error::IoError(e) => write!(f, "I/O error during network operation: {}", e),
+            Error::Io(e) => write!(f, "I/O error during network operation: {}", e),
             Error::_Reunite => write!(f, "Error reuniting read and write stream halves"),
         }
     }
@@ -130,7 +130,7 @@ impl<R: AsyncRead + Send + Unpin> Reader for BufReader<R> {
                     0 => bail!(net::Error::Eof),
                     _ => n_bytes,
                 },
-                Err(e) => bail!(net::Error::IoError(e)),
+                Err(e) => bail!(net::Error::Io(e)),
             };
         }
     }
@@ -142,7 +142,7 @@ impl<W: AsyncWrite + Send + Unpin> Writer for W {
         let num_bytes = bytes.len();
         match self.write_all(bytes).await {
             Ok(_) => Ok(num_bytes),
-            Err(e) => bail!(net::Error::IoError(e)),
+            Err(e) => bail!(net::Error::Io(e)),
         }
     }
 

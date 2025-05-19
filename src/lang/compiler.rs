@@ -536,10 +536,10 @@ fn compile_message_to_instrs(
                         .into(),
                     );
 
-                    if mac_heap_id.is_some() {
+                    if let Some(from_heap_id) = mac_heap_id {
                         instrs.push(
                             SetArrayBytesArgs {
-                                from_heap_id: mac_heap_id.unwrap(),
+                                from_heap_id,
                                 to_msg_heap_id: MESSAGE_HEAP_NAME.id(),
                                 to_field_id: field_dir
                                     .mac_name

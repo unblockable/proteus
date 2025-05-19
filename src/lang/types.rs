@@ -572,9 +572,9 @@ impl TryFrom<Format> for ConcreteFormat {
 
 impl MaybeSized for Format {
     fn maybe_size_of(&self) -> Option<usize> {
-        self.fields.iter().fold(Some(0), |acc, field| {
+        self.fields.iter().try_fold(0usize, |acc, field| {
             if let Some(x) = field.maybe_size_of() {
-                acc.map(|y| x + y)
+                acc.checked_add(x)
             } else {
                 None
             }
@@ -683,12 +683,14 @@ impl Semantics {
     }
 
     pub fn get_fixed_fields(&self) -> Vec<(Identifier, Vec<u8>)> {
-        let criterion = |e: (&Identifier, &FieldSemantic)| match e.1 {
-            FieldSemantic::FixedString(_) => true,
-            FieldSemantic::FixedBytes(_) => true,
-            FieldSemantic::Random(_) => true,
-            FieldSemantic::Pubkey(_) => true,
-            _ => false,
+        let criterion = |e: (&Identifier, &FieldSemantic)| {
+            matches!(
+                e.1,
+                FieldSemantic::FixedString(_)
+                    | FieldSemantic::FixedBytes(_)
+                    | FieldSemantic::Random(_)
+                    | FieldSemantic::Pubkey(_)
+            )
         };
 
         let extract = |e: (&Identifier, &FieldSemantic)| {
@@ -700,8 +702,7 @@ impl Semantics {
                 FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
                 FieldSemantic::Random(n) => {
                     use rand_core::{OsRng, RngCore};
-                    let mut bytes = Vec::<u8>::new();
-                    bytes.resize(*n, 0);
+                    let mut bytes = vec![0; *n];
                     OsRng.fill_bytes(&mut bytes);
                     (e.0.clone(), bytes)
                 }
@@ -709,12 +710,12 @@ impl Semantics {
                     let key = crate::crypto::pubkey::X25519PubKey::new();
 
                     let bytes = match encoding {
-                        PubkeyEncoding::RAW => {
+                        PubkeyEncoding::Raw => {
                             <crate::crypto::pubkey::X25519PubKey as Into<[u8; 32]>>::into(key)
                                 .to_vec()
                         }
-                        PubkeyEncoding::DER => key.to_der(),
-                        PubkeyEncoding::PEM => key.to_pem(),
+                        PubkeyEncoding::Der => key.into_der(),
+                        PubkeyEncoding::Pem => key.into_pem(),
                     };
 
                     (e.0.clone(), bytes)
@@ -886,9 +887,9 @@ impl CryptoSpec {
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum PubkeyEncoding {
-    RAW,
-    DER,
-    PEM,
+    Raw,
+    Der,
+    Pem,
 }
 
 impl FromStr for PubkeyEncoding {
@@ -896,9 +897,9 @@ impl FromStr for PubkeyEncoding {
 
     fn from_str(s: &str) -> Result<Self, ParseError> {
         match s {
-            "RAW" => Ok(PubkeyEncoding::RAW),
-            "DER" => Ok(PubkeyEncoding::DER),
-            "PEM" => Ok(PubkeyEncoding::PEM),
+            "RAW" => Ok(PubkeyEncoding::Raw),
+            "DER" => Ok(PubkeyEncoding::Der),
+            "PEM" => Ok(PubkeyEncoding::Pem),
             _ => Err(ParseError {}),
         }
     }
@@ -907,9 +908,9 @@ impl FromStr for PubkeyEncoding {
 impl PubkeyEncoding {
     pub fn key_length_nbytes(self) -> usize {
         match self {
-            PubkeyEncoding::RAW => 32,
-            PubkeyEncoding::DER => 44,
-            PubkeyEncoding::PEM => 115,
+            PubkeyEncoding::Raw => 32,
+            PubkeyEncoding::Der => 44,
+            PubkeyEncoding::Pem => 115,
         }
     }
 }

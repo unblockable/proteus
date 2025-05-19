@@ -39,11 +39,8 @@ pub fn payload(len: usize) -> MockPayload {
 
 async fn application_read(mut reader: BufReader<DuplexStream>) -> anyhow::Result<MockPayload> {
     let mut payload = BytesMut::new();
-    loop {
-        match reader.read_bytes(1..2usize.pow(12u32)).await {
-            Ok(bytes) => payload.extend(bytes),
-            Err(_) => break,
-        }
+    while let Ok(bytes) = reader.read_bytes(1..2usize.pow(12u32)).await {
+        payload.extend(bytes)
     }
     Ok(payload.freeze())
 }
