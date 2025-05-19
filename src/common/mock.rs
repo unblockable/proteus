@@ -162,8 +162,8 @@ pub mod tests {
 
     fn assert_payload_result(a: MockPayload, b: MockPayload, len: usize) {
         if len > 0 {
-            assert!(a.len() > 0);
-            assert!(b.len() > 0);
+            assert!(!a.is_empty());
+            assert!(!b.is_empty());
         }
         assert_eq!(a.len(), len);
         assert_eq!(b.len(), len);

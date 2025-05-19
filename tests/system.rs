@@ -1,4 +1,4 @@
 mod system {
-    #[cfg(all(target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     mod linux;
 }

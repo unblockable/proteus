@@ -527,11 +527,11 @@ pub mod tests {
         for test_case in test_cases {
             let (input, expected_output) = test_case;
 
-            let mut p = ProteusLiteParser::parse(rule, &input).expect("Unsuccessful parse");
+            let mut p = ProteusLiteParser::parse(rule, input).expect("Unsuccessful parse");
 
-            let mut pair = p.next().unwrap();
+            let pair = p.next().unwrap();
 
-            let output = parse_function(&mut pair).unwrap();
+            let output = parse_function(&pair).unwrap();
 
             assert_eq!(&output, expected_output);
         }
@@ -539,7 +539,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_numeric_type() {
-        let test_cases = vec![
+        let test_cases = [
             ("u8", NumericType::U8),
             ("u16", NumericType::U16),
             ("u32", NumericType::U32),
@@ -555,7 +555,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_primitive_type() {
-        let test_cases = vec![
+        let test_cases = [
             ("u8", NumericType::U8.into()),
             ("bool", PrimitiveType::Bool),
             ("char", PrimitiveType::Char),
@@ -570,7 +570,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_positive_numeric_literal() {
-        let test_cases = vec![("0123", 123)];
+        let test_cases = [("0123", 123)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -599,7 +599,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_primitive_array() {
-        let test_cases = vec![("[u8; 10]", PrimitiveArray(NumericType::U8.into(), 10))];
+        let test_cases = [("[u8; 10]", PrimitiveArray(NumericType::U8.into(), 10))];
 
         test_rule_pair(
             test_cases.iter(),
@@ -610,14 +610,14 @@ pub mod tests {
 
     #[test]
     fn test_parse_size_of_op() {
-        let test_cases = vec![("x.size_of", UnaryOp::SizeOf("x".parse().unwrap()))];
+        let test_cases = [("x.size_of", UnaryOp::SizeOf("x".parse().unwrap()))];
 
         test_rule_pair(test_cases.iter(), Rule::size_of_op, parse_sizeof_op);
     }
 
     #[test]
     fn test_parse_dynamic_array() {
-        let test_cases = vec![(
+        let test_cases = [(
             "[u8; x.size_of]",
             DynamicArray(UnaryOp::SizeOf("x".parse().unwrap())),
         )];
@@ -627,7 +627,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_array() {
-        let test_cases = vec![
+        let test_cases = [
             (
                 "[u8; 10]",
                 PrimitiveArray(NumericType::U8.into(), 10).into(),
@@ -643,14 +643,14 @@ pub mod tests {
 
     #[test]
     fn test_name_value() {
-        let test_cases = vec![("NAME: Foo", "Foo".parse().unwrap())];
+        let test_cases = [("NAME: Foo", "Foo".parse().unwrap())];
 
         test_rule_pair(test_cases.iter(), Rule::name_value, parse_name_value);
     }
 
     #[test]
     fn test_type_value() {
-        let test_cases = vec![
+        let test_cases = [
             ("TYPE: u8", PrimitiveArray(NumericType::U8.into(), 1).into()),
             (
                 "TYPE: [i8; 10]",
@@ -663,7 +663,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_field() {
-        let test_cases = vec![(
+        let test_cases = [(
             "{ NAME: Foo; TYPE: u8 }",
             Field {
                 name: "Foo".parse().unwrap(),
@@ -676,7 +676,7 @@ pub mod tests {
 
     #[test]
     fn test_format() {
-        let test_cases = vec![(
+        let test_cases = [(
             "DEFINE Handshake \
             {NAME: Foo; TYPE: u8}, \
             {NAME: Bar; TYPE: [u32; 10]};",
@@ -700,7 +700,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_fixed_string_semantic() {
-        let test_cases = vec![(
+        let test_cases = [(
             "FIXED_STRING(\"foo\")",
             FieldSemantic::FixedString("foo".to_string()),
         )];
@@ -745,7 +745,7 @@ pub mod tests {
             semantic: FieldSemantic::Payload,
         };
 
-        let test_cases = vec![(s, sb)];
+        let test_cases = [(s, sb)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -756,7 +756,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_pubkey_encoding() {
-        let test_cases = vec![
+        let test_cases = [
             ("RAW", PubkeyEncoding::Raw),
             ("DER", PubkeyEncoding::Der),
             ("PEM", PubkeyEncoding::Pem),
@@ -771,7 +771,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_pubkey_semantic() {
-        let test_cases = vec![("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::Raw))];
+        let test_cases = [("PUBKEY(RAW)", FieldSemantic::Pubkey(PubkeyEncoding::Raw))];
 
         test_rule_pair(
             test_cases.iter(),
@@ -782,13 +782,13 @@ pub mod tests {
 
     #[test]
     fn test_parse_role() {
-        let test_cases = vec![("CLIENT", Role::Client), ("SERVER", Role::Server)];
+        let test_cases = [("CLIENT", Role::Client), ("SERVER", Role::Server)];
         test_rule_pair(test_cases.iter(), Rule::role, parse_role);
     }
 
     #[test]
     fn test_parse_phase() {
-        let test_cases = vec![("HANDSHAKE", Phase::Handshake), ("DATA", Phase::Data)];
+        let test_cases = [("HANDSHAKE", Phase::Handshake), ("DATA", Phase::Data)];
         test_rule_pair(test_cases.iter(), Rule::phase, parse_phase);
     }
 
@@ -802,7 +802,7 @@ pub mod tests {
             format: "Foo".id(),
         };
 
-        let test_cases = vec![(s, ss)];
+        let test_cases = [(s, ss)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -816,7 +816,7 @@ pub mod tests {
         let input = "PASSWORD = \"hunter2\";";
         let output: Password = "hunter2".parse().unwrap();
 
-        let test_cases = vec![(input, output)];
+        let test_cases = [(input, output)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -827,7 +827,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_cipher_assignment() {
-        let test_cases = vec![
+        let test_cases = [
             ("CIPHER = CHACHA20-POLY1305;", Cipher::ChaCha20Poly1305),
             ("CIPHER = AES128GCM;", Cipher::Aes128Gcm),
             ("CIPHER = AES256GCM;", Cipher::Aes256Gcm),
@@ -848,7 +848,7 @@ pub mod tests {
             from_format_name: "Bar".id(),
         };
 
-        let test_cases = vec![(input, output)];
+        let test_cases = [(input, output)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -866,7 +866,7 @@ pub mod tests {
             mac_name: Some("length_mac".id()),
         };
 
-        let test_cases = vec![(input, output)];
+        let test_cases = [(input, output)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -905,7 +905,7 @@ pub mod tests {
             enc_field_dirs,
         };
 
-        let test_cases = vec![(input, output)];
+        let test_cases = [(input, output)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -916,7 +916,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_mac_name() {
-        let test_cases = vec![
+        let test_cases = [
             ("NULL", None),
             ("NULLary", Some("NULLary".id())),
             ("NUL", Some("NUL".id())),
@@ -957,14 +957,14 @@ pub mod tests {
             },
         ];
 
-        let directives = vec![EncryptionDirectives {
+        let directives = [EncryptionDirectives {
             enc_fmt_bnd,
             enc_field_dirs,
         }];
 
         let output = CryptoSpec::new(password, cipher, directives.iter());
 
-        let test_cases = vec![(input, output)];
+        let test_cases = [(input, output)];
 
         test_rule_pair(
             test_cases.iter(),
@@ -975,7 +975,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_separate_length_field_setting() {
-        let test_cases = vec![
+        let test_cases = [
             ("SEPARATE_LENGTH_FIELD = true;", BoolType::True),
             ("SEPARATE_LENGTH_FIELD = false;", BoolType::False),
         ];
@@ -989,7 +989,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_options_segment() {
-        let test_cases = vec![
+        let test_cases = [
             (
                 "@SEGMENT.OPTIONS SEPARATE_LENGTH_FIELD = true;",
                 Options::new(true),

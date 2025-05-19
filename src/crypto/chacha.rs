@@ -219,7 +219,7 @@ pub mod tests {
         let mut send_cipher = Cipher::new(secret_key, CipherKind::Sender);
         let mut recv_cipher = Cipher::new(secret_key, CipherKind::Receiver);
 
-        let original_plain_text: Vec<u8> = b"hello world".iter().map(|e| *e).collect();
+        let original_plain_text: Vec<u8> = b"hello world".to_vec();
 
         let (ctext, mac) = send_cipher.encrypt(&original_plain_text[..]);
         let recovered_plain_text = recv_cipher.decrypt(&ctext[..], &mac);
@@ -235,7 +235,7 @@ pub mod tests {
         let (mut recv_enc, mut recv_dec) =
             Cipher::new(secret_key, CipherKind::Receiver).into_split();
 
-        let original_plain_text: Vec<u8> = b"hello world".iter().map(|e| *e).collect();
+        let original_plain_text: Vec<u8> = b"hello world".to_vec();
 
         let (ctext, mac) = send_enc.encrypt(&original_plain_text[..]);
         let recovered_plain_text = recv_dec.decrypt(&ctext[..], &mac);
@@ -253,7 +253,7 @@ pub mod tests {
         let mut send_cipher = Cipher::new(secret_key, CipherKind::Sender);
         let mut recv_cipher = Cipher::new(secret_key, CipherKind::Receiver);
 
-        let original_plain_text: Vec<u8> = b"hello world".iter().map(|e| *e).collect();
+        let original_plain_text: Vec<u8> = b"hello world".to_vec();
 
         let ctext = send_cipher.encrypt_unauth(&original_plain_text[..]);
         let recovered_plain_text = recv_cipher.decrypt_unauth(&ctext[..]);

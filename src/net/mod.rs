@@ -331,6 +331,7 @@ pub mod tests {
         assert_eq!(bytes.len(), 0);
         let bytes = src.read_bytes(0..1).await.unwrap();
         assert_eq!(bytes.len(), 0);
+        #[allow(clippy::reversed_empty_ranges)]
         let bytes = src.read_bytes(5..1).await.unwrap();
         assert_eq!(bytes.len(), 0);
 

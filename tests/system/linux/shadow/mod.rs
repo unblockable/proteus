@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 #[cfg(all(target_os = "linux", have_shadow, have_tgen))]
@@ -9,14 +9,14 @@ mod tgen;
 #[cfg(all(target_os = "linux", have_shadow, have_tgen, have_tor))]
 mod tor;
 
-fn run_shadow<I, S>(run_dir: &PathBuf, args: I) -> ExitStatus
+fn run_shadow<I, S>(run_dir: &Path, args: I) -> ExitStatus
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
     let log = File::create(format!("{}/shadow.log", run_dir.display())).expect("Create log file");
     let mut cmd = Command::new("shadow")
-        .current_dir(run_dir.clone())
+        .current_dir(run_dir)
         .args(args)
         .stdout(Stdio::from(log.try_clone().expect("Clone log")))
         .stderr(Stdio::from(log))

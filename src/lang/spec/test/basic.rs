@@ -113,7 +113,7 @@ impl TaskProvider for LengthPayloadSpec {
         let in_task = Task {
             ins: vec![
                 ReadNetArgs {
-                    from_len: ReadNetLength::Range(2..3 as usize),
+                    from_len: ReadNetLength::Range(2..3_usize),
                     to_heap_id: "length".id(),
                 }
                 .into(),

@@ -353,7 +353,8 @@ mod tests {
         );
 
         // The PT spec requires brackets around the address.
-        for val in ["2001:db8::4"] {
+        {
+            let val = "2001:db8::4";
             assert_eq!(
                 Parser::from_iter([(key.to_string(), format!("[{}]", val))]).bind_addr_v6(),
                 Ok(Ipv6Addr::from_str(val).unwrap())
@@ -585,14 +586,14 @@ mod tests {
 
     #[test]
     fn server_orport() {
-        _test_sock_addr(ServerKey::TOR_PT_ORPORT, &Parser::server_or_port);
+        _test_sock_addr(ServerKey::TOR_PT_ORPORT, Parser::server_or_port);
     }
 
     #[test]
     fn server_orport_extended() {
         _test_sock_addr(
             ServerKey::TOR_PT_EXTENDED_SERVER_PORT,
-            &Parser::server_or_port_ext,
+            Parser::server_or_port_ext,
         );
     }
 
@@ -605,7 +606,8 @@ mod tests {
             Err(ParseError::VariableMissing)
         );
 
-        for val in ["/var/lib/tor/extended_orport_auth_cookie"] {
+        {
+            let val = "/var/lib/tor/extended_orport_auth_cookie";
             assert_eq!(
                 Parser::from_iter([(key, val)]).server_auth_cookie_file(),
                 Ok(PathBuf::from(val))
