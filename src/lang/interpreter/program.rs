@@ -74,11 +74,7 @@ impl Program {
                     let darrays = aformat.get_dynamic_arrays();
                     assert!(darrays.len() == 2);
 
-                    let payload_id = darrays
-                        .iter()
-                        .filter(|&id| id != padding_field_id)
-                        .next()
-                        .unwrap();
+                    let payload_id = darrays.iter().find(|&id| id != padding_field_id).unwrap();
 
                     // We know the payload bytes are there...
                     let payload_bytes = self.bytes_heap.get(payload_id).unwrap();
@@ -149,7 +145,7 @@ impl Program {
                 let plaintext = if args.from_mac_field_id.is_some() {
                     // We are doing authenticated encryption.
                     let mac = msg
-                        .get_field_bytes(&args.from_mac_field_id.as_ref().unwrap())
+                        .get_field_bytes(args.from_mac_field_id.as_ref().unwrap())
                         .map_err(|_| anyhow!("No mac bytes"))?;
 
                     let mut mac_fixed = [0u8; 16];
@@ -341,7 +337,7 @@ impl Program {
                     .await
                     .map_err(|e| anyhow!("WriteNetTwice error on first write {e}"))?;
 
-                if more.len() > 0 {
+                if !more.is_empty() {
                     forwarder
                         .flush()
                         .await

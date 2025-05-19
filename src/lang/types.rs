@@ -413,13 +413,7 @@ impl Format {
     pub fn fixed_fields_size(&self) -> usize {
         self.fields
             .iter()
-            .map(|x| {
-                if let Some(y) = x.maybe_size_of() {
-                    y
-                } else {
-                    0
-                }
-            })
+            .map(|x| x.maybe_size_of().unwrap_or_default())
             .sum()
     }
 
@@ -489,7 +483,8 @@ impl AbstractFormat {
         self.format
             .fields
             .iter()
-            .filter_map(|f| f.maybe_size_of().is_none().then(|| f.name.clone()))
+            .filter(|&f| f.maybe_size_of().is_none())
+            .map(|f| f.name.clone())
             .collect()
     }
 
@@ -700,12 +695,7 @@ impl Semantics {
             match e.1 {
                 FieldSemantic::FixedString(s) => (
                     e.0.clone(),
-                    String::try_from(s)
-                        .unwrap()
-                        .as_str()
-                        .chars()
-                        .map(|e| e as u8)
-                        .collect(),
+                    String::from(s).as_str().chars().map(|e| e as u8).collect(),
                 ),
                 FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
                 FieldSemantic::Random(n) => {
@@ -737,7 +727,7 @@ impl Semantics {
         self.semantics
             .iter()
             .filter(|&e| criterion(e))
-            .map(|e| extract(e))
+            .map(extract)
             .collect()
     }
 }

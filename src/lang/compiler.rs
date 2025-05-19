@@ -56,11 +56,8 @@ impl TaskGraphImpl {
                 // This adjusts read app instructions during the handshake phase to not necessarily
                 // require bytes
                 for i in &mut ins {
-                    match i {
-                        Instruction::ReadApp(ReadAppArgs { from_len: x, .. }) => {
-                            *x = 0..x.end;
-                        }
-                        _ => {}
+                    if let Instruction::ReadApp(ReadAppArgs { from_len: x, .. }) = i {
+                        *x = 0..x.end;
                     }
                 }
 
@@ -187,9 +184,7 @@ fn generate_dynamic_payload_hints(
     semantics: &Semantics,
     crypto: Option<&CryptoSpec>,
 ) -> Option<HintsDynamicPayload> {
-    if semantics.find_field_id(FieldSemantic::Payload).is_none() {
-        return None;
-    }
+    semantics.find_field_id(FieldSemantic::Payload)?;
 
     // Need to figure out if the payload field is encoded with a length
     let payload_field_id = semantics.find_field_id(FieldSemantic::Payload).unwrap();
@@ -257,11 +252,12 @@ fn generate_dynamic_payload_hints(
         };
 
     let padding_space = if hints_padding.is_some() {
-        if let Some(block_nbytes) = crypto.as_ref().unwrap().cipher.block_size_nbytes() {
-            block_nbytes
-        } else {
-            0
-        }
+        crypto
+            .as_ref()
+            .unwrap()
+            .cipher
+            .block_size_nbytes()
+            .unwrap_or_default()
     } else {
         0
     };
@@ -516,10 +512,10 @@ fn compile_message_to_instrs(
                     let ctext_heap_id =
                         (field_dir.ctext_name.0.to_string() + "_heap").as_str().id();
 
-                    let mac_heap_id: Option<Identifier> = match &field_dir.mac_name {
-                        Some(x) => Some((x.0.to_string() + "_heap").as_str().id()),
-                        None => None,
-                    };
+                    let mac_heap_id: Option<Identifier> = field_dir
+                        .mac_name
+                        .as_ref()
+                        .map(|x| (x.0.to_string() + "_heap").as_str().id());
 
                     instrs.push(
                         EncryptFieldArgs {
@@ -708,10 +704,7 @@ fn compile_message_to_instrs(
                                 .as_str()
                                 .id();
                             // Decrypt it
-                            let from_mac_field_id = match &field_dir.mac_name {
-                                Some(x) => Some(x.clone()),
-                                None => None,
-                            };
+                            let from_mac_field_id = field_dir.mac_name.clone();
 
                             instrs.push(
                                 DecryptFieldArgs {
@@ -873,10 +866,7 @@ fn compile_message_to_instrs(
                                     .as_str()
                                     .id();
 
-                                let from_mac_field_id = match &field_dir.mac_name {
-                                    Some(x) => Some(x.clone()),
-                                    None => None,
-                                };
+                                let from_mac_field_id = field_dir.mac_name.clone();
                                 // Decrypt it
                                 instrs.push(
                                     DecryptFieldArgs {

@@ -104,7 +104,7 @@ impl CipherInner {
             let mut key: Key = [0; 32];
             let copy_len = core::cmp::min(key.len(), key_bytes.len());
 
-            (&mut key[..copy_len]).clone_from_slice(&key_bytes[..copy_len]);
+            key[..copy_len].clone_from_slice(&key_bytes[..copy_len]);
             self.key = Some(key);
 
             self.nonce_gen = Salsa20::new(&key.into(), nonce.into());

@@ -42,8 +42,8 @@ pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
     log::info!("Protocol check complete, inspecting results...");
 
     let (c_recv, c_sent) = res.client_app.context("inspecting client app result")?;
-    let _ = res.client_proxy.context("inspecting client proxy result")?;
-    let _ = res.server_proxy.context("inspecting server proxy result")?;
+    res.client_proxy.context("inspecting client proxy result")?;
+    res.server_proxy.context("inspecting server proxy result")?;
     let (s_recv, s_sent) = res.server_app.context("inspecting server app result")?;
 
     log::info!("All processes returned OK, checking payloads now...");

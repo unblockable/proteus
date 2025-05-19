@@ -70,7 +70,7 @@ impl<R: Reader, W: Writer> Forwarder<R, W> {
         self.n_recv_src += n_bytes;
         log::trace!("Received {n_bytes} bytes from src");
 
-        Ok(data.into())
+        Ok(data)
     }
 
     pub fn create_cipher(&mut self, secret_key: [u8; 32], kind: CipherKind) {
@@ -148,11 +148,11 @@ impl<R: Reader, W: Writer> Forwarder<R, W> {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> anyhow::Result<Vec<u8>> {
-        Ok(self.load_owned_decryptor()?.decrypt(&ciphertext, &mac))
+        Ok(self.load_owned_decryptor()?.decrypt(ciphertext, mac))
     }
 
     pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
-        Ok(self.load_owned_decryptor()?.decrypt_unauth(&ciphertext))
+        Ok(self.load_owned_decryptor()?.decrypt_unauth(ciphertext))
     }
 }
 

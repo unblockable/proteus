@@ -120,7 +120,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
                     for entry in username.split(';').collect::<Vec<&str>>() {
                         let parts: Vec<&str> =
                             entry.split('=').filter(|tok| !tok.is_empty()).collect();
-                        if parts.len() == 2 && parts.first().is_some() && parts.get(1).is_some() {
+                        if parts.len() == 2 {
                             let k = parts.first().unwrap().to_string();
                             let v = parts.get(1).unwrap().to_string();
                             map.insert(k, v);

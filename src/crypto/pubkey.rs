@@ -14,6 +14,12 @@ pub struct X25519PubKey {
     value: [u8; 32],
 }
 
+impl Default for X25519PubKey {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl X25519PubKey {
     pub fn new() -> Self {
         use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -56,10 +62,10 @@ impl X25519PubKey {
 
     pub fn from_der(value: Vec<u8>) -> Self {
         let result: asn1::ParseResult<_> = asn1::parse(&value, |d| {
-            return d.read_element::<asn1::Sequence>()?.parse(|d| {
+            d.read_element::<asn1::Sequence>()?.parse(|d| {
                 let k = d.read_element::<X25519KeyASN>()?;
-                return Ok(k);
-            });
+                Ok(k)
+            })
         });
 
         if let Ok(k) = result {
@@ -84,9 +90,9 @@ impl X25519PubKey {
     }
 }
 
-impl std::convert::Into<[u8; 32]> for X25519PubKey {
-    fn into(self) -> [u8; 32] {
-        self.value
+impl std::convert::From<X25519PubKey> for [u8; 32] {
+    fn from(val: X25519PubKey) -> Self {
+        val.value
     }
 }
 

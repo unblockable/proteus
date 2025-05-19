@@ -115,7 +115,7 @@ impl Parser {
 
     fn split_in_two<'a>(s: &'a str, sep: &str) -> Result<(&'a str, &'a str), ParseError> {
         let parts: Vec<&str> = s.split(sep).filter(|tok| !tok.is_empty()).collect();
-        if parts.len() == 2 && parts.first().is_some() && parts.get(1).is_some() {
+        if parts.len() == 2 {
             Ok((parts.first().unwrap(), parts.get(1).unwrap()))
         } else {
             Err(ParseError::VariableUnparsable)

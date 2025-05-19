@@ -267,7 +267,7 @@ fn parse_semantic_binding(p: &RulePair) -> Result<SemanticBinding> {
 
 fn parse_pubkey_encoding(p: &RulePair) -> Result<PubkeyEncoding> {
     assert!(p.as_rule() == Rule::pubkey_encoding);
-    Ok(parse_simple(p)?)
+    parse_simple(p)
 }
 
 fn parse_pubkey_semantic(p: &RulePair) -> Result<FieldSemantic> {
