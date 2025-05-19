@@ -151,7 +151,7 @@ impl<R: Reader, W: Writer> ServerHandshake2<R, W> {
         let methods = self.greeting.supported_auth_methods;
 
         // We support user/pass or none; prefer user/pass.
-        if methods.iter().any(|&val| val == SOCKS_AUTH_USERPASS) {
+        if methods.contains(&SOCKS_AUTH_USERPASS) {
             log::debug!("Choosing username/password authentication");
 
             let choice = Choice {
@@ -171,7 +171,7 @@ impl<R: Reader, W: Writer> ServerHandshake2<R, W> {
                 })),
                 Err(net_err) => bail!(net_err),
             }
-        } else if methods.iter().any(|&val| val == SOCKS_AUTH_NONE) {
+        } else if methods.contains(&SOCKS_AUTH_NONE) {
             log::debug!("Choosing no authentication");
 
             let choice = Choice {
