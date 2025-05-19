@@ -41,7 +41,7 @@ jobs:
     - name: Check clippy
       run: cargo clippy --all-targets -- -Dwarnings
 
-  build:
+  build-debug:
 
     runs-on: ubuntu-latest
 
@@ -49,23 +49,14 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check Rust version
       run: cargo --version && rustc --version
-    - name: Build Debug
+    - name: Build
       run: cargo build --verbose
-    - name: Build Release
-      run: cargo build --release --verbose
-
-  unit-tests:
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Check Rust version
-      run: cargo --version && rustc --version
     - name: Run unit tests
       run: cargo test --bins
+    - name: Run integration tests
+      run: cargo test --test integration
 
-  integration-tests:
+  build-release:
 
     runs-on: ubuntu-latest
 
@@ -73,5 +64,9 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check Rust version
       run: cargo --version && rustc --version
+    - name: Build
+      run: cargo build --release --verbose
+    - name: Run unit tests
+      run: cargo test --release --bins
     - name: Run integration tests
-      run: cargo test --test integration
+      run: cargo test --release --test integration
