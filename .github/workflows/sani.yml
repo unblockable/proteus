@@ -1,0 +1,24 @@
+name: Sanitizer Checks
+
+# For now we keep this manual, as we have not yet worked through the issues.
+on: workflow_dispatch
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sanitize:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check Rust version
+      run: cargo +nightly --version && rustc +nightly --version
+    # See https://github.com/rust-lang/miri#running-miri-on-ci
+    - name: Add miri
+      run: rustup +nightly component add miri
+    - name: Setup miri
+      run: cargo +nightly miri setup
+    - name: Run miri
+      run: cargo +nightly miri test
