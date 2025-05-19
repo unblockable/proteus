@@ -128,10 +128,9 @@ where
 pub mod tests {
     use tokio::io::DuplexStream;
 
+    use super::{MockConnection, MockPayload};
     use crate::common::mock;
     use crate::lang::task::{Task, TaskID, TaskProvider, TaskSet};
-
-    use super::{MockConnection, MockPayload};
 
     pub fn payload_len_iter() -> impl Iterator<Item = usize> {
         [

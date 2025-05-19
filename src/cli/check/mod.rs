@@ -2,12 +2,11 @@ use std::fs;
 
 use anyhow::{bail, Context};
 
+use super::args::CheckArgs;
 use crate::common::mock;
 use crate::lang::parse::proteus::ProteusParser;
 use crate::lang::parse::Parse;
 use crate::lang::Role;
-
-use super::args::CheckArgs;
 
 pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
     log::info!("Running in check mode");

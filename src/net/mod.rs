@@ -268,9 +268,8 @@ impl Deserializer<RawData> for RawFormatter {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::common::mock;
-
     use super::*;
+    use crate::common::mock;
 
     async fn transfer_bytes_helper<W: Writer, R: Reader>(dst: &mut W, src: &mut R, len: usize) {
         let payload = mock::payload(len);
