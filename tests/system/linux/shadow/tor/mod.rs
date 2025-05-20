@@ -47,7 +47,7 @@ fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> (PathBuf
     let out_dir_path = PathBuf::from("target").join(&in_dir_path).join(test_name);
 
     // We need to write the proteus bin and PSF paths into the config files.
-    let bin_path = fs::canonicalize("target/debug/proteus").expect("Canonicalize path");
+    let bin_path = PathBuf::from(test_bin::get_test_bin("proteus").get_program());
     let psf_path = fs::canonicalize(psf_filepath).expect("Canonicalize path");
 
     // Shadow needs a clear working directory.
