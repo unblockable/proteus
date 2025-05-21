@@ -1,21 +1,26 @@
-name: Continuous Integration Checks
+# Syntax reference:
+# https://help.github.com/en/actions/automating-your-workflow-with-github-actions/workflow-syntax-for-github-actions
+name: Lint Checks
 
 on:
   push:
-    branches: [ "main" ]
+    branches: main
   pull_request:
-    branches: [ "main" ]
+    branches: main
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   format:
+    name: Check code formatting
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      run: rustup toolchain install
     - name: Check Rust version
       run: cargo --version && rustc --version
     - name: Add rustfmt
@@ -29,44 +34,17 @@ jobs:
       run: cargo +nightly fmt -- --config-path rustfmt-nightly.toml --check
 
   clippy:
+    name: Check clippy warnings
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      run: rustup toolchain install
     - name: Check Rust version
       run: cargo --version && rustc --version
     - name: Add clippy
       run: rustup component add clippy
     - name: Check clippy
       run: cargo clippy --all-targets -- -Dwarnings
-
-  build-debug:
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Check Rust version
-      run: cargo --version && rustc --version
-    - name: Build
-      run: cargo build --verbose
-    - name: Run unit tests
-      run: cargo test --bins
-    - name: Run integration tests
-      run: cargo test --test integration
-
-  build-release:
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Check Rust version
-      run: cargo --version && rustc --version
-    - name: Build
-      run: cargo build --release --verbose
-    - name: Run unit tests
-      run: cargo test --release --bins
-    - name: Run integration tests
-      run: cargo test --release --test integration

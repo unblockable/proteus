@@ -4,9 +4,9 @@ name: System Tests in Shadow
 
 on:
   push:
-    branches: [ "main" ]
+    branches: main
   pull_request:
-    branches: [ "main" ]
+    branches: main
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +21,8 @@ env:
 
 jobs:
   build-dependencies:
+    name: Build test dependencies
+
     runs-on: ubuntu-24.04
 
     steps:
@@ -123,6 +125,8 @@ jobs:
         make install
 
   test-proteus:
+    name: Run system tests
+
     needs: build-dependencies
 
     runs-on: ubuntu-24.04
@@ -160,10 +164,7 @@ jobs:
 
     - name: Install Rust toolchain
       working-directory: proteus
-      run: |
-        rustup toolchain install
-        cargo --version
-        rustc --version
+      run: rustup toolchain install
 
     - name: Check Rust version
       working-directory: proteus
@@ -171,7 +172,7 @@ jobs:
 
     - name: Build Proteus
       working-directory: proteus
-      run: cargo build --release
+      run: cargo build --release --verbose
 
     - name: Test Proteus
       working-directory: proteus

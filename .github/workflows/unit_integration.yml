@@ -1,0 +1,49 @@
+# Syntax reference:
+# https://help.github.com/en/actions/automating-your-workflow-with-github-actions/workflow-syntax-for-github-actions
+name: Unit and Integration Tests
+
+on:
+  push:
+    branches: main
+  pull_request:
+    branches: main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  debug:
+    name: Test in debug mode
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      run: rustup toolchain install
+    - name: Check Rust version
+      run: cargo --version && rustc --version
+    - name: Build
+      run: cargo build --verbose
+    - name: Run unit tests
+      run: cargo test --bins
+    - name: Run integration tests
+      run: cargo test --test integration
+
+  release:
+    name: Test in release mode
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      run: rustup toolchain install
+    - name: Check Rust version
+      run: cargo --version && rustc --version
+    - name: Build
+      run: cargo build --release --verbose
+    - name: Run unit tests
+      run: cargo test --release --bins
+    - name: Run integration tests
+      run: cargo test --release --test integration
