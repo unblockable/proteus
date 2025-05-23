@@ -13,7 +13,7 @@ use crate::lang::types::*;
 use crate::lang::Role;
 
 #[derive(Parser)]
-#[grammar = "lang/parse/proteus_lite.pest"]
+#[grammar = "lang/compiler/proteus_lite.pest"]
 pub struct ProteusLiteParser;
 
 type RulePair<'a> = Pair<'a, Rule>;
@@ -396,7 +396,7 @@ fn parse_encryption_directives(p: &RulePair) -> Result<EncryptionDirectives> {
     })
 }
 
-pub fn parse_crypto_segment(p: &RulePair) -> Result<CryptoSpec> {
+fn parse_crypto_segment(p: &RulePair) -> Result<CryptoSpec> {
     assert!(p.as_rule() == Rule::crypto_segment);
 
     let mut password: Option<Password> = None;
@@ -432,7 +432,7 @@ fn parse_separate_length_field_setting(p: &RulePair) -> Result<BoolType> {
     Ok(value)
 }
 
-pub fn parse_options_segment(p: &RulePair) -> Result<Options> {
+fn parse_options_segment(p: &RulePair) -> Result<Options> {
     assert!(p.as_rule() == Rule::options_segment);
 
     let mut separate_length_fields = false;
@@ -449,7 +449,7 @@ pub fn parse_options_segment(p: &RulePair) -> Result<Options> {
     Ok(Options::new(separate_length_fields))
 }
 
-pub fn parse_psf_impl(p: &RulePair) -> Result<Psf> {
+fn parse_psf_impl(p: &RulePair) -> Result<Psf> {
     assert!(p.as_rule() == Rule::psf);
 
     let mut formats: HashMap<Identifier, AbstractFormatAndSemantics> = Default::default();

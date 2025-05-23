@@ -4,8 +4,8 @@ use anyhow::{bail, Context};
 
 use super::args::CheckArgs;
 use crate::common::mock;
-use crate::lang::parse::proteus::ProteusParser;
-use crate::lang::parse::Parse;
+use crate::lang::compiler::Compiler;
+use crate::lang::ir::bridge::OldCompile;
 use crate::lang::Role;
 
 pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
@@ -28,8 +28,8 @@ pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
     );
     log::info!("Compiling protocol specification contents...");
 
-    let client_spec = ProteusParser::parse_content(&contents, Role::Client)?;
-    let server_spec = ProteusParser::parse_content(&contents, Role::Server)?;
+    let client_spec = Compiler::parse_content(&contents, Role::Client)?;
+    let server_spec = Compiler::parse_content(&contents, Role::Server)?;
 
     log::info!("✓ Compilation successful in both client and server roles!");
     log::info!(

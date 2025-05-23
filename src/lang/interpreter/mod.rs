@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use forwarder::Forwarder;
 use loader::Loader;
 
-use crate::lang::task::TaskProvider;
+use crate::lang::ir::bridge::TaskProvider;
 use crate::net::{Connection, Reader, Writer};
 
 mod forwarder;
 mod loader;
-mod program;
+mod memory;
+pub mod vm;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ForwardingDirection {
@@ -90,8 +91,8 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use crate::common::mock;
-    use crate::lang::spec::test::basic::LengthPayloadSpec;
-    use crate::lang::spec::test::basic_enc::EncryptedLengthPayloadSpec;
+    use crate::lang::ir::test::basic::LengthPayloadSpec;
+    use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
     use crate::lang::Role;
 
     #[tokio::test]

@@ -1,57 +1,7 @@
-#![allow(dead_code)]
-
-use std::convert::From;
 use std::ops::Range;
 
 use crate::lang::types::{AbstractFormat, Identifier, PubkeyEncoding};
 use crate::lang::Role;
-
-pub trait TaskProvider {
-    fn get_init_task(&self) -> Task;
-    fn get_next_tasks(&self, last_task: &TaskID) -> TaskSet;
-}
-
-#[derive(Debug)]
-pub struct TaskPair {
-    pub in_task: Task,
-    pub out_task: Task,
-}
-
-#[derive(Debug)]
-pub enum TaskSet {
-    InTask(Task),
-    OutTask(Task),
-    InAndOutTasks(TaskPair),
-}
-
-#[derive(Eq, PartialEq, Clone, Copy, Debug, Default)]
-pub struct TaskID {
-    id: usize,
-}
-
-impl TaskID {
-    pub fn into_inner(self) -> usize {
-        self.id
-    }
-}
-
-impl From<TaskID> for usize {
-    fn from(value: TaskID) -> Self {
-        value.id
-    }
-}
-
-impl From<usize> for TaskID {
-    fn from(value: usize) -> Self {
-        TaskID { id: value }
-    }
-}
-
-#[derive(Debug)]
-pub struct Task {
-    pub ins: Vec<Instruction>,
-    pub id: TaskID,
-}
 
 #[derive(Debug)]
 pub enum ReadNetLength {
@@ -70,7 +20,7 @@ pub enum ReadNetLength {
 // so we can upcast from args to the instruction variant.
 #[enum_from::enum_from]
 #[derive(Debug)]
-pub enum Instruction {
+pub enum InstructionV1 {
     ComputeLength(ComputeLengthArgs),
     ConcretizeFormat(ConcretizeFormatArgs),
     CreateMessage(CreateMessageArgs),
@@ -141,8 +91,8 @@ pub struct EncryptFieldArgs {
 /// TODO. Generate cryptographically insecure random bytes.
 #[derive(Debug)]
 pub struct GenRandomBytesArgs {
-    pub from_len: Range<usize>,
-    pub to_heap_id: Identifier,
+    pub _from_len: Range<usize>,
+    pub _to_heap_id: Identifier,
 }
 
 /// Get the bytes data from the field given by `from_field_id` inside of the
@@ -233,7 +183,7 @@ pub struct WriteNetTwiceArgs {
 #[derive(Debug)]
 pub struct ReadKeyArgs {
     pub from_msg_heap_id: Identifier,
-    pub from_field_id: Identifier, // usually payload field
+    pub _from_field_id: Identifier, // usually payload field
 }
 
 #[derive(Debug)]

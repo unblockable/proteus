@@ -8,10 +8,9 @@ use super::args::PtArgs;
 use crate::cli::pt::config::{
     ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
 };
+use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
-use crate::lang::parse::proteus::ProteusParser;
-use crate::lang::parse::Parse;
-use crate::lang::spec::proteus::ProteusSpec;
+use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::lang::Role;
 use crate::net::proto::socks;
 use crate::net::{Connection, TcpConnector};
@@ -134,7 +133,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
             // TODO double check, I think the PSF path can change for every Tor
             // Browser connection, so we have to parse the PSF here on every connection.
             let filepath = options.get("psf").unwrap();
-            let client_spec = ProteusParser::parse_path(filepath, Role::Client).unwrap();
+            let client_spec = Compiler::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
@@ -181,7 +180,7 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
     };
 
     let filepath = server_conf.options.get("psf").unwrap();
-    let server_spec = ProteusParser::parse_path(filepath, Role::Server).unwrap();
+    let server_spec = Compiler::parse_path(filepath, Role::Server).unwrap();
 
     log::info!(
         "Proteus server listening for Proteus client connections on {:?}.",
@@ -199,11 +198,14 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
     }
 }
 
-async fn handle_server_connection(
+async fn handle_server_connection<T>(
     pt_stream: TcpStream,
     conf: ServerConfig,
-    spec: ProteusSpec,
-) -> io::Result<()> {
+    spec: T,
+) -> io::Result<()>
+where
+    T: TaskProvider + Clone + Send,
+{
     let pt_addr = pt_stream.peer_addr()?;
     log::debug!("Accepted new stream from Proteus client {}", pt_addr);
 

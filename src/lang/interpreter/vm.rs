@@ -6,14 +6,15 @@ use bytes::{BufMut, Bytes, BytesMut};
 use super::forwarder::Forwarder;
 use crate::crypto::chacha::CipherKind;
 use crate::crypto::kdf;
-use crate::lang::memory::Heap;
+use crate::lang::interpreter::memory::Heap;
+use crate::lang::ir::bridge::{Task, TaskID};
+use crate::lang::ir::v1::{InstructionV1, ReadNetLength};
 use crate::lang::message::Message;
-use crate::lang::task::{Instruction, ReadNetLength, Task, TaskID};
 use crate::lang::types::{ConcreteFormat, Identifier, PubkeyEncoding};
 use crate::lang::Role;
 use crate::net::{Reader, Writer};
 
-pub struct Program {
+pub struct VirtualMachine {
     task: Task,
     next_ins_index: usize,
     bytes_heap: Heap<Bytes>,
@@ -22,7 +23,7 @@ pub struct Program {
     number_heap: Heap<u128>,
 }
 
-impl Program {
+impl VirtualMachine {
     pub fn new(task: Task) -> Self {
         Self {
             task,
@@ -54,7 +55,7 @@ impl Program {
         forwarder: &mut Forwarder<R, W>,
     ) -> anyhow::Result<()> {
         match &self.task.ins[self.next_ins_index] {
-            Instruction::ComputeLength(args) => {
+            InstructionV1::ComputeLength(args) => {
                 let msg = self
                     .message_heap
                     .get(&args.from_msg_heap_id)
@@ -63,7 +64,7 @@ impl Program {
                 self.number_heap
                     .insert(args.to_heap_id.clone(), len as u128);
             }
-            Instruction::ConcretizeFormat(args) => {
+            InstructionV1::ConcretizeFormat(args) => {
                 let aformat = args.from_format.clone();
 
                 // The following block is ryans hack to support padding.
@@ -120,7 +121,7 @@ impl Program {
                 // Store it for use by later instructions.
                 self.format_heap.insert(args.to_heap_id.clone(), cformat);
             }
-            Instruction::CreateMessage(args) => {
+            InstructionV1::CreateMessage(args) => {
                 // Create a message with an existing concrete format.
                 let cformat = self
                     .format_heap
@@ -131,7 +132,7 @@ impl Program {
                 // Store the message for use in later instructions.
                 self.message_heap.insert(args.to_heap_id.clone(), msg);
             }
-            Instruction::DecryptField(args) => {
+            InstructionV1::DecryptField(args) => {
                 // TODO way too much copying here :(
                 let msg = self
                     .message_heap
@@ -162,7 +163,7 @@ impl Program {
                 self.bytes_heap
                     .insert(args.to_plaintext_heap_id.clone(), buf.freeze());
             }
-            Instruction::EncryptField(args) => {
+            InstructionV1::EncryptField(args) => {
                 let msg = self
                     .message_heap
                     .get(&args.from_msg_heap_id)
@@ -194,10 +195,10 @@ impl Program {
                         .insert(args.to_ciphertext_heap_id.clone(), buf.freeze());
                 }
             }
-            Instruction::GenRandomBytes(_args) => {
+            InstructionV1::GenRandomBytes(_args) => {
                 unimplemented!()
             }
-            Instruction::GetArrayBytes(args) => {
+            InstructionV1::GetArrayBytes(args) => {
                 let msg = self
                     .message_heap
                     .get(&args.from_msg_heap_id)
@@ -207,7 +208,7 @@ impl Program {
                     .map_err(|_| anyhow!("No field bytes"))?;
                 self.bytes_heap.insert(args.to_heap_id.clone(), bytes);
             }
-            Instruction::GetNumericValue(args) => {
+            InstructionV1::GetNumericValue(args) => {
                 let msg = self
                     .message_heap
                     .get(&args.from_msg_heap_id)
@@ -217,7 +218,7 @@ impl Program {
                     .map_err(|_| anyhow!("No field num"))?;
                 self.number_heap.insert(args.to_heap_id.clone(), num);
             }
-            Instruction::InitFixedSharedKey(args) => {
+            InstructionV1::InitFixedSharedKey(args) => {
                 let salt = "stupid stupid stupid";
                 let skey = kdf::derive_key_256(args.password.as_str(), salt);
 
@@ -228,14 +229,14 @@ impl Program {
 
                 forwarder.create_cipher(skey, kind);
             }
-            Instruction::ReadApp(args) => {
+            InstructionV1::ReadApp(args) => {
                 let data = forwarder
                     .recv(args.from_len.clone())
                     .await
                     .map_err(|e| anyhow!("ReadApp error {e}"))?;
                 self.bytes_heap.insert(args.to_heap_id.clone(), data);
             }
-            Instruction::ReadNet(args) => {
+            InstructionV1::ReadNet(args) => {
                 let len = match &args.from_len {
                     ReadNetLength::Identifier(id) => {
                         let num = self.number_heap.get(id).ok_or(anyhow!("No num on heap"))?;
@@ -273,7 +274,7 @@ impl Program {
                     .map_err(|e| anyhow!("ReadNet error {e}"))?;
                 self.bytes_heap.insert(args.to_heap_id.clone(), data);
             }
-            Instruction::SetArrayBytes(args) => {
+            InstructionV1::SetArrayBytes(args) => {
                 let bytes = self
                     .bytes_heap
                     .get(&args.from_heap_id)
@@ -286,7 +287,7 @@ impl Program {
                     .map_err(|_| anyhow!("No field bytes"))?;
                 self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
-            Instruction::SetNumericValue(args) => {
+            InstructionV1::SetNumericValue(args) => {
                 let val = *self
                     .number_heap
                     .get(&args.from_heap_id)
@@ -299,7 +300,7 @@ impl Program {
                     .map_err(|_| anyhow!("Cannot set field num"))?;
                 self.message_heap.insert(args.to_msg_heap_id.clone(), msg);
             }
-            Instruction::WriteApp(args) => {
+            InstructionV1::WriteApp(args) => {
                 let msg = self
                     .message_heap
                     .remove(&args.from_msg_heap_id)
@@ -312,7 +313,7 @@ impl Program {
                     .await
                     .map_err(|e| anyhow!("WriteApp error {e}"))?;
             }
-            Instruction::WriteNet(args) => {
+            InstructionV1::WriteNet(args) => {
                 let msg = self
                     .message_heap
                     .remove(&args.from_msg_heap_id)
@@ -323,7 +324,7 @@ impl Program {
                     .await
                     .map_err(|e| anyhow!("WriteNet error {e}"))?;
             }
-            Instruction::WriteNetTwice(args) => {
+            InstructionV1::WriteNetTwice(args) => {
                 let msg = self
                     .message_heap
                     .remove(&args.from_msg_heap_id)
@@ -351,14 +352,14 @@ impl Program {
                         .map_err(|e| anyhow!("WriteNetTwice error on second write {e}"))?;
                 }
             }
-            Instruction::ReadKey(args) => {
+            InstructionV1::ReadKey(args) => {
                 // TODO: dead code?
                 let _msg = self
                     .message_heap
                     .get(&args.from_msg_heap_id)
                     .ok_or(anyhow!("No msg on heap"))?;
             }
-            Instruction::SaveKey(args) => {
+            InstructionV1::SaveKey(args) => {
                 let msg = self
                     .message_heap
                     .get(&args.from_msg_heap_id)

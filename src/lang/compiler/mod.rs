@@ -1,14 +1,18 @@
 #![allow(dead_code)]
 
+use std::fs;
 use std::iter::Iterator;
 
 use itertools::Itertools;
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
-use crate::lang::task::*;
+use crate::lang::ir::bridge::*;
+use crate::lang::ir::v1::*;
 use crate::lang::types::*;
 use crate::lang::Role;
+
+pub mod parser;
 
 /*
  * Some assumptions the compiler is making that the parser should check for:
@@ -31,7 +35,7 @@ pub struct TaskGraphImpl {
 }
 
 impl TaskGraphImpl {
-    pub fn new(graph: Graph, my_role: Role, psf: Psf) -> TaskGraphImpl {
+    fn new(graph: Graph, my_role: Role, psf: Psf) -> TaskGraphImpl {
         TaskGraphImpl {
             graph,
             my_role,
@@ -39,7 +43,7 @@ impl TaskGraphImpl {
         }
     }
 
-    pub fn next(&self, task_completed: TaskID) -> TaskSet {
+    fn next(&self, task_completed: TaskID) -> TaskSet {
         let edges: Vec<_> = self
             .graph
             .edges(usize::from(task_completed).into())
@@ -56,7 +60,7 @@ impl TaskGraphImpl {
                 // This adjusts read app instructions during the handshake phase to not necessarily
                 // require bytes
                 for i in &mut ins {
-                    if let Instruction::ReadApp(ReadAppArgs { from_len: x, .. }) = i {
+                    if let InstructionV1::ReadApp(ReadAppArgs { from_len: x, .. }) = i {
                         *x = 0..x.end;
                     }
                 }
@@ -115,8 +119,8 @@ impl TaskGraphImpl {
         }
     }
 
-    pub fn init_task(&self) -> Task {
-        let mut ins: Vec<Instruction> = vec![];
+    fn init_task(&self) -> Task {
+        let mut ins: Vec<InstructionV1> = vec![];
 
         if let Some(ref crypto_spec) = self.psf.crypto_spec {
             if let Some(ref password) = crypto_spec.password {
@@ -134,6 +138,16 @@ impl TaskGraphImpl {
             id: Default::default(),
             ins,
         }
+    }
+}
+
+impl TaskProvider for TaskGraphImpl {
+    fn get_init_task(&self) -> Task {
+        self.init_task()
+    }
+
+    fn get_next_tasks(&self, last_task: &TaskID) -> TaskSet {
+        self.next(*last_task)
     }
 }
 
@@ -159,6 +173,23 @@ pub fn compile_task_graph<'a, T: Iterator<Item = &'a SequenceSpecifier>>(itr: T)
     }
 
     graph
+}
+
+pub struct Compiler {}
+
+impl OldCompile for Compiler {
+    #[allow(refining_impl_trait)]
+    fn parse_path(psf_filename: &str, role: Role) -> anyhow::Result<TaskGraphImpl> {
+        Compiler::parse_content(&fs::read_to_string(psf_filename)?, role)
+    }
+
+    #[allow(refining_impl_trait)]
+    fn parse_content(psf_content: &str, role: Role) -> anyhow::Result<TaskGraphImpl> {
+        let psf = crate::lang::compiler::parser::parse_psf(psf_content)?;
+        let tg = crate::lang::compiler::compile_task_graph(psf.sequence.iter());
+        let tgi = TaskGraphImpl::new(tg, role, psf);
+        Ok(tgi)
+    }
 }
 
 #[derive(Debug)]
@@ -304,8 +335,8 @@ static CFORMAT_HEAP_NAME: &str = "cformat_on_heap";
 static MESSAGE_HEAP_NAME: &str = "message_on_heap";
 static LEN_FIELD_HEAP_NAME: &str = "length_value_on_heap";
 
-fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<Instruction> {
-    let mut instrs: Vec<Instruction> = vec![];
+fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<InstructionV1> {
+    let mut instrs: Vec<InstructionV1> = vec![];
 
     let afs = psf.formats.get(format_id).unwrap();
     let format = &afs.format.format;
@@ -445,8 +476,8 @@ fn compile_message_to_instrs(
     edge_role: Role,
     format_id: &Identifier,
     psf: &Psf,
-) -> Vec<Instruction> {
-    let mut instrs: Vec<Instruction> = vec![];
+) -> Vec<InstructionV1> {
+    let mut instrs: Vec<InstructionV1> = vec![];
 
     let afs = psf.formats.get(format_id).unwrap();
     let format = &afs.format.format;
@@ -909,7 +940,7 @@ fn compile_message_to_instrs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::parse::implementation::tests::*;
+    use crate::lang::compiler::parser::tests::*;
 
     #[test]
     fn test_compile_task_graph() {

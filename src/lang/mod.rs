@@ -1,10 +1,7 @@
-mod compiler;
+pub mod compiler;
 pub mod interpreter;
-mod memory;
+pub mod ir;
 mod message;
-pub mod parse;
-pub mod spec;
-pub mod task;
 mod types;
 
 #[derive(Debug, PartialEq, Clone, Copy)]

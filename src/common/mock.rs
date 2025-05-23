@@ -6,7 +6,7 @@ use rand::distributions::{Alphanumeric, DistString};
 use tokio::io::{AsyncWriteExt, DuplexStream};
 
 use crate::lang::interpreter::Interpreter;
-use crate::lang::task::TaskProvider;
+use crate::lang::ir::bridge::TaskProvider;
 use crate::net::{BufReader, Connection, Reader};
 
 pub type MockConnection = Connection<BufReader<DuplexStream>, DuplexStream>;
@@ -127,7 +127,7 @@ pub mod tests {
 
     use super::{MockConnection, MockPayload};
     use crate::common::mock;
-    use crate::lang::task::{Task, TaskID, TaskProvider, TaskSet};
+    use crate::lang::ir::bridge::{Task, TaskID, TaskProvider, TaskSet};
 
     pub fn payload_len_iter() -> impl Iterator<Item = usize> {
         [
