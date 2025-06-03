@@ -1,11 +1,7 @@
 use proc_macro::TokenStream;
+use syn::{Ident, ItemEnum, Type};
 
-#[proc_macro_attribute]
-pub fn enum_from(_attr: TokenStream, input: TokenStream) -> TokenStream {
-    let input_enum: syn::ItemEnum = syn::parse(input.clone()).unwrap();
-
-    let enum_name = input_enum.ident;
-
+fn get_enum_variants(input_enum: ItemEnum) -> Vec<(Ident, Type)> {
     let mut variants = Vec::new();
 
     for variant in input_enum.variants {
@@ -20,11 +16,21 @@ pub fn enum_from(_attr: TokenStream, input: TokenStream) -> TokenStream {
         variants.push((variant.ident, field.ty));
     }
 
-    let from_impls = variants.into_iter().map(|(variant, ty)| {
+    variants
+}
+
+#[proc_macro_attribute]
+pub fn enum_from(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let input_enum: syn::ItemEnum = syn::parse(input.clone()).unwrap();
+
+    let enum_name = input_enum.ident.clone();
+    let enum_variants = get_enum_variants(input_enum);
+
+    let from_impls = enum_variants.into_iter().map(|(var, ty)| {
         quote::quote! {
             impl From<#ty> for #enum_name {
                 fn from(value: #ty) -> Self {
-                    #enum_name::#variant(value)
+                    #enum_name::#var(value)
                 }
             }
         }
@@ -33,4 +39,43 @@ pub fn enum_from(_attr: TokenStream, input: TokenStream) -> TokenStream {
     let from_impls = from_impls.into_iter().map(Into::<TokenStream>::into);
 
     TokenStream::from_iter(std::iter::once(input).chain(from_impls))
+}
+
+#[proc_macro_attribute]
+pub fn enum_try_from(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let input_enum: syn::ItemEnum = syn::parse(input.clone()).unwrap();
+
+    let enum_name = input_enum.ident.clone();
+    let enum_variants = get_enum_variants(input_enum);
+
+    let try_from_impls = enum_variants.into_iter().map(|(var, ty)| {
+        quote::quote! {
+            impl TryFrom<#enum_name> for #ty {
+                type Error = String;
+
+                fn try_from(value: #enum_name) -> Result<Self, Self::Error> {
+                    if let #enum_name::#var(inner) = value {
+                        Ok(inner)
+                    } else {
+                        return Err(String::from("Invalid variant"))
+                    }
+                }
+            }
+            impl<'a> TryFrom<&'a #enum_name> for &'a #ty {
+                type Error = String;
+
+                fn try_from(value: &'a #enum_name) -> Result<Self, Self::Error> {
+                    if let #enum_name::#var(inner) = value {
+                        Ok(inner)
+                    } else {
+                        return Err(String::from("Invalid variant"))
+                    }
+                }
+            }
+        }
+    });
+
+    let try_from_impls = try_from_impls.into_iter().map(Into::<TokenStream>::into);
+
+    TokenStream::from_iter(std::iter::once(input).chain(try_from_impls))
 }
