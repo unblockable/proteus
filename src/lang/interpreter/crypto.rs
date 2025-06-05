@@ -1,76 +1,58 @@
-use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, bail};
-use bytes::Bytes;
+use anyhow::anyhow;
 
 use crate::crypto::chacha::{Cipher, CipherKind, DecryptionCipher, EncryptionCipher};
-use crate::net::{Reader, Writer};
 
-pub struct Forwarder<R: Reader, W: Writer> {
-    src: R,
-    n_recv_src: usize,
-    dst: W,
-    n_sent_dst: usize,
-    state_owned: ForwardingState,
-    state_shared: SharedForwardingState,
+pub struct CryptoState {
+    encryptor: Option<EncryptionCipher>,
+    decryptor: Option<DecryptionCipher>,
 }
 
-impl<R: Reader, W: Writer> Forwarder<R, W> {
-    pub fn new(src: R, dst: W, state: Option<SharedForwardingState>) -> Self {
+impl CryptoState {
+    pub fn empty() -> Self {
         Self {
-            src,
-            n_recv_src: 0,
-            dst,
-            n_sent_dst: 0,
-            state_owned: ForwardingState::empty(),
-            state_shared: state.unwrap_or(SharedForwardingState::empty()),
+            encryptor: None,
+            decryptor: None,
+        }
+    }
+}
+
+/// Wrapper to allow us to safely share the internal ciphers across threads
+/// while concurrently executing instructions in both forwarding directions.
+#[derive(Clone)]
+pub struct SharedCryptoState {
+    inner: Arc<Mutex<CryptoState>>,
+}
+
+impl SharedCryptoState {
+    fn empty() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(CryptoState::empty())),
+        }
+    }
+}
+
+pub struct CryptoStream {
+    state_owned: CryptoState,
+    state_shared: SharedCryptoState,
+}
+
+impl CryptoStream {
+    pub fn new(state: Option<SharedCryptoState>) -> Self {
+        // The crypto state starts out empty and is later populated by the
+        // thread processing the app-to-net forwarding direction. When
+        // populated, it is put into the shared state. Then, each direction
+        // pulls out just the encryptor or decryptor needed for its forwarding
+        // direction.
+        Self {
+            state_owned: CryptoState::empty(),
+            state_shared: state.unwrap_or(SharedCryptoState::empty()),
         }
     }
 
-    pub fn share(&self) -> SharedForwardingState {
+    pub fn share(&self) -> SharedCryptoState {
         self.state_shared.clone()
-    }
-
-    pub async fn send(&mut self, bytes: Bytes) -> anyhow::Result<usize> {
-        log::trace!("trying to send {} bytes to dst", bytes.len());
-
-        let num_written = match self.dst.write_bytes(&bytes).await {
-            Ok(num) => num,
-            Err(e) => bail!("Error sending to dst: {e}"),
-        };
-
-        self.n_sent_dst += num_written;
-        log::trace!("sent {num_written} bytes to dst");
-
-        Ok(num_written)
-    }
-
-    pub async fn flush(&mut self) -> anyhow::Result<()> {
-        self.dst.flush().await
-    }
-
-    pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
-        log::trace!("Trying to receive {len:?} bytes from src",);
-
-        let data = match self.src.read_bytes(len).await {
-            Ok(data) => data,
-            Err(e) => bail!(e),
-            // If we return an error on EOF, will the entire connection
-            // close even if we could still possibly send?
-            // Do we need to just go to sleep forever upon EOF, and let
-            // an error on the other direction close us down?
-            // Err(net_err) => match net_err {
-            //     net::Error::Eof => break,
-            //     _ => return Err(proteus::Error::from(net_err)),
-            // },
-        };
-
-        let n_bytes = data.len();
-        self.n_recv_src += n_bytes;
-        log::trace!("Received {n_bytes} bytes from src");
-
-        Ok(data)
     }
 
     pub fn create_cipher(&mut self, secret_key: [u8; 32], kind: CipherKind) {
@@ -153,34 +135,5 @@ impl<R: Reader, W: Writer> Forwarder<R, W> {
 
     pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
         Ok(self.load_owned_decryptor()?.decrypt_unauth(ciphertext))
-    }
-}
-
-/// Wraps the ForwardingState allowing us to safely share the internal ciphers
-/// across threads while concurrently executing instructions.
-#[derive(Clone)]
-pub struct SharedForwardingState {
-    inner: Arc<Mutex<ForwardingState>>,
-}
-
-impl SharedForwardingState {
-    fn empty() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(ForwardingState::empty())),
-        }
-    }
-}
-
-struct ForwardingState {
-    encryptor: Option<EncryptionCipher>,
-    decryptor: Option<DecryptionCipher>,
-}
-
-impl ForwardingState {
-    fn empty() -> Self {
-        Self {
-            encryptor: None,
-            decryptor: None,
-        }
     }
 }

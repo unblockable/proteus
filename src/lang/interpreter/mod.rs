@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 
-use forwarder::Forwarder;
 use loader::Loader;
+use vm::VirtualMachine;
 
 use crate::lang::ir::bridge::TaskProvider;
 use crate::net::{Connection, Reader, Writer};
 
-mod forwarder;
+mod crypto;
+mod io;
 mod loader;
-mod memory;
-pub mod vm;
+mod mem;
+pub mod program;
+mod vm;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ForwardingDirection {
@@ -42,13 +44,13 @@ impl Interpreter {
         // maybe read from a local process over a localhost connection, while
         // the inner dst is to a proteus process typically running on a remote
         // host. The data written to the dst will be network-observable.
-        let app_to_net = Forwarder::new(app_src, net_dst, None);
+        let app_to_net = VirtualMachine::new(app_src, net_dst, None);
 
         // Buffers for data we are proxying. The inner src is from a proteus
         // process typically running on a remote host, while the inner dst is
         // is unobfuscated data maybe written to a local process over a localhost
         // connection. The data read from the src was network-observable.
-        let net_to_app = Forwarder::new(net_src, app_dst, Some(app_to_net.share()));
+        let net_to_app = VirtualMachine::new(net_src, app_dst, Some(app_to_net.share()));
 
         // Creates programs out of tasks from the protocol specification.
         let loader = Loader::new(protospec);
@@ -63,7 +65,7 @@ impl Interpreter {
 
     async fn execute<R, W, T>(
         mut loader: Loader<T>,
-        mut forwarder: Forwarder<R, W>,
+        mut vm: VirtualMachine<R, W>,
         direction: ForwardingDirection,
     ) -> anyhow::Result<()>
     where
@@ -75,7 +77,7 @@ impl Interpreter {
             // Load a program for our direction, once one becomes available.
             let mut program = loader.load(direction).await?;
             // Runs the program by executing its sequence of instructions.
-            let exe_result = program.execute(&mut forwarder).await;
+            let exe_result = program.execute(&mut vm).await;
             // The loader needs to know that this program finished, even on error.
             let unload_result = loader.unload(program);
 

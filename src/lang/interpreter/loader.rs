@@ -4,7 +4,7 @@ use anyhow::bail;
 use tokio::sync::Notify;
 
 use super::ForwardingDirection;
-use crate::lang::interpreter::vm::VirtualMachine;
+use crate::lang::interpreter::program::Program;
 use crate::lang::ir::bridge::{Task, TaskID, TaskProvider, TaskSet};
 
 // Each forwarding direction concurrently runs a loader to step through the
@@ -41,7 +41,7 @@ impl<T: TaskProvider + Send> Loader<T> {
         }
     }
 
-    pub async fn load(&mut self, direction: ForwardingDirection) -> anyhow::Result<VirtualMachine> {
+    pub async fn load(&mut self, direction: ForwardingDirection) -> anyhow::Result<Program> {
         loop {
             // Make sure we are synced with the current round.
             self.sync_tasks()?;
@@ -52,7 +52,7 @@ impl<T: TaskProvider + Send> Loader<T> {
             // Defensive: we expect a task to be here, but in case the other direction
             // raced us and the available task got unloaded, we just loop and wait again.
             if let Some(task) = self.take_next_task(direction)? {
-                return Ok(VirtualMachine::new(task));
+                return Ok(Program::new(task));
             }
         }
     }
@@ -116,7 +116,7 @@ impl<T: TaskProvider + Send> Loader<T> {
         })
     }
 
-    pub fn unload(&mut self, program: VirtualMachine) -> anyhow::Result<()> {
+    pub fn unload(&mut self, program: Program) -> anyhow::Result<()> {
         // One direction finished its program. Store our current place in the task
         // graph and then unload both directions tasks to make sure we reload later.
         match self.state_shared.lock() {

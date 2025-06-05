@@ -26,7 +26,6 @@ pub enum InstructionV1 {
     CreateMessage(CreateMessageArgs),
     DecryptField(DecryptFieldArgs),
     EncryptField(EncryptFieldArgs),
-    GenRandomBytes(GenRandomBytesArgs),
     GetArrayBytes(GetArrayBytesArgs),
     GetNumericValue(GetNumericValueArgs),
     InitFixedSharedKey(InitFixedSharedKeyArgs),
@@ -37,7 +36,6 @@ pub enum InstructionV1 {
     WriteApp(WriteAppArgs),
     WriteNet(WriteNetArgs),
     WriteNetTwice(WriteNetTwiceArgs),
-    ReadKey(ReadKeyArgs),
     SaveKey(SaveKeyArgs),
 }
 
@@ -86,13 +84,6 @@ pub struct EncryptFieldArgs {
     pub from_field_id: Identifier,
     pub to_ciphertext_heap_id: Identifier,
     pub to_mac_heap_id: Option<Identifier>,
-}
-
-/// TODO. Generate cryptographically insecure random bytes.
-#[derive(Debug)]
-pub struct GenRandomBytesArgs {
-    pub _from_len: Range<usize>,
-    pub _to_heap_id: Identifier,
 }
 
 /// Get the bytes data from the field given by `from_field_id` inside of the
@@ -178,12 +169,6 @@ pub struct WriteNetArgs {
 pub struct WriteNetTwiceArgs {
     pub from_msg_heap_id: Identifier,
     pub len_first_write: usize,
-}
-
-#[derive(Debug)]
-pub struct ReadKeyArgs {
-    pub from_msg_heap_id: Identifier,
-    pub _from_field_id: Identifier, // usually payload field
 }
 
 #[derive(Debug)]
