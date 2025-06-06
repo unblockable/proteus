@@ -1,6 +1,34 @@
 # Proteus
 
-<img src="https://github.com/unblockable/proteus/blob/main/assets/proteus_white.png?raw=true" width="200" height="200">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="/assets/proteus_white.png?raw=true">
+  <source media="(prefers-color-scheme: light)" srcset="/assets/proteus_black.png?raw=true">
+  <img alt="Proteus symbol" src="/assets/proteus_bg.png?raw=true" align="right" width="200" height="200">
+</picture>
+
+[![Lint Checks](https://github.com/unblockable/proteus/actions/workflows/lint.yml/badge.svg)](https://github.com/unblockable/proteus/actions/workflows/lint.yml)
+[![Unit and Integration Tests](https://github.com/unblockable/proteus/actions/workflows/unit_integration.yml/badge.svg)](https://github.com/unblockable/proteus/actions/workflows/unit_integration.yml)
+[![System Tests in Shadow](https://github.com/unblockable/proteus/actions/workflows/system.yml/badge.svg)](https://github.com/unblockable/proteus/actions/workflows/system.yml)
+
+Proteus is a tool for establishing network communication tunnels to a proxy
+server using network protocols that can be programmed by users. 
+
+> [!CAUTION]
+> Proteus is experimental and not recommended for security-critical applications.
+
+## Easy install
+
+    cargo install --git https://github.com/unblockable/proteus
+    proteus --help
+
+## Usage
+
+Proteus can currently be run as a pluggable transport using the v1
+specification. The main configuration item needed is a protocol specification
+file (PSF) which proteus will compile and run for each connection between a
+client and proxy server. See `tests/fixtures` for example PSFs.
+
+## Development notes
 
 Debug build (also used for tests):
 
@@ -19,19 +47,19 @@ output stored in `target/tests/...`):
 
     cargo test -- --ignored
 
-Run proteus while logging to stderr:
+Maintain standard code formatting:
 
-    RUST_LOG={error,warn,info,debug,trace} cargo run
+    cargo +nightly fmt -- --config-path rustfmt-nightly.toml
 
-# Docs
+Maintain clippy standards:
 
-Pluggable Transports
+    cargo clippy --all-targets -- -Dwarnings
+
+Pluggable Transport v1 specifications
 - https://gitweb.torproject.org/torspec.git/tree/pt-spec.txt
-
-Extended OR Port
 - https://gitweb.torproject.org/torspec.git/tree/ext-orport-spec.txt
 
-# Research
+## Research notes
 
 You can read more technical details about our vision for Proteus in the
 following publication:
