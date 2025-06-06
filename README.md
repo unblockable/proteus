@@ -38,11 +38,11 @@ Release build (optimized):
 
     cargo build --release
 
-Run unit tests:
+Run tests:
 
     cargo test
 
-Run integration tests (need [`shadow`, `tgen`, `tor`, `python3`] in $PATH,
+Run system tests (need [`shadow`, `tgen`, `tor`, `python3`] in $PATH,
 output stored in `target/tests/...`):
 
     cargo test -- --ignored

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-use crate::lang::types::{AbstractFormat, Identifier, PubkeyEncoding};
 use crate::lang::Role;
+use crate::lang::types::{AbstractFormat, Identifier, PubkeyEncoding};
 
 #[derive(Debug)]
 pub enum ReadNetLength {

@@ -4,13 +4,13 @@ use std::fs;
 use std::iter::Iterator;
 
 use itertools::Itertools;
-use petgraph::visit::EdgeRef;
 use petgraph::Directed;
+use petgraph::visit::EdgeRef;
 
+use crate::lang::Role;
 use crate::lang::ir::bridge::*;
 use crate::lang::ir::v1::*;
 use crate::lang::types::*;
-use crate::lang::Role;
 
 pub mod parser;
 

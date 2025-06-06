@@ -2,8 +2,8 @@
 
 use std::convert::From;
 
-use crate::lang::ir::v1::InstructionV1;
 use crate::lang::Role;
+use crate::lang::ir::v1::InstructionV1;
 
 pub trait TaskProvider {
     fn get_init_task(&self) -> Task;

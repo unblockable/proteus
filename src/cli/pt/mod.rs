@@ -8,10 +8,10 @@ use super::args::PtArgs;
 use crate::cli::pt::config::{
     ClientConfig, CommonConfig, Config, ConfigError, ForwardProtocol, Mode, ServerConfig,
 };
+use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
-use crate::lang::Role;
 use crate::net::proto::socks;
 use crate::net::{Connection, TcpConnector};
 

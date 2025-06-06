@@ -1,12 +1,12 @@
 use std::fs;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
 use super::args::CheckArgs;
 use crate::common::mock;
+use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::OldCompile;
-use crate::lang::Role;
 
 pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
     log::info!("Running in check mode");

@@ -1,7 +1,7 @@
-use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::ChaCha20Poly1305;
-use salsa20::cipher::{KeyIvInit, StreamCipher};
+use chacha20poly1305::aead::{Aead, NewAead};
 use salsa20::Salsa20;
+use salsa20::cipher::{KeyIvInit, StreamCipher};
 
 const MAC_NBYTES: usize = 16;
 const NONCE_A: [u8; 8] = [0xAA; 8];

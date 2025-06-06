@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, bail};
 
-use crate::lang::types::Identifier;
 use crate::lang::Data;
+use crate::lang::types::Identifier;
 
 pub struct Heap {
     mem: HashMap<Identifier, Data>,

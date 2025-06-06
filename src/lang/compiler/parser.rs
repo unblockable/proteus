@@ -5,12 +5,12 @@ use std::collections::hash_map::HashMap;
 use std::fmt::Debug;
 
 use anyhow::Result;
-use pest::iterators::{Pair, Pairs};
 use pest::Parser;
+use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
 
-use crate::lang::types::*;
 use crate::lang::Role;
+use crate::lang::types::*;
 
 #[derive(Parser)]
 #[grammar = "lang/compiler/proteus_lite.pest"]
@@ -65,7 +65,7 @@ fn parse_hex_literal(p: &RulePair) -> Result<Vec<u8>> {
     if len % 2 == 1 {
         // Odd number of digits; process the first digit separately
         let c1 = char_itr.next().unwrap().to_string(); // Safe to unwrap: we checked above that there is
-                                                       // something in the string.
+        // something in the string.
         let b = u8::from_str_radix(&c1, 16).unwrap(); // Unwrap safe here by parsing rules.
         retval.push(b);
     }

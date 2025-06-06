@@ -93,9 +93,9 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use crate::common::mock;
+    use crate::lang::Role;
     use crate::lang::ir::test::basic::LengthPayloadSpec;
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
-    use crate::lang::Role;
 
     #[tokio::test]
     async fn length_payload_unencrypted() {

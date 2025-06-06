@@ -1,6 +1,6 @@
 use super::vm::VirtualMachine;
-use crate::lang::ir::bridge::{Task, TaskID};
 use crate::lang::Execute;
+use crate::lang::ir::bridge::{Task, TaskID};
 use crate::net::{Reader, Writer};
 
 pub struct Program {

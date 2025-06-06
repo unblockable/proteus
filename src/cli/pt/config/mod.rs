@@ -143,13 +143,13 @@ impl Config {
                     Err(_) => {
                         return Err(ConfigError::Proxy(String::from(
                             "Requested proxy URI is malformed",
-                        )))
+                        )));
                     }
                 },
                 false => {
                     return Err(ConfigError::Proxy(String::from(
                         "Requested proxy protocol is not supported",
-                    )))
+                    )));
                 }
             },
             Err(_) => None,

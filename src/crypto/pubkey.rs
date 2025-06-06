@@ -49,15 +49,13 @@ impl X25519PubKey {
             public_key: asn1::BitString::new(&self.value, 0).unwrap(),
         };
 
-        let der = asn1::write(|w| {
+        asn1::write(|w| {
             w.write_element(&asn1::SequenceWriter::new(&|w| {
                 w.write_element(&key_asn)?;
                 Ok(())
             }))
         })
-        .unwrap();
-
-        der
+        .unwrap()
     }
 
     pub fn from_der(value: Vec<u8>) -> Self {
