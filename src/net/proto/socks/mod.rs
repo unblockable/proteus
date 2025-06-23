@@ -11,7 +11,7 @@ use frames::{
 use crate::net::proto::socks;
 use crate::net::{self, Connection, Connector, Reader, Writer};
 
-mod address;
+pub mod address;
 mod formatter;
 mod frames;
 
