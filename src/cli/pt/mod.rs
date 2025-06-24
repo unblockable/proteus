@@ -97,20 +97,20 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
 
     // Main loop waiting for connections from reverse socks5 clients.
     loop {
-        let (rvs_stream, _) = listener.accept().await?;
+        let (app_stream, _) = listener.accept().await?;
         let conf = client_conf.clone();
         // A failure in a connection does not stop the server.
-        tokio::spawn(async move { handle_client_connection(rvs_stream, conf).await });
+        tokio::spawn(async move { handle_client_connection(app_stream, conf).await });
     }
 }
 
-async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) -> io::Result<()> {
-    let rvs_addr = rvs_stream.peer_addr()?;
-    log::debug!("Accepted new stream from client {}", rvs_addr);
+async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) -> io::Result<()> {
+    let app_addr = app_stream.peer_addr()?;
+    log::debug!("Accepted new stream from client {}", app_addr);
 
-    match socks::run_socks5_server(Connection::from(rvs_stream), TcpConnector::new()).await {
-        Ok((rvs_conn, pt_conn, username_opt)) => {
-            log::debug!("Socks5 with peer {} succeeded", rvs_addr);
+    match socks::run_socks5_server(Connection::from(app_stream), TcpConnector::new()).await {
+        Ok((app_conn, net_conn, username_opt)) => {
+            log::debug!("Socks5 with peer {} succeeded", app_addr);
 
             let options = match username_opt {
                 Some(username) => {
@@ -137,15 +137,15 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
 
             log::debug!(
                 "Running Proteus client protocol to forward data from {}",
-                rvs_addr,
+                app_addr,
             );
 
             // Run the proteus protocol with the interpreter.
-            match Interpreter::run(pt_conn, rvs_conn, client_spec, options).await {
-                Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", rvs_addr),
+            match Interpreter::run(net_conn, app_conn, client_spec, options).await {
+                Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", app_addr),
                 Err(e) => log::debug!(
                     "Stream from peer {} failed during Proteus protocol: {}",
-                    rvs_addr,
+                    app_addr,
                     e
                 ),
             }
@@ -153,7 +153,7 @@ async fn handle_client_connection(rvs_stream: TcpStream, _conf: ClientConfig) ->
         Err(e) => {
             log::debug!(
                 "Stream from peer {} failed during Socks5 protocol: {}",
-                rvs_addr,
+                app_addr,
                 e
             );
         }
@@ -190,44 +190,44 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
 
     // Main loop waiting for connections from proteus proxy clients.
     loop {
-        let (pt_stream, _) = listener.accept().await?;
+        let (net_stream, _) = listener.accept().await?;
         let conf = server_conf.clone();
         let spec = server_spec.clone();
         // A failure in a connection does not stop the server.
-        tokio::spawn(async move { handle_server_connection(pt_stream, conf, spec).await });
+        tokio::spawn(async move { handle_server_connection(net_stream, conf, spec).await });
     }
 }
 
 async fn handle_server_connection<T>(
-    pt_stream: TcpStream,
+    net_stream: TcpStream,
     conf: ServerConfig,
     spec: T,
 ) -> io::Result<()>
 where
     T: TaskProvider + Clone + Send,
 {
-    let pt_addr = pt_stream.peer_addr()?;
-    log::debug!("Accepted new stream from Proteus client {}", pt_addr);
+    let net_addr = net_stream.peer_addr()?;
+    log::debug!("Accepted new stream from Proteus client {}", net_addr);
 
-    let fwd_stream = tokio::net::TcpStream::connect(conf.forward_addr).await?;
-    let fwd_addr = fwd_stream.peer_addr()?;
-    log::debug!("Connected to forward server {}", fwd_addr);
+    let app_stream = TcpStream::connect(conf.forward_addr).await?;
+    let app_addr = app_stream.peer_addr()?;
+    log::debug!("Connected to forward server {}", app_addr);
 
-    let pt_conn = Connection::from(pt_stream);
-    let fwd_conn = Connection::from(fwd_stream);
+    let net_conn = Connection::from(net_stream);
+    let app_conn = Connection::from(app_stream);
 
     match conf.forward_proto {
         ForwardProtocol::Basic => {
             // No special OR handshake required.
             log::debug!(
                 "Using basic 'data only' protocol with forward server {}",
-                fwd_addr
+                app_addr
             );
         }
         ForwardProtocol::Extended(_cookie_path) => {
             log::debug!(
                 "Using extended OR protocol with forward server {}",
-                fwd_addr
+                app_addr
             );
             unimplemented!("Extended OR protocol is not yet supported.")
             // or::run_extor_client(fwd_conn).await
@@ -236,16 +236,16 @@ where
 
     log::debug!(
         "Running Proteus server protocol to forward data between {} and {}",
-        pt_addr,
-        fwd_addr
+        net_addr,
+        app_addr
     );
 
     // Run the proteus protocol with the interpreter.
-    match Interpreter::run(pt_conn, fwd_conn, spec, conf.options).await {
-        Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", pt_addr),
+    match Interpreter::run(net_conn, app_conn, spec, conf.options).await {
+        Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", net_addr),
         Err(e) => log::debug!(
             "Stream from peer {} failed during Proteus protocol: {}",
-            pt_addr,
+            net_addr,
             e
         ),
     }
