@@ -13,6 +13,8 @@ pub enum ShutWhich {
     Write(DataCursor),
     /// Shutdown reads and writes, as in `Self::Read` and `Self::Write`.
     ReadWrite((DataCursor, DataCursor)),
+    /// An invalid value found during deserialization.
+    Invalid,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -25,6 +27,8 @@ pub enum Status {
     ForwardError,
     ShutdownOk,
     ShutdownError,
+    /// An invalid value found during deserialization.
+    Invalid,
 }
 
 pub type DataCursor = u64;
@@ -42,6 +46,8 @@ pub enum Command {
     Forward(Payload),
     Shutdown(ShutWhich),
     Notify(Status),
+    /// An invalid value found during deserialization.
+    Invalid,
 }
 
 #[derive(Debug, PartialEq)]
@@ -94,6 +100,7 @@ impl Serialize<Command> for Command {
             Command::Forward(_) => 2,
             Command::Shutdown(_) => 3,
             Command::Notify(_) => 4,
+            Command::Invalid => u8::MAX,
         };
         buf.put_u8(command_type);
 
@@ -103,6 +110,7 @@ impl Serialize<Command> for Command {
             Command::Forward(payload) => payload.serialize(),
             Command::Shutdown(which) => which.serialize(),
             Command::Notify(status) => status.serialize(),
+            Command::Invalid => Bytes::new(),
         };
 
         buf.put_slice(&bytes);
@@ -120,7 +128,7 @@ impl Deserialize<Command> for Command {
             2 => Command::Forward(Payload::deserialize(src)?),
             3 => Command::Shutdown(ShutWhich::deserialize(src)?),
             4 => Command::Notify(Status::deserialize(src)?),
-            _ => return None,
+            _ => Command::Invalid,
         };
 
         Some(command)
@@ -197,6 +205,7 @@ impl Serialize<ShutWhich> for ShutWhich {
             ShutWhich::Read(_) => 0,
             ShutWhich::Write(_) => 1,
             ShutWhich::ReadWrite(_) => 2,
+            ShutWhich::Invalid => u8::MAX,
         };
         buf.put_u8(code);
 
@@ -207,6 +216,7 @@ impl Serialize<ShutWhich> for ShutWhich {
                 buf.put_slice(&wr_cursor.serialize());
                 buf.put_slice(&rd_cursor.serialize());
             }
+            ShutWhich::Invalid => {}
         };
 
         buf.freeze()
@@ -223,7 +233,7 @@ impl Deserialize<ShutWhich> for ShutWhich {
             2 => {
                 ShutWhich::ReadWrite((DataCursor::deserialize(src)?, DataCursor::deserialize(src)?))
             }
-            _ => return None,
+            _ => ShutWhich::Invalid,
         };
 
         Some(which)
@@ -243,6 +253,7 @@ impl Serialize<Status> for Status {
             Status::ForwardError => 5,
             Status::ShutdownOk => 6,
             Status::ShutdownError => 7,
+            Status::Invalid => u8::MAX,
         };
 
         buf.put_u8(code);
@@ -263,7 +274,7 @@ impl Deserialize<Status> for Status {
             5 => Status::ForwardError,
             6 => Status::ShutdownOk,
             7 => Status::ShutdownError,
-            _ => return None,
+            _ => Status::Invalid,
         };
 
         Some(status)
@@ -328,6 +339,7 @@ mod tests {
             ShutWhich::Read(123456),
             ShutWhich::Write(654321),
             ShutWhich::ReadWrite((123456, 654321)),
+            ShutWhich::Invalid,
         ] {
             let msg = Message {
                 session_id: 123456789,
@@ -348,6 +360,7 @@ mod tests {
             Status::ForwardError,
             Status::ShutdownOk,
             Status::ShutdownError,
+            Status::Invalid,
         ] {
             let msg = Message {
                 session_id: 123456789,
@@ -355,5 +368,14 @@ mod tests {
             };
             assert_serialize_deserialize(msg);
         }
+    }
+
+    #[test]
+    fn invalid() {
+        let msg = Message {
+            session_id: 123456789,
+            command: Command::Invalid,
+        };
+        assert_serialize_deserialize(msg);
     }
 }
