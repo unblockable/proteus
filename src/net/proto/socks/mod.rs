@@ -9,7 +9,7 @@ use frames::{
 };
 
 use crate::net::proto::socks;
-use crate::net::{self, Connection, Connector, Reader, Writer};
+use crate::net::{self, Connection, Reader, Writer};
 
 pub mod address;
 mod formatter;
@@ -84,10 +84,9 @@ pub async fn run_socks5_client<R: Reader, W: Writer>(
     unimplemented!()
 }
 
-pub async fn run_socks5_server<R: Reader, W: Writer, C: Connector<R, W>>(
+pub async fn run_socks5_server<R: Reader, W: Writer>(
     conn: Connection<R, W>,
-    connector: C,
-) -> anyhow::Result<(Connection<R, W>, Connection<R, W>, Option<String>)> {
+) -> anyhow::Result<SocksConnectInfo<R, W>> {
     let proto = Init::new(conn).start_server();
 
     let auth_method = proto
@@ -108,18 +107,12 @@ pub async fn run_socks5_server<R: Reader, W: Writer, C: Connector<R, W>>(
         AuthOrCommand::Command(s) => s,
     };
 
-    let info = proto
+    proto
         .recv_connect_request()
         .await?
         .prepare_connect_response()
         .send_connect_response()
-        .await?;
-
-    let (conn, user, _, addr) = info;
-    match connector.connect(addr).await {
-        Ok((target_conn, _bind_addr)) => Ok((conn, target_conn, user)),
-        Err(e) => bail!("Unable to connect to socks target: {e}"),
-    }
+        .await
 }
 
 struct Init<R: Reader, W: Writer> {
@@ -504,14 +497,11 @@ mod tests {
     use tokio_test::io::{Builder, Mock};
 
     use super::*;
+    use crate::net::Connector;
 
     pub struct MockConnector {}
 
     impl MockConnector {
-        pub fn new() -> Self {
-            Self {}
-        }
-
         fn default_addr() -> SocketAddr {
             // We return zeros for our localhost bind address.
             "0.0.0.0:0".parse().expect("Valid socket addr")
@@ -598,7 +588,7 @@ mod tests {
             .build();
         let conn = Connection::new(BufReader::new(reader), writer);
 
-        let s = run_socks5_server(conn, MockConnector::new()).await;
+        let s = run_socks5_server(conn).await;
         assert!(s.is_ok())
     }
 
@@ -614,7 +604,7 @@ mod tests {
             .build();
         let conn = Connection::new(BufReader::new(reader), writer);
 
-        let s = run_socks5_server(conn, MockConnector::new()).await;
+        let s = run_socks5_server(conn).await;
         assert!(s.is_ok())
     }
 
@@ -628,7 +618,7 @@ mod tests {
             .build();
         let conn = Connection::new(BufReader::new(reader), writer);
 
-        let s = run_socks5_server(conn, MockConnector::new()).await;
+        let s = run_socks5_server(conn).await;
         assert!(s.is_err())
     }
 }

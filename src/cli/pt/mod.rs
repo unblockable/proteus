@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::{io, process};
 
+use anyhow::bail;
 use control::PtLogLevel;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -10,10 +11,10 @@ use crate::cli::pt::config::{
 };
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
-use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks;
-use crate::net::{Connection, TcpConnector};
+use crate::net::proto::turbo::{TunnelClient, TunnelServer};
+use crate::net::{Connection, TcpConnector, TcpReconnector};
 
 pub mod config;
 pub mod control;
@@ -108,8 +109,8 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) ->
     let app_addr = app_stream.peer_addr()?;
     log::debug!("Accepted new stream from client {}", app_addr);
 
-    match socks::run_socks5_server(Connection::from(app_stream), TcpConnector::new()).await {
-        Ok((app_conn, net_conn, username_opt)) => {
+    match socks::run_socks5_server(Connection::from(app_stream)).await {
+        Ok((app_conn, username_opt, _, target_addr)) => {
             log::debug!("Socks5 with peer {} succeeded", app_addr);
 
             let options = match username_opt {
@@ -136,16 +137,24 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) ->
             let client_spec = Compiler::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
-                "Running Proteus client protocol to forward data from {}",
+                "Running Proteus client protocol to forward data from {} to {}",
                 app_addr,
+                target_addr
             );
 
-            // Run the proteus protocol with the interpreter.
-            match Interpreter::run(net_conn, app_conn, client_spec, options).await {
-                Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", app_addr),
-                Err(e) => log::debug!(
-                    "Stream from peer {} failed during Proteus protocol: {}",
+            let tunnel = TunnelClient::new(TcpReconnector::from(target_addr));
+
+            // Run a new client session over the tunnel.
+            match tunnel.run_session(app_conn, client_spec).await {
+                Ok(_) => log::debug!(
+                    "Stream from peer {} succeeded over tunnel {}",
                     app_addr,
+                    target_addr
+                ),
+                Err(e) => log::debug!(
+                    "Stream from peer {} failed over tunnel {}: {}",
+                    app_addr,
+                    target_addr,
                     e
                 ),
             }
@@ -201,33 +210,26 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
 async fn handle_server_connection<T>(
     net_stream: TcpStream,
     conf: ServerConfig,
-    spec: T,
-) -> io::Result<()>
+    server_spec: T,
+) -> anyhow::Result<()>
 where
     T: TaskProvider + Clone + Send,
 {
     let net_addr = net_stream.peer_addr()?;
     log::debug!("Accepted new stream from Proteus client {}", net_addr);
 
-    let app_stream = TcpStream::connect(conf.forward_addr).await?;
-    let app_addr = app_stream.peer_addr()?;
-    log::debug!("Connected to forward server {}", app_addr);
-
-    let net_conn = Connection::from(net_stream);
-    let app_conn = Connection::from(app_stream);
-
     match conf.forward_proto {
         ForwardProtocol::Basic => {
             // No special OR handshake required.
             log::debug!(
                 "Using basic 'data only' protocol with forward server {}",
-                app_addr
+                conf.forward_addr
             );
         }
         ForwardProtocol::Extended(_cookie_path) => {
             log::debug!(
                 "Using extended OR protocol with forward server {}",
-                app_addr
+                conf.forward_addr
             );
             unimplemented!("Extended OR protocol is not yet supported.")
             // or::run_extor_client(fwd_conn).await
@@ -237,11 +239,17 @@ where
     log::debug!(
         "Running Proteus server protocol to forward data between {} and {}",
         net_addr,
-        app_addr
+        conf.forward_addr
     );
 
-    // Run the proteus protocol with the interpreter.
-    match Interpreter::run(net_conn, app_conn, spec, conf.options).await {
+    let mut tunnel = TunnelServer::new(TcpConnector::default());
+    if let Some(addr) = tunnel.replace_target(conf.forward_addr) {
+        bail!("Expected an empty forwarding address, found {addr}")
+    }
+    let net_conn = Connection::from(net_stream);
+
+    // Run a new server session over the tunnel.
+    match tunnel.run_session(net_conn, server_spec).await {
         Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", net_addr),
         Err(e) => log::debug!(
             "Stream from peer {} failed during Proteus protocol: {}",

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::future::Future;
 
 use bytes::{Bytes, BytesMut};
@@ -101,13 +100,7 @@ async fn run_interpreter<T: TaskProvider + Clone + Send>(
     net_conn: MockConnection,
     app_conn: MockConnection,
 ) -> anyhow::Result<()> {
-    Interpreter::run(
-        net_conn,
-        app_conn,
-        protospec,
-        HashMap::<String, String>::new(),
-    )
-    .await
+    Interpreter::run(net_conn, app_conn, protospec).await
 }
 
 pub async fn check_protocol_interpretability<T>(

@@ -57,6 +57,11 @@ pub trait Connector<R: Reader, W: Writer> {
 }
 
 #[async_trait]
+pub trait Reconnector<R: Reader, W: Writer> {
+    async fn reconnect(&self) -> anyhow::Result<(Connection<R, W>, SocketAddr)>;
+}
+
+#[async_trait]
 pub trait Reader {
     async fn read_bytes(&mut self, len: Range<usize>) -> anyhow::Result<Bytes>;
     async fn read_frame<F, D>(&mut self, deserializer: &mut D) -> anyhow::Result<F>
@@ -175,13 +180,8 @@ impl<R: Reader, W: Writer> Connection<R, W> {
     }
 }
 
+#[derive(Default)]
 pub struct TcpConnector {}
-
-impl TcpConnector {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 
 #[async_trait]
 impl Connector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpConnector {
@@ -196,6 +196,28 @@ impl Connector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpConnector {
         let local_addr = stream.local_addr()?;
         let conn = Connection::from(stream);
         Ok((conn, local_addr))
+    }
+}
+
+pub struct TcpReconnector {
+    addr: SocketAddr,
+}
+
+impl From<SocketAddr> for TcpReconnector {
+    fn from(value: SocketAddr) -> Self {
+        Self { addr: value }
+    }
+}
+
+#[async_trait]
+impl Reconnector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpReconnector {
+    async fn reconnect(
+        &self,
+    ) -> anyhow::Result<(
+        Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf>,
+        SocketAddr,
+    )> {
+        TcpConnector::default().connect(self.addr).await
     }
 }
 
