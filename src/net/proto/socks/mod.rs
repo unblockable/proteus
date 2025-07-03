@@ -512,13 +512,16 @@ mod tests {
     impl Connector<BufReader<Mock>, Mock> for MockConnector {
         async fn connect(
             &self,
-            _addr: SocketAddr,
         ) -> anyhow::Result<(Connection<BufReader<Mock>, Mock>, SocketAddr)> {
             let client = Connection::new(
                 BufReader::new(Builder::new().build()),
                 Builder::new().build(),
             );
             Ok((client, MockConnector::default_addr()))
+        }
+
+        fn into_self(self, _addr: SocketAddr) -> Self {
+            Self {}
         }
     }
 

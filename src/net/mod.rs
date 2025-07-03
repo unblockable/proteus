@@ -53,12 +53,8 @@ pub trait Deserializer<F> {
 
 #[async_trait]
 pub trait Connector<R: Reader, W: Writer> {
-    async fn connect(&self, addr: SocketAddr) -> anyhow::Result<(Connection<R, W>, SocketAddr)>;
-}
-
-#[async_trait]
-pub trait Reconnector<R: Reader, W: Writer> {
-    async fn reconnect(&self) -> anyhow::Result<(Connection<R, W>, SocketAddr)>;
+    async fn connect(&self) -> anyhow::Result<(Connection<R, W>, SocketAddr)>;
+    fn into_self(self, addr: SocketAddr) -> Self;
 }
 
 #[async_trait]
@@ -186,43 +182,36 @@ impl<R: Reader, W: Writer> Connection<R, W> {
 }
 
 #[derive(Default)]
-pub struct TcpConnector {}
+pub struct TcpConnector {
+    addr: Option<SocketAddr>,
+}
+
+impl From<SocketAddr> for TcpConnector {
+    fn from(value: SocketAddr) -> Self {
+        Self { addr: Some(value) }
+    }
+}
 
 #[async_trait]
 impl Connector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpConnector {
     async fn connect(
         &self,
-        addr: SocketAddr,
     ) -> anyhow::Result<(
         Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf>,
         SocketAddr,
     )> {
+        // Might be `None` if created with `default()`.
+        let Some(addr) = self.addr else {
+            bail!("Unable to connect: connector has no address")
+        };
         let stream = TcpStream::connect(addr).await?;
         let local_addr = stream.local_addr()?;
         let conn = Connection::from(stream);
         Ok((conn, local_addr))
     }
-}
 
-pub struct TcpReconnector {
-    addr: SocketAddr,
-}
-
-impl From<SocketAddr> for TcpReconnector {
-    fn from(value: SocketAddr) -> Self {
-        Self { addr: value }
-    }
-}
-
-#[async_trait]
-impl Reconnector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpReconnector {
-    async fn reconnect(
-        &self,
-    ) -> anyhow::Result<(
-        Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf>,
-        SocketAddr,
-    )> {
-        TcpConnector::default().connect(self.addr).await
+    fn into_self(self, addr: SocketAddr) -> Self {
+        Self::from(addr)
     }
 }
 

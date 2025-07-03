@@ -63,7 +63,7 @@ async fn run_application(
     Ok((r_result.unwrap(), w_result.unwrap()))
 }
 
-async fn run_proxy_network<T, F, Fut>(
+pub async fn run_proxy_network<T, F, Fut>(
     client_spec: T,
     server_spec: T,
     run_proxy: F,
@@ -199,7 +199,7 @@ pub mod tests {
         }
     }
 
-    fn assert_mock_result(result: mock::Result, len: usize) {
+    pub fn assert_mock_result(result: mock::Result, len: usize) {
         let (c_recv, c_sent) = result.client_app.unwrap();
         let (s_recv, s_sent) = result.server_app.unwrap();
 
@@ -220,7 +220,7 @@ pub mod tests {
 
     // We use a null spec below because `run_io_copier` doesn't need it to test
     // the mock facilities.
-    struct NullSpec {}
+    pub struct NullSpec {}
 
     impl TaskProvider for NullSpec {
         fn get_init_task(&self) -> Task {

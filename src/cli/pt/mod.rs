@@ -13,8 +13,8 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks;
-use crate::net::proto::turbo::{TunnelClient, TunnelServer};
-use crate::net::{Connection, TcpConnector, TcpReconnector};
+use crate::net::proto::turbo::{TurboClient, TurboServer};
+use crate::net::{Connection, TcpConnector};
 
 pub mod config;
 pub mod control;
@@ -142,7 +142,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) ->
                 target_addr
             );
 
-            let tunnel = TunnelClient::new(TcpReconnector::from(target_addr));
+            let tunnel = TurboClient::new(TcpConnector::from(target_addr));
 
             // Run a new client session over the tunnel.
             match tunnel.run_session(app_conn, client_spec).await {
@@ -242,7 +242,7 @@ where
         conf.forward_addr
     );
 
-    let mut tunnel = TunnelServer::new(TcpConnector::default());
+    let mut tunnel = TurboServer::new(TcpConnector::default());
     if let Some(addr) = tunnel.replace_target(conf.forward_addr) {
         bail!("Expected an empty forwarding address, found {addr}")
     }
