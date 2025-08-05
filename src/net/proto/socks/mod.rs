@@ -510,9 +510,7 @@ mod tests {
 
     #[async_trait]
     impl Connector<BufReader<Mock>, Mock> for MockConnector {
-        async fn connect(
-            &self,
-        ) -> anyhow::Result<(Connection<BufReader<Mock>, Mock>, SocketAddr)> {
+        async fn connect(&self) -> anyhow::Result<(Connection<BufReader<Mock>, Mock>, SocketAddr)> {
             let client = Connection::new(
                 BufReader::new(Builder::new().build()),
                 Builder::new().build(),

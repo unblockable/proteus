@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::{io, process};
 
-use anyhow::bail;
 use control::PtLogLevel;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -11,10 +10,11 @@ use crate::cli::pt::config::{
 };
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
+use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks;
-use crate::net::proto::turbo::{TurboClient, TurboServer};
-use crate::net::{Connection, TcpConnector};
+use crate::net::proto::turbo::TurboSession;
+use crate::net::{Connection, Connector, TcpConnector};
 
 pub mod config;
 pub mod control;
@@ -107,15 +107,15 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
 
 async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) -> io::Result<()> {
     let app_addr = app_stream.peer_addr()?;
-    log::debug!("Accepted new stream from client {}", app_addr);
+    log::debug!("Accepted new stream from client {app_addr}");
 
     match socks::run_socks5_server(Connection::from(app_stream)).await {
         Ok((app_conn, username_opt, _, target_addr)) => {
-            log::debug!("Socks5 with peer {} succeeded", app_addr);
+            log::debug!("Socks5 with peer {app_addr} succeeded");
 
             let options = match username_opt {
                 Some(username) => {
-                    log::debug!("Obtained Socks5 username: {}", username);
+                    log::debug!("Obtained Socks5 username: {username}");
                     let mut map = HashMap::new();
                     for entry in username.split(';').collect::<Vec<&str>>() {
                         let parts: Vec<&str> =
@@ -137,34 +137,40 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) ->
             let client_spec = Compiler::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
-                "Running Proteus client protocol to forward data from {} to {}",
-                app_addr,
-                target_addr
+                "Running Proteus client protocol to forward data from {app_addr} to {target_addr}",
             );
 
-            let tunnel = TurboClient::new(TcpConnector::from(target_addr));
+            // Normally this connection would have been done during the SOCKS handshake,
+            // so that we could return a SOCKS error if the connection fails.
+            // We currently removed that from our SOCKS impl to handle other modes.
+            log::debug!("Connecting network tunnel to target {target_addr}");
+            let net_connector = TcpConnector::from(target_addr);
 
-            // Run a new client session over the tunnel.
-            match tunnel.run_session(app_conn, client_spec).await {
-                Ok(_) => log::debug!(
-                    "Stream from peer {} succeeded over tunnel {}",
-                    app_addr,
-                    target_addr
-                ),
-                Err(e) => log::debug!(
-                    "Stream from peer {} failed over tunnel {}: {}",
-                    app_addr,
-                    target_addr,
-                    e
-                ),
+            match net_connector.connect().await {
+                Ok((net_conn, local_addr)) => {
+                    log::debug!("Connection to {target_addr} succeeded (bound to {local_addr})");
+
+                    let (net_src, net_dst) = net_conn.into_split();
+                    let (app_src, app_dst) = TurboSession::new_connected_client(app_conn);
+
+                    match Interpreter::run_split(net_src, net_dst, app_src, app_dst, client_spec)
+                        .await
+                    {
+                        Ok(_) => log::debug!(
+                            "Stream from peer {app_addr} succeeded over tunnel {target_addr}",
+                        ),
+                        Err(e) => log::debug!(
+                            "Stream from peer {app_addr} failed over tunnel {target_addr}: {e}",
+                        ),
+                    }
+                }
+                Err(e) => {
+                    log::debug!("Connection to {target_addr} failed: {e}");
+                }
             }
         }
         Err(e) => {
-            log::debug!(
-                "Stream from peer {} failed during Socks5 protocol: {}",
-                app_addr,
-                e
-            );
+            log::debug!("Stream from peer {app_addr} failed during Socks5 protocol: {e}");
         }
     }
 
@@ -216,46 +222,50 @@ where
     T: TaskProvider + Clone + Send,
 {
     let net_addr = net_stream.peer_addr()?;
-    log::debug!("Accepted new stream from Proteus client {}", net_addr);
+    log::debug!("Accepted new stream from Proteus client {net_addr}");
+
+    let target_addr = conf.forward_addr;
 
     match conf.forward_proto {
         ForwardProtocol::Basic => {
             // No special OR handshake required.
-            log::debug!(
-                "Using basic 'data only' protocol with forward server {}",
-                conf.forward_addr
-            );
+            log::debug!("Using basic 'data only' protocol with forward server {target_addr}",);
         }
         ForwardProtocol::Extended(_cookie_path) => {
-            log::debug!(
-                "Using extended OR protocol with forward server {}",
-                conf.forward_addr
-            );
+            log::debug!("Using extended OR protocol with forward server {target_addr}",);
             unimplemented!("Extended OR protocol is not yet supported.")
             // or::run_extor_client(fwd_conn).await
         }
     }
 
     log::debug!(
-        "Running Proteus server protocol to forward data between {} and {}",
-        net_addr,
-        conf.forward_addr
+        "Running Proteus server protocol to forward data between {net_addr} and {target_addr}",
     );
 
-    let mut tunnel = TurboServer::new(TcpConnector::default());
-    if let Some(addr) = tunnel.replace_target(conf.forward_addr) {
-        bail!("Expected an empty forwarding address, found {addr}")
-    }
-    let net_conn = Connection::from(net_stream);
+    // In PT mode, we pin the already configured forward addr for all app connections.
+    let app_connector = TcpConnector::from(target_addr);
 
-    // Run a new server session over the tunnel.
-    match tunnel.run_session(net_conn, server_spec).await {
-        Ok(_) => log::debug!("Stream from peer {} succeeded Proteus protocol", net_addr),
-        Err(e) => log::debug!(
-            "Stream from peer {} failed during Proteus protocol: {}",
-            net_addr,
-            e
-        ),
+    match app_connector.connect().await {
+        Ok((app_conn, local_addr)) => {
+            log::debug!("Connection to {target_addr} succeeded (bound to {local_addr})");
+
+            let net_conn = Connection::from(net_stream);
+            let (net_src, net_dst) = net_conn.into_split();
+            let (app_src, app_dst) = TurboSession::new_connected_server(app_conn);
+
+            // Run a new server session over the tunnel.
+            match Interpreter::run_split(net_src, net_dst, app_src, app_dst, server_spec).await {
+                Ok(_) => {
+                    log::debug!("Stream from peer {net_addr} succeeded forwarding to {target_addr}",)
+                }
+                Err(e) => log::debug!(
+                    "Stream from peer {net_addr} failed forwarding to {target_addr}: {e}",
+                ),
+            }
+        }
+        Err(e) => {
+            log::debug!("Connection to {target_addr} failed: {e}");
+        }
     }
 
     Ok(())

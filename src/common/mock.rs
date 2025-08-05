@@ -71,7 +71,7 @@ pub async fn run_proxy_network<T, F, Fut>(
 ) -> self::Result
 where
     T: TaskProvider + Send,
-    F: Fn(T, MockConnection, MockConnection) -> Fut,
+    F: Fn(T, MockConnection, MockConnection, bool) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     // We set up a mock network that represents the following:
@@ -82,8 +82,8 @@ where
 
     let (c_app_res, c_proxy_res, s_proxy_res, s_app_res) = tokio::join!(
         run_application(c_app_to_proxy, payload_len),
-        run_proxy(client_spec, c_proxy_to_proxy, c_proxy_to_app),
-        run_proxy(server_spec, s_proxy_to_proxy, s_proxy_to_app),
+        run_proxy(client_spec, c_proxy_to_proxy, c_proxy_to_app, true),
+        run_proxy(server_spec, s_proxy_to_proxy, s_proxy_to_app, false),
         run_application(s_app_to_proxy, payload_len),
     );
 
@@ -99,6 +99,7 @@ async fn run_interpreter<T: TaskProvider + Clone + Send>(
     protospec: T,
     net_conn: MockConnection,
     app_conn: MockConnection,
+    _: bool,
 ) -> anyhow::Result<()> {
     Interpreter::run(net_conn, app_conn, protospec).await
 }
@@ -137,6 +138,7 @@ pub mod tests {
         _: T,
         net_conn: MockConnection,
         app_conn: MockConnection,
+        _: bool,
     ) -> anyhow::Result<()> {
         let (net_r, net_w) = net_conn.into_split();
         let (app_r, app_w) = app_conn.into_split();

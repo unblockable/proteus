@@ -1,117 +1,149 @@
-use std::marker::PhantomData;
-use std::net::SocketAddr;
+use rand::RngCore;
+use rand::rngs::ThreadRng;
+use tokio::sync::mpsc;
 
-use anyhow::bail;
-
-use crate::lang::interpreter::Interpreter;
-use crate::lang::ir::bridge::TaskProvider;
-use crate::net::proto::turbo::session::Session;
-use crate::net::{Connection, Connector, Reader, Writer};
+use crate::net::proto::turbo::session::{SharedTurboState, TurboReader, TurboWriter};
+use crate::net::{Connection, Reader, Writer};
 
 mod formatter;
 mod frames;
-pub mod session;
+mod session;
 
-#[derive(Clone)]
-pub struct TurboClient<R, W, C>
-where
-    R: Reader + Send,
-    W: Writer + Send,
-    C: Connector<R, W>,
-{
-    connector: C,
-    _phantom_r: PhantomData<R>,
-    _phantom_w: PhantomData<W>,
-}
-
-impl<R, W, C> TurboClient<R, W, C>
-where
-    R: Reader + Send,
-    W: Writer + Send,
-    C: Connector<R, W>,
-{
-    pub fn new(connector: C) -> Self {
-        Self {
-            connector,
-            _phantom_r: PhantomData,
-            _phantom_w: PhantomData,
+fn generate_session_id() -> u64 {
+    loop {
+        let id = ThreadRng::default().next_u64();
+        if id > 0 {
+            return id;
         }
     }
+}
 
-    pub async fn run_session<T>(
-        self,
+pub struct TurboSession {}
+
+impl TurboSession {
+    fn new_split<R: Reader + Send, W: Writer + Send>(
         app_conn: Connection<R, W>,
-        protospec: T,
-    ) -> anyhow::Result<()>
-    where
-        T: TaskProvider + Clone + Send,
-    {
-        let (net_conn, local_addr) = self.connector.connect().await?;
-        log::debug!("Connected to tunnel server {}", local_addr);
+        id: Option<u64>,
+    ) -> (TurboReader<R>, TurboWriter<W>) {
+        let (app_src, app_dst) = app_conn.into_split();
+        let state = SharedTurboState::new(id);
+        let (sender, receiver) = mpsc::unbounded_channel();
 
-        let (net_src, net_dst) = net_conn.into_split();
-        let (app_src, app_dst) = Session::new(app_conn).into_split();
+        let reader = TurboReader::new(app_src, state.clone(), receiver);
+        let writer = TurboWriter::new(app_dst, state, sender);
 
-        Interpreter::run_split(net_src, net_dst, app_src, app_dst, protospec).await
-    }
-}
-
-#[derive(Clone)]
-pub struct TurboServer<R, W, C>
-where
-    R: Reader + Send,
-    W: Writer + Send,
-    C: Connector<R, W>,
-{
-    connector: C,
-    target: Option<SocketAddr>,
-    _phantom_r: PhantomData<R>,
-    _phantom_w: PhantomData<W>,
-}
-
-impl<R, W, C> TurboServer<R, W, C>
-where
-    R: Reader + Send,
-    W: Writer + Send,
-    C: Connector<R, W>,
-{
-    pub fn new(connector: C) -> Self {
-        Self {
-            connector,
-            target: None,
-            _phantom_r: PhantomData,
-            _phantom_w: PhantomData,
-        }
+        (reader, writer)
     }
 
-    pub fn replace_target(&mut self, target: SocketAddr) -> Option<SocketAddr> {
-        self.target.replace(target)
+    /// A client session is a singular connection to an application, after the preliminary
+    /// handshake protocol (e.g., SOCKS) is completed. The app connection should be
+    /// in a state where it expects us to forward raw data to a target network peer.
+    pub fn new_connected_client<R: Reader + Send, W: Writer + Send>(
+        app_conn: Connection<R, W>,
+    ) -> (TurboReader<R>, TurboWriter<W>) {
+        let id = generate_session_id();
+        TurboSession::new_split(app_conn, Some(id))
     }
 
-    pub async fn run_session<T>(
-        mut self,
-        net_conn: Connection<R, W>,
-        protospec: T,
-    ) -> anyhow::Result<()>
-    where
-        T: TaskProvider + Clone + Send,
-    {
-        let Some(target_addr) = self.target else {
-            bail!("No target address specified")
-        };
-        self.connector = self.connector.into_self(target_addr);
-
-        let (app_conn, local_addr) = self.connector.connect().await?;
-        log::debug!("Connected to target server {}", local_addr);
-
-        let (net_src, net_dst) = net_conn.into_split();
-        let (app_src, app_dst) = Session::new(app_conn).into_split();
-
-        Interpreter::run_split(net_src, net_dst, app_src, app_dst, protospec).await
+    pub fn new_connected_server<R: Reader + Send, W: Writer + Send>(
+        app_conn: Connection<R, W>,
+    ) -> (TurboReader<R>, TurboWriter<W>) {
+        TurboSession::new_split(app_conn, None)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    // TODO
+    use std::ops::Range;
+
+    use anyhow::bail;
+    use async_trait::async_trait;
+    use bytes::{Bytes, BytesMut};
+    use tokio::io::{AsyncReadExt, DuplexStream};
+
+    use crate::common::mock::tests::NullSpec;
+    use crate::common::mock::{self, MockConnection};
+    use crate::lang::ir::bridge::TaskProvider;
+    use crate::net::proto::turbo::TurboSession;
+    use crate::net::{Deserializer, Reader, Writer};
+
+    #[async_trait]
+    impl Reader for DuplexStream {
+        async fn read_bytes(&mut self, _len: Range<usize>) -> anyhow::Result<Bytes> {
+            let mut buf = BytesMut::new();
+            self.read_buf(&mut buf).await?;
+            Ok(buf.freeze())
+        }
+
+        async fn read_frame<F, D>(&mut self, _deserializer: &mut D) -> anyhow::Result<F>
+        where
+            D: Deserializer<F> + Send,
+        {
+            unimplemented!()
+        }
+    }
+
+    async fn forward_app_to_net(mut src: impl Reader, mut dst: impl Writer) -> anyhow::Result<u64> {
+        loop {
+            // This will propagate EOF for us.
+            let mut buf = src.read_bytes(1..usize::MAX).await?;
+            dst.write_bytes(&mut buf).await?;
+        }
+    }
+
+    async fn forward_net_to_app(mut src: impl Reader, mut dst: impl Writer) -> anyhow::Result<u64> {
+        let mut total = 0;
+        loop {
+            let buf = src.read_bytes(1..usize::MAX).await?;
+
+            if buf.len() > 0 {
+                // Successfully read some bytes.
+                total += buf.len();
+                dst.write_bytes(&buf).await?;
+            } else if buf.len() == 0 {
+                // Read EOF, let's return to propagate it.
+                return Ok(total as u64);
+            } else {
+                // Some other IO error.
+                bail!("IO Error")
+            }
+        }
+    }
+
+    async fn run_session_copier<T: TaskProvider + Send>(
+        _: T,
+        net_conn: MockConnection,
+        app_conn: MockConnection,
+        is_client: bool,
+    ) -> anyhow::Result<()> {
+        // Unwrap the Connection and BufReader.
+        let (net_r, net_w) = net_conn.into_split();
+        let net_r = net_r.into_inner();
+
+        // Make a session from the app connection.
+        let (app_r, app_w) = if is_client {
+            TurboSession::new_connected_client(app_conn)
+        } else {
+            TurboSession::new_connected_server(app_conn)
+        };
+
+        // We need to move the streams into `forward()` so that the DuplexStreams close
+        // when the tokio::io::copy function receives EOF and returns. Otherwise the EOF
+        // does not properly propagate backward.
+        let (_, _) = tokio::join!(
+            forward_app_to_net(app_r, net_w),
+            forward_net_to_app(net_r, app_w)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session() {
+        for len in mock::tests::payload_len_iter() {
+            let result =
+                mock::run_proxy_network(NullSpec {}, NullSpec {}, &run_session_copier, len).await;
+            mock::tests::assert_mock_result(result, len)
+        }
+    }
 }

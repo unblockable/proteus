@@ -11,8 +11,6 @@ pub enum ShutWhich {
     Read(DataCursor),
     /// Shutdown writes, data after the given read cursor will be dropped.
     Write(DataCursor),
-    /// Shutdown reads and writes, as in `Self::Read` and `Self::Write`.
-    ReadWrite((DataCursor, DataCursor)),
     /// An invalid value found during deserialization.
     Invalid,
 }
@@ -21,11 +19,11 @@ pub enum ShutWhich {
 pub enum Status {
     ConnectOk,
     ConnectError,
-    ResumeOk,
+    ResumeOk(DataCursor),
     ResumeError,
-    ForwardOk,
+    ForwardOk(DataCursor),
     ForwardError,
-    ShutdownOk,
+    ShutdownOk(DataCursor),
     ShutdownError,
     /// An invalid value found during deserialization.
     Invalid,
@@ -204,7 +202,6 @@ impl Serialize<ShutWhich> for ShutWhich {
         let code = match self {
             ShutWhich::Read(_) => 0,
             ShutWhich::Write(_) => 1,
-            ShutWhich::ReadWrite(_) => 2,
             ShutWhich::Invalid => u8::MAX,
         };
         buf.put_u8(code);
@@ -212,10 +209,6 @@ impl Serialize<ShutWhich> for ShutWhich {
         match self {
             ShutWhich::Read(wr_cursor) => buf.put_slice(&wr_cursor.serialize()),
             ShutWhich::Write(rd_cursor) => buf.put_slice(&rd_cursor.serialize()),
-            ShutWhich::ReadWrite((wr_cursor, rd_cursor)) => {
-                buf.put_slice(&wr_cursor.serialize());
-                buf.put_slice(&rd_cursor.serialize());
-            }
             ShutWhich::Invalid => {}
         };
 
@@ -230,9 +223,6 @@ impl Deserialize<ShutWhich> for ShutWhich {
         let which = match code {
             0 => ShutWhich::Read(DataCursor::deserialize(src)?),
             1 => ShutWhich::Write(DataCursor::deserialize(src)?),
-            2 => {
-                ShutWhich::ReadWrite((DataCursor::deserialize(src)?, DataCursor::deserialize(src)?))
-            }
             _ => ShutWhich::Invalid,
         };
 
@@ -247,16 +237,28 @@ impl Serialize<Status> for Status {
         let code = match self {
             Status::ConnectOk => 0,
             Status::ConnectError => 1,
-            Status::ResumeOk => 2,
+            Status::ResumeOk(_) => 2,
             Status::ResumeError => 3,
-            Status::ForwardOk => 4,
+            Status::ForwardOk(_) => 4,
             Status::ForwardError => 5,
-            Status::ShutdownOk => 6,
+            Status::ShutdownOk(_) => 6,
             Status::ShutdownError => 7,
             Status::Invalid => u8::MAX,
         };
-
         buf.put_u8(code);
+
+        match self {
+            Status::ConnectOk => {}
+            Status::ConnectError => {}
+            Status::ResumeOk(wr_cursor) => buf.put_slice(&wr_cursor.serialize()),
+            Status::ResumeError => {}
+            Status::ForwardOk(rd_cursor) => buf.put_slice(&rd_cursor.serialize()),
+            Status::ForwardError => {}
+            Status::ShutdownOk(rd_cursor) => buf.put_slice(&rd_cursor.serialize()),
+            Status::ShutdownError => {}
+            Status::Invalid => {}
+        };
+
         buf.freeze()
     }
 }
@@ -268,11 +270,11 @@ impl Deserialize<Status> for Status {
         let status = match code {
             0 => Status::ConnectOk,
             1 => Status::ConnectError,
-            2 => Status::ResumeOk,
+            2 => Status::ResumeOk(DataCursor::deserialize(src)?),
             3 => Status::ResumeError,
-            4 => Status::ForwardOk,
+            4 => Status::ForwardOk(DataCursor::deserialize(src)?),
             5 => Status::ForwardError,
-            6 => Status::ShutdownOk,
+            6 => Status::ShutdownOk(DataCursor::deserialize(src)?),
             7 => Status::ShutdownError,
             _ => Status::Invalid,
         };
@@ -338,7 +340,6 @@ mod tests {
         for which in [
             ShutWhich::Read(123456),
             ShutWhich::Write(654321),
-            ShutWhich::ReadWrite((123456, 654321)),
             ShutWhich::Invalid,
         ] {
             let msg = Message {
@@ -354,11 +355,11 @@ mod tests {
         for status in [
             Status::ConnectOk,
             Status::ConnectError,
-            Status::ResumeOk,
+            Status::ResumeOk(123),
             Status::ResumeError,
-            Status::ForwardOk,
+            Status::ForwardOk(123),
             Status::ForwardError,
-            Status::ShutdownOk,
+            Status::ShutdownOk(123),
             Status::ShutdownError,
             Status::Invalid,
         ] {
