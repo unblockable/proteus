@@ -21,7 +21,11 @@ fn run_test([psf_filepath]: [&Path; 1]) {
     assert!(
         super::run_shadow(
             &run_dir,
-            ["--parallelism=4", "--use-cpu-pinning=false", "shadow.yaml"]
+            [
+                "--parallelism=4",
+                "--use-cpu-pinning=false",
+                "shadow.yaml"
+            ]
         )
         .success()
     );
