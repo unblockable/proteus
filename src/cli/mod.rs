@@ -31,7 +31,8 @@ pub async fn run() -> anyhow::Result<()> {
 
 fn setup_logging(args: &CliArgs) {
     // Set up logger.
-    let mut logger = Builder::new();
+    let mut logger: Builder = Builder::new();
+    logger.format_timestamp_micros();
 
     if let Some(filters) = &args.log_filter {
         // Configure with the RUST_LOG directives string from the cli arg.
