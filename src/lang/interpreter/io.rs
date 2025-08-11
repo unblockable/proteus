@@ -40,20 +40,20 @@ impl<R: Reader, W: Writer> IoStream<R, W> {
         self.dst.flush().await
     }
 
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        self.dst.shutdown().await
+    }
+
     pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
         log::trace!("Trying to receive {len:?} bytes from src",);
 
         let data = match self.src.read_bytes(len).await {
             Ok(data) => data,
-            Err(e) => bail!(e),
-            // If we return an error on EOF, will the entire connection
-            // close even if we could still possibly send?
-            // Do we need to just go to sleep forever upon EOF, and let
-            // an error on the other direction close us down?
-            // Err(net_err) => match net_err {
-            //     net::Error::Eof => break,
-            //     _ => return Err(proteus::Error::from(net_err)),
-            // },
+            Err(e) => {
+                // Our byte src is done, so we won't be writing to the dst either.
+                let _ = self.shutdown().await;
+                bail!(e)
+            }
         };
 
         let n_bytes = data.len();

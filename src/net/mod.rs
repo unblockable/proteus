@@ -77,6 +77,7 @@ pub trait Writer {
         S: Serializer<F> + Send,
         F: Send;
     async fn flush(&mut self) -> anyhow::Result<()>;
+    async fn shutdown(&mut self) -> anyhow::Result<()>;
 }
 
 pub struct BufReader<R: AsyncRead + Send + Unpin> {
@@ -162,6 +163,10 @@ impl<W: AsyncWrite + Send + Unpin> Writer for W {
 
     async fn flush(&mut self) -> anyhow::Result<()> {
         Ok(AsyncWriteExt::flush(&mut self).await?)
+    }
+
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        Ok(AsyncWriteExt::shutdown(&mut self).await?)
     }
 }
 
