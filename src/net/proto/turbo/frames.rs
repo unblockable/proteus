@@ -11,6 +11,10 @@ pub type DataCursor = u64;
 #[derive(Debug, PartialEq)]
 pub struct Message {
     pub session_id: u64,
+    /// Similar to TCP sequence number.
+    pub write: DataCursor,
+    /// Similar to TCP acknowledgment number.
+    pub read: DataCursor,
     pub command: Command,
 }
 
@@ -18,12 +22,12 @@ pub struct Message {
 pub enum Command {
     Connect(Target),
     ConnectOk,
-    Resume(DataCursor),
-    ResumeOk(DataCursor),
-    Forward(Payload),
-    ForwardOk(DataCursor),
-    Shut(DataCursor),
-    ShutOk(DataCursor),
+    Resume,
+    ResumeOk,
+    Forward(Bytes),
+    ForwardOk,
+    Shut,
+    ShutOk,
     /// An invalid value found during deserialization.
     Invalid,
 }
@@ -38,10 +42,6 @@ pub struct Target {
 
 #[derive(PartialEq)]
 pub struct Payload {
-    /// The byte location to write this data in the stream. Similar to TCP sequence number.
-    pub write: DataCursor,
-    /// The byte location we have read in the stream. Similar to TCP acknowledgment number.
-    pub read: DataCursor,
     /// The application data payload bytes.
     pub data: Bytes,
 }
@@ -51,6 +51,8 @@ impl Serialize<Message> for Message {
         let mut buf = BytesMut::new();
 
         buf.put_u64(self.session_id);
+        buf.put_slice(&self.write.serialize());
+        buf.put_slice(&self.read.serialize());
         buf.put_slice(&self.command.serialize());
 
         buf.freeze()
@@ -60,9 +62,13 @@ impl Serialize<Message> for Message {
 impl Deserialize<Message> for Message {
     fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<Message> {
         let session_id = (src.remaining() >= 8).then(|| src.get_u64())?;
+        let write = DataCursor::deserialize(src)?;
+        let read = DataCursor::deserialize(src)?;
         let command = Command::deserialize(src)?;
         Some(Message {
             session_id,
+            write,
+            read,
             command,
         })
     }
@@ -75,26 +81,20 @@ impl Serialize<Command> for Command {
         let command_type = match self {
             Command::Connect(_) => 0,
             Command::ConnectOk => 1,
-            Command::Resume(_) => 2,
-            Command::ResumeOk(_) => 3,
+            Command::Resume => 2,
+            Command::ResumeOk => 3,
             Command::Forward(_) => 4,
-            Command::ForwardOk(_) => 5,
-            Command::Shut(_) => 6,
-            Command::ShutOk(_) => 7,
+            Command::ForwardOk => 5,
+            Command::Shut => 6,
+            Command::ShutOk => 7,
             Command::Invalid => u8::MAX,
         };
         buf.put_u8(command_type);
 
         let bytes = match self {
             Command::Connect(target) => target.serialize(),
-            Command::ConnectOk => Bytes::new(),
-            Command::Resume(sequence) => sequence.serialize(),
-            Command::ResumeOk(cursor) => cursor.serialize(),
             Command::Forward(payload) => payload.serialize(),
-            Command::ForwardOk(cursor) => cursor.serialize(),
-            Command::Shut(cursor) => cursor.serialize(),
-            Command::ShutOk(cursor) => cursor.serialize(),
-            Command::Invalid => Bytes::new(),
+            _ => Bytes::new(),
         };
 
         buf.put_slice(&bytes);
@@ -109,12 +109,12 @@ impl Deserialize<Command> for Command {
         let command = match command_type {
             0 => Command::Connect(Target::deserialize(src)?),
             1 => Command::ConnectOk,
-            2 => Command::Resume(DataCursor::deserialize(src)?),
-            3 => Command::ResumeOk(DataCursor::deserialize(src)?),
-            4 => Command::Forward(Payload::deserialize(src)?),
-            5 => Command::ForwardOk(DataCursor::deserialize(src)?),
-            6 => Command::Shut(DataCursor::deserialize(src)?),
-            7 => Command::ShutOk(DataCursor::deserialize(src)?),
+            2 => Command::Resume,
+            3 => Command::ResumeOk,
+            4 => Command::Forward(Bytes::deserialize(src)?),
+            5 => Command::ForwardOk,
+            6 => Command::Shut,
+            7 => Command::ShutOk,
             _ => Command::Invalid,
         };
 
@@ -157,42 +157,23 @@ impl Deserialize<DataCursor> for DataCursor {
     }
 }
 
-impl Serialize<Payload> for Payload {
+impl Serialize<Bytes> for Bytes {
     fn serialize(&self) -> Bytes {
         let mut buf = BytesMut::new();
 
-        buf.put_slice(&self.write.serialize());
-        buf.put_slice(&self.read.serialize());
-
-        assert!(self.data.len() <= u16::MAX as usize);
-        buf.put_u16(self.data.len() as u16);
-        buf.put_slice(&self.data);
+        assert!(self.len() <= u16::MAX as usize);
+        buf.put_u16(self.len() as u16);
+        buf.put_slice(&self);
 
         buf.freeze()
     }
 }
 
-impl Deserialize<Payload> for Payload {
-    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<Payload> {
-        let write = DataCursor::deserialize(src)?;
-        let read = DataCursor::deserialize(src)?;
-
-        let data_len = (src.remaining() >= 2).then(|| src.get_u16() as usize)?;
-        let data = (src.remaining() >= data_len).then(|| src.copy_to_bytes(data_len))?;
-
-        Some(Payload { write, read, data })
-    }
-}
-
-impl Debug for Payload {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "Payload {{write: {}, read: {}, data: [len={}] }}",
-            self.write,
-            self.read,
-            self.data.len()
-        )
+impl Deserialize<Bytes> for Bytes {
+    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<Bytes> {
+        let len = (src.remaining() >= 2).then(|| src.get_u16() as usize)?;
+        let payload = (src.remaining() >= len).then(|| src.copy_to_bytes(len))?;
+        Some(payload)
     }
 }
 
@@ -220,6 +201,8 @@ mod tests {
         for addr in addresses {
             let msg = Message {
                 session_id: 123456789,
+                write: 123,
+                read: 321,
                 command: Command::Connect(Target { addr, port: 12345 }),
             };
             assert_serialize_deserialize(msg);
@@ -230,6 +213,8 @@ mod tests {
     fn connect_ok() {
         let msg = Message {
             session_id: 123456789,
+            write: 123,
+            read: 321,
             command: Command::ConnectOk,
         };
         assert_serialize_deserialize(msg);
@@ -239,7 +224,9 @@ mod tests {
     fn resume() {
         let msg = Message {
             session_id: 123456789,
-            command: Command::Resume(987654321),
+            write: 123,
+            read: 321,
+            command: Command::Resume,
         };
         assert_serialize_deserialize(msg);
     }
@@ -248,7 +235,9 @@ mod tests {
     fn resume_ok() {
         let msg = Message {
             session_id: 123456789,
-            command: Command::ResumeOk(12345),
+            write: 123,
+            read: 321,
+            command: Command::ResumeOk,
         };
         assert_serialize_deserialize(msg);
     }
@@ -257,11 +246,9 @@ mod tests {
     fn forward() {
         let msg = Message {
             session_id: 123456789,
-            command: Command::Forward(Payload {
-                write: 12345,
-                read: 54321,
-                data: Bytes::from("This is the payload."),
-            }),
+            write: 123,
+            read: 321,
+            command: Command::Forward(Bytes::from("This is the payload.")),
         };
         assert_serialize_deserialize(msg);
     }
@@ -270,7 +257,9 @@ mod tests {
     fn forward_ok() {
         let msg = Message {
             session_id: 123456789,
-            command: Command::ForwardOk(12345),
+            write: 123,
+            read: 321,
+            command: Command::ForwardOk,
         };
         assert_serialize_deserialize(msg);
     }
@@ -279,7 +268,9 @@ mod tests {
     fn shut() {
         let msg = Message {
             session_id: 123456789,
-            command: Command::Shut(12345),
+            write: 123,
+            read: 321,
+            command: Command::Shut,
         };
         assert_serialize_deserialize(msg);
     }
@@ -288,7 +279,9 @@ mod tests {
     fn shut_ok() {
         let msg = Message {
             session_id: 123456789,
-            command: Command::ShutOk(12345),
+            write: 123,
+            read: 321,
+            command: Command::ShutOk,
         };
         assert_serialize_deserialize(msg);
     }
@@ -297,6 +290,8 @@ mod tests {
     fn invalid() {
         let msg = Message {
             session_id: 123456789,
+            write: 123,
+            read: 321,
             command: Command::Invalid,
         };
         assert_serialize_deserialize(msg);

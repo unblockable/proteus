@@ -141,11 +141,9 @@ impl SharedTurboState {
         self.inner.lock().unwrap().read
     }
 
-    fn increment_read(&self, value: DataCursor) -> (DataCursor, DataCursor) {
+    fn increment_read(&self) {
         let mut state = self.inner.lock().unwrap();
-        let old = state.read;
-        state.read += value;
-        (old, state.read)
+        state.read += 1;
     }
 
     fn set_read_end(&self, end: DataCursor) {
@@ -157,32 +155,9 @@ impl SharedTurboState {
         state.read_end.map(|end| state.read >= end).unwrap_or(false)
     }
 
-    fn set_ack_max(&self, write_ack: DataCursor) -> (DataCursor, DataCursor) {
+    fn set_ack_max(&self, write_ack: DataCursor) {
         let mut state = self.inner.lock().unwrap();
-        let old = state.write_ack;
         state.write_ack = state.write_ack.max(write_ack);
-        (old, state.write_ack)
-    }
-
-    fn set_ack_max_log(&self, write_ack: DataCursor) {
-        let (session_id, read, write, ack, ack_old) = {
-            let mut state = self.inner.lock().unwrap();
-            let ack_old = state.write_ack;
-            state.write_ack = state.write_ack.max(write_ack);
-            (
-                state.id.unwrap(),
-                state.read,
-                state.write,
-                state.write_ack,
-                ack_old,
-            )
-        };
-
-        let len = ack.saturating_sub(ack_old);
-        log::debug!(
-            "Session {session_id} acked {len} bytes; read {read} write {write} ack {}",
-            format_status(ack_old, ack),
-        );
     }
 
     fn is_ack_complete(&self) -> bool {
@@ -194,26 +169,32 @@ impl SharedTurboState {
     }
 
     fn build_resume_message(&self) -> Message {
-        let (session_id, read) = {
-            let state = self.inner.lock().unwrap();
-            (state.id.unwrap(), state.read)
+        let (session_id, write, read) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
         };
 
         Message {
             session_id,
-            command: Command::Resume(read),
+            write,
+            read,
+            command: Command::Resume,
         }
     }
 
     fn build_resume_ok_message(&self) -> Message {
-        let (session_id, read) = {
-            let state = self.inner.lock().unwrap();
-            (state.id.unwrap(), state.read)
+        let (session_id, write, read) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
         };
 
         Message {
             session_id,
-            command: Command::ResumeOk(read),
+            write,
+            read,
+            command: Command::ResumeOk,
         }
     }
 
@@ -222,62 +203,73 @@ impl SharedTurboState {
 
         let (session_id, read, write, ack) = {
             let mut state = self.inner.lock().unwrap();
-            state.write += len;
-            (state.id.unwrap(), state.read, state.write, state.write_ack)
+            state.write += 1;
+            (
+                state.id.unwrap(),
+                state.read,
+                state.write - 1,
+                state.write_ack,
+            )
         };
 
         log::debug!(
-            "Session {session_id} sending {len} bytes; read {read} write {} ack {ack}",
-            format_status(write.checked_sub(len).unwrap(), write),
+            "Session {session_id} sending {len} bytes; read {read} write {write} ack {ack}",
         );
 
         Message {
             session_id,
-            command: Command::Forward(Payload {
-                write: write.checked_sub(len).unwrap(),
-                read,
-                data,
-            }),
+            write,
+            read,
+            command: Command::Forward(data),
         }
     }
 
     fn build_forward_ok_message(&self) -> Message {
-        let (session_id, read) = {
-            let state = self.inner.lock().unwrap();
-            (state.id.unwrap(), state.read)
+        let (session_id, write, read) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
         };
 
         Message {
             session_id,
-            command: Command::ForwardOk(read),
+            write,
+            read,
+            command: Command::ForwardOk,
         }
     }
 
     fn build_shut_message(&self) -> Message {
-        let (session_id, write_end) = {
+        let (session_id, write, read) = {
             let mut state = self.inner.lock().unwrap();
             if state.write_end.is_none() {
                 state.write_end = Some(state.write);
             }
-            (state.id.unwrap(), state.write_end.unwrap())
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
         };
 
         Message {
             session_id,
-            command: Command::Shut(write_end),
+            write,
+            read,
+            command: Command::Shut,
         }
     }
 
     fn build_shut_ok_message(&self) -> Message {
         assert!(self.is_read_complete());
-        let (session_id, read) = {
-            let state = self.inner.lock().unwrap();
-            (state.id.unwrap(), state.read)
+        let (session_id, write, read) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
         };
 
         Message {
             session_id,
-            command: Command::ShutOk(read),
+            write,
+            read,
+            command: Command::ShutOk,
         }
     }
 }
@@ -522,7 +514,7 @@ impl<W: Writer + Send> TurboWriter<W> {
 
         // First we establish our session id if we don't have one yet.
         if let ProtocolState::Start = self.state.protocol_state() {
-            if let Command::Resume(_) = message.command {
+            if matches!(message.command, Command::Resume) {
                 self.state.notify_id(message.session_id)
             }
         }
@@ -533,77 +525,92 @@ impl<W: Writer + Send> TurboWriter<W> {
             return None;
         }
 
+        if message.write != self.state.read() {
+            // Could be a dup or a gap: TODO is this where we need to initiate a resume?
+            warn!("Dup or gap detected");
+            return None;
+        }
+
+        self.state.increment_read();
+        self.state.set_ack_max(message.read);
+
         // Conditional processing.
         match self.state.protocol_state() {
             ProtocolState::Start => match message.command {
-                Command::Resume(cursor) => {
-                    self.process_resume(cursor, ProtocolState::LocalOpenRemoteOpen)
+                Command::Resume => {
+                    self.process_resume(message.read, ProtocolState::LocalOpenRemoteOpen)
                 }
                 _ => self.drop_message(message),
             },
             ProtocolState::Resuming => match message.command {
-                Command::ResumeOk(cursor) => {
-                    self.process_resume_ok(cursor, ProtocolState::LocalOpenRemoteOpen);
+                Command::ResumeOk => {
+                    self.process_resume_ok(message.read, ProtocolState::LocalOpenRemoteOpen);
                 }
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalOpenRemoteOpen => match message.command {
-                Command::Forward(payload) => return self.process_payload(payload, false),
-                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
-                Command::Shut(cursor) => self.process_shut(
-                    cursor,
+                Command::Forward(payload) => return Some(payload),
+                Command::Shut => self.process_shut(
+                    message.write,
                     ProtocolState::LocalOpenRemoteShut,
                     ProtocolState::LocalOpenRemoteShutting,
                 ),
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalShuttingRemoteOpen => match message.command {
-                Command::Forward(payload) => return self.process_payload(payload, true),
-                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
-                Command::Shut(cursor) => self.process_shut(
-                    cursor,
+                Command::Forward(payload) => {
+                    self.send_ack();
+                    return Some(payload);
+                }
+                Command::Shut => self.process_shut(
+                    message.write,
                     ProtocolState::LocalShuttingRemoteShut,
                     ProtocolState::LocalShuttingRemoteShutting,
                 ),
-                Command::ShutOk(cursor) => {
-                    self.process_shut_ok(cursor, ProtocolState::LocalShutRemoteOpen)
+                Command::ShutOk => {
+                    self.process_shut_ok(message.read, ProtocolState::LocalShutRemoteOpen)
                 }
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalShutRemoteOpen => match message.command {
-                Command::Forward(payload) => return self.process_payload(payload, true),
-                Command::Shut(cursor) => self.process_shut(
-                    cursor,
+                Command::Forward(payload) => {
+                    self.send_ack();
+                    return Some(payload);
+                }
+                Command::Shut => self.process_shut(
+                    message.write,
                     ProtocolState::LocalShutRemoteShut,
                     ProtocolState::LocalShutRemoteShutting,
                 ),
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalOpenRemoteShutting => match message.command {
-                Command::Forward(payload) => return self.process_payload(payload, false),
-                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                Command::Forward(payload) => return Some(payload),
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalOpenRemoteShut => match message.command {
-                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalShuttingRemoteShutting => match message.command {
-                Command::Forward(payload) => return self.process_payload(payload, true),
-                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
-                Command::ShutOk(cursor) => {
-                    self.process_shut_ok(cursor, ProtocolState::LocalShutRemoteShutting)
+                Command::Forward(payload) => {
+                    self.send_ack();
+                    return Some(payload);
+                }
+                Command::ShutOk => {
+                    self.process_shut_ok(message.read, ProtocolState::LocalShutRemoteShutting)
                 }
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalShutRemoteShutting => match message.command {
-                Command::Forward(payload) => return self.process_payload(payload, true),
+                Command::Forward(payload) => {
+                    self.send_ack();
+                    return Some(payload);
+                }
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalShuttingRemoteShut => match message.command {
-                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
-                Command::ShutOk(cursor) => {
-                    self.process_shut_ok(cursor, ProtocolState::LocalShutRemoteShut)
+                Command::ShutOk => {
+                    self.process_shut_ok(message.read, ProtocolState::LocalShutRemoteShut)
                 }
                 _ => self.drop_message(message),
             },
@@ -625,32 +632,9 @@ impl<W: Writer + Send> TurboWriter<W> {
         self.state.set_protocol_state(resume);
     }
 
-    fn process_payload(&self, payload: Payload, send_ack: bool) -> Option<Bytes> {
-        if payload.write != self.state.read() {
-            // Could be a dup or a gap: TODO is this where we need to initiate a resume?
-            warn!("Dup or gap detected");
-            return None;
-        }
-
-        let len = payload.data.len() as u64;
-        let (read_old, read_new) = self.state.increment_read(len);
-        let (ack_old, ack_new) = self.state.set_ack_max(payload.read);
-        let write = self.state.write();
-
-        log::debug!(
-            "Session {} received {len} bytes; read {} write {} ack {}",
-            self.state.id(),
-            format_status(read_old, read_new),
-            format_status(write, write),
-            format_status(ack_old, ack_new),
-        );
-
-        if send_ack {
-            let message = self.state.build_forward_ok_message();
-            self.push_message(message);
-        }
-
-        Some(payload.data)
+    fn send_ack(&self) {
+        let message = self.state.build_forward_ok_message();
+        self.push_message(message);
     }
 
     fn process_shut(&self, cursor: DataCursor, shut: ProtocolState, shutting: ProtocolState) {
@@ -665,7 +649,6 @@ impl<W: Writer + Send> TurboWriter<W> {
     }
 
     fn process_shut_ok(&self, cursor: DataCursor, shut: ProtocolState) {
-        self.state.set_ack_max_log(cursor);
         if self.state.is_ack_complete() {
             self.state.set_protocol_state(shut);
         } else {
@@ -725,14 +708,6 @@ impl<W: Writer + Send> Writer for TurboWriter<W> {
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         log::trace!("shutdown() is called on TurboWriter");
         self.dst.shutdown().await
-    }
-}
-
-fn format_status(old: u64, new: u64) -> String {
-    if old == new {
-        format!("{new}")
-    } else {
-        format!("[{old}:{new})")
     }
 }
 
@@ -899,7 +874,7 @@ mod tests {
                 .map_err(|e| TurboTransferError::Put(e))?;
 
             if let Command::Forward(payload) = message.command {
-                remaining = remaining.saturating_sub(payload.data.len());
+                remaining = remaining.saturating_sub(payload.len());
             }
         }
 
@@ -979,16 +954,15 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn forward_bidirectional_reliable() {
+    async fn forward_bidirectional(reliability: u8) {
         for len in mock::tests::payload_len_iter() {
             let (mut client, mut server) = open_turbo_pair(len, len).await;
             client.shut_app().await.unwrap();
             server.shut_app().await.unwrap();
 
             let (_, _) = tokio::join!(
-                forward_until_error(&mut client.tr, &mut server.tw, 100),
-                forward_until_error(&mut server.tr, &mut client.tw, 100)
+                forward_until_error(&mut client.tr, &mut server.tw, reliability),
+                forward_until_error(&mut server.tr, &mut client.tw, reliability)
             );
 
             assert_eq!(client.state(), ProtocolState::LocalShutRemoteShut);
@@ -996,6 +970,11 @@ mod tests {
             client.assert_delivered_payload(&server.payload).await;
             server.assert_delivered_payload(&client.payload).await;
         }
+    }
+
+    #[tokio::test]
+    async fn forward_bidirectional_reliable() {
+        forward_bidirectional(100).await;
     }
 
     async fn shutdown_node_half(
