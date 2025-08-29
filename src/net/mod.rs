@@ -14,6 +14,8 @@ use crate::net;
 
 pub mod proto;
 
+const READ_CAPACITY: usize = 2usize.pow(14u32); // 16 KiB
+
 #[derive(std::fmt::Debug)]
 pub enum Error {
     Eof,
@@ -83,8 +85,7 @@ pub struct BufReader<R: AsyncRead + Send + Unpin> {
 
 impl<R: AsyncRead + Send + Unpin> BufReader<R> {
     pub fn new(source: R) -> Self {
-        let cap = 2usize.pow(14u32); // 16 KiB
-        BufReader::with_capacity(source, cap)
+        BufReader::with_capacity(source, READ_CAPACITY)
     }
 
     fn with_capacity(source: R, capacity: usize) -> Self {

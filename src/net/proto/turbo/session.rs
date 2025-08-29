@@ -5,18 +5,37 @@ use std::sync::{Arc, Mutex};
 use anyhow::bail;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use log::warn;
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::time::Duration;
 
 use crate::net::proto::turbo::formatter::Formatter;
-use crate::net::proto::turbo::frames::{Command, DataCursor, Message, Payload, ShutWhich, Status};
-use crate::net::{Deserializer, Reader, Serialize, Serializer, Writer};
+use crate::net::proto::turbo::frames::{Command, DataCursor, Message, Payload};
+use crate::net::{Deserializer, READ_CAPACITY, Reader, Serialize, Serializer, Writer};
+
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
+enum ProtocolState {
+    #[default]
+    Start,
+    Resuming,
+    LocalOpenRemoteOpen,
+    LocalShuttingRemoteOpen,
+    LocalShutRemoteOpen,
+    LocalOpenRemoteShutting,
+    LocalOpenRemoteShut,
+    LocalShuttingRemoteShutting,
+    LocalShutRemoteShutting,
+    LocalShuttingRemoteShut,
+    LocalShutRemoteShut,
+}
 
 /// The state needed to implement our turbo session protocol that needs to be
 /// shared across the session reader and writer forwarding directions.
 #[derive(Default)]
 struct TurboState {
     id: Option<u64>,
+    proto_state: ProtocolState,
     /// The cursor of written and acknowledged data. Data before this cursor was
     /// written and acked, data at and after this cursor was not yet acked.
     write_ack: DataCursor,
@@ -34,6 +53,7 @@ struct TurboState {
 pub struct SharedTurboState {
     inner: Arc<Mutex<TurboState>>,
     id_notify: Option<Arc<Notify>>,
+    state_notify: Arc<Notify>,
 }
 
 impl SharedTurboState {
@@ -44,6 +64,7 @@ impl SharedTurboState {
         Self {
             inner: Arc::new(Mutex::new(state)),
             id_notify: id.map_or_else(|| Some(Arc::new(Notify::new())), |_| None),
+            state_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -71,7 +92,7 @@ impl SharedTurboState {
         self.inner.lock().unwrap().id.unwrap()
     }
 
-    fn set_id(&mut self, value: u64) {
+    fn set_id(&self, value: u64) {
         self.inner.lock().unwrap().id = Some(value);
     }
 
@@ -83,44 +104,36 @@ impl SharedTurboState {
             .map_or(false, |id| id == other)
     }
 
-    fn write_ack(&self) -> DataCursor {
-        self.inner.lock().unwrap().write_ack
+    fn protocol_state(&self) -> ProtocolState {
+        self.inner.lock().unwrap().proto_state
     }
 
-    fn set_write_ack_max(&mut self, value: DataCursor) -> (DataCursor, DataCursor) {
-        let mut state = self.inner.lock().unwrap();
-        let old = state.write_ack;
-        state.write_ack = state.write_ack.max(value);
-        (old, state.write_ack)
+    fn set_protocol_state(&self, proto_state: ProtocolState) {
+        log::debug!("Setting protocol state to {proto_state:?}");
+        {
+            self.inner.lock().unwrap().proto_state = proto_state;
+        }
+        self.notify_protocol_state();
+    }
+
+    async fn wait_protocol_state(&self) {
+        self.state_notify.notified().await
+    }
+
+    fn notify_protocol_state(&self) {
+        self.state_notify.notify_one();
     }
 
     fn write(&self) -> DataCursor {
         self.inner.lock().unwrap().write
     }
 
-    fn write_end(&self) -> bool {
-        self.inner.lock().unwrap().write_end.is_some()
-    }
-
-    fn set_write_end(&mut self) {
+    fn set_write_unacked(&self, value: DataCursor) {
         let mut state = self.inner.lock().unwrap();
-        state.write_end = Some(state.write);
-    }
-
-    fn increment_write(&mut self, value: DataCursor) -> (DataCursor, DataCursor) {
-        let mut state = self.inner.lock().unwrap();
-        let old = state.write;
-        state.write += value;
-        (old, state.write)
-    }
-
-    fn set_write_if_unacked(&mut self, value: DataCursor) -> bool {
-        let mut inner = self.inner.lock().unwrap();
-        if value >= inner.write_ack && value <= inner.write {
-            inner.write = value;
-            true
-        } else {
-            false
+        if value < state.write_ack {
+            state.write = state.write_ack;
+        } else if value < state.write {
+            state.write = value;
         }
     }
 
@@ -128,28 +141,144 @@ impl SharedTurboState {
         self.inner.lock().unwrap().read
     }
 
-    fn increment_read(&mut self, value: DataCursor) -> (DataCursor, DataCursor) {
+    fn increment_read(&self, value: DataCursor) -> (DataCursor, DataCursor) {
         let mut state = self.inner.lock().unwrap();
         let old = state.read;
         state.read += value;
         (old, state.read)
     }
 
-    fn set_read_end(&mut self, end: DataCursor) {
+    fn set_read_end(&self, end: DataCursor) {
         self.inner.lock().unwrap().read_end = Some(end);
     }
 
-    fn read_complete(&self) -> bool {
+    fn is_read_complete(&self) -> bool {
         let state = self.inner.lock().unwrap();
         state.read_end.map(|end| state.read >= end).unwrap_or(false)
     }
 
-    fn write_complete(&self) -> bool {
+    fn set_ack_max(&self, write_ack: DataCursor) -> (DataCursor, DataCursor) {
+        let mut state = self.inner.lock().unwrap();
+        let old = state.write_ack;
+        state.write_ack = state.write_ack.max(write_ack);
+        (old, state.write_ack)
+    }
+
+    fn set_ack_max_log(&self, write_ack: DataCursor) {
+        let (session_id, read, write, ack, ack_old) = {
+            let mut state = self.inner.lock().unwrap();
+            let ack_old = state.write_ack;
+            state.write_ack = state.write_ack.max(write_ack);
+            (
+                state.id.unwrap(),
+                state.read,
+                state.write,
+                state.write_ack,
+                ack_old,
+            )
+        };
+
+        let len = ack.saturating_sub(ack_old);
+        log::debug!(
+            "Session {session_id} acked {len} bytes; read {read} write {write} ack {}",
+            format_status(ack_old, ack),
+        );
+    }
+
+    fn is_ack_complete(&self) -> bool {
         let state = self.inner.lock().unwrap();
         state
             .write_end
             .map(|end| state.write_ack >= end)
             .unwrap_or(false)
+    }
+
+    fn build_resume_message(&self) -> Message {
+        let (session_id, read) = {
+            let state = self.inner.lock().unwrap();
+            (state.id.unwrap(), state.read)
+        };
+
+        Message {
+            session_id,
+            command: Command::Resume(read),
+        }
+    }
+
+    fn build_resume_ok_message(&self) -> Message {
+        let (session_id, read) = {
+            let state = self.inner.lock().unwrap();
+            (state.id.unwrap(), state.read)
+        };
+
+        Message {
+            session_id,
+            command: Command::ResumeOk(read),
+        }
+    }
+
+    fn build_forward_message(&self, data: Bytes) -> Message {
+        let len = data.len() as u64;
+
+        let (session_id, read, write, ack) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += len;
+            (state.id.unwrap(), state.read, state.write, state.write_ack)
+        };
+
+        log::debug!(
+            "Session {session_id} sending {len} bytes; read {read} write {} ack {ack}",
+            format_status(write.checked_sub(len).unwrap(), write),
+        );
+
+        Message {
+            session_id,
+            command: Command::Forward(Payload {
+                write: write.checked_sub(len).unwrap(),
+                read,
+                data,
+            }),
+        }
+    }
+
+    fn build_forward_ok_message(&self) -> Message {
+        let (session_id, read) = {
+            let state = self.inner.lock().unwrap();
+            (state.id.unwrap(), state.read)
+        };
+
+        Message {
+            session_id,
+            command: Command::ForwardOk(read),
+        }
+    }
+
+    fn build_shut_message(&self) -> Message {
+        let (session_id, write_end) = {
+            let mut state = self.inner.lock().unwrap();
+            if state.write_end.is_none() {
+                state.write_end = Some(state.write);
+            }
+            (state.id.unwrap(), state.write_end.unwrap())
+        };
+
+        Message {
+            session_id,
+            command: Command::Shut(write_end),
+        }
+    }
+
+    fn build_shut_ok_message(&self) -> Message {
+        assert!(self.is_read_complete());
+        let (session_id, read) = {
+            let state = self.inner.lock().unwrap();
+            (state.id.unwrap(), state.read)
+        };
+
+        Message {
+            session_id,
+            command: Command::ShutOk(read),
+        }
     }
 }
 
@@ -158,8 +287,17 @@ impl Clone for SharedTurboState {
         Self {
             inner: self.inner.clone(),
             id_notify: self.id_notify.clone(),
+            state_notify: self.state_notify.clone(),
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+enum NextMessageError {
+    ChannelClosed,
+    ProtocolStateChanged,
+    ProtocolShut,
+    Timeout,
 }
 
 /// A wrapper around the application data source, responsible for returning app
@@ -170,7 +308,6 @@ pub struct TurboReader<R: Reader + Send> {
     buffer: BytesMut,
     state: SharedTurboState,
     receiver: UnboundedReceiver<Message>,
-    read_error: Option<anyhow::Error>,
 }
 
 /// A wrapper around the application data sink, responsible for writing app
@@ -181,8 +318,7 @@ pub struct TurboWriter<W: Writer + Send> {
     dst: W,
     buffer: BytesMut,
     state: SharedTurboState,
-    // This is an option so that we can drop it to close the reader.
-    sender: Option<UnboundedSender<Message>>,
+    sender: UnboundedSender<Message>,
 }
 
 impl<R: Reader + Send> TurboReader<R> {
@@ -192,124 +328,360 @@ impl<R: Reader + Send> TurboReader<R> {
             buffer: BytesMut::new(),
             state,
             receiver,
-            read_error: None,
         };
         if reader.state.has_id() {
-            reader.buffer_message(reader.package_resume_message(reader.state.id()));
+            reader.put_message(reader.state.build_resume_message());
+            reader.state.set_protocol_state(ProtocolState::Resuming);
         }
         reader
     }
 
-    async fn serialize_messages(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
-        // We do not start making messages until we have set a session id.
-        //
-        // XXX: if the server is supposed to send first and also wants a payload
-        // for that first message, but gets here and is blocked on the session
-        // id, it will never get a chance to provide the required bytes.
-        let session_id = self.state.wait_id().await;
-
-        loop {
-            // Buffer control/retransmit messages queued by the writer.
-            if self.read_error.is_some() {
-                // Source reached EOF, but keep the session open until the writer is done.
-                log::trace!("Waiting for a message from the message channel asynchronously...");
-                if let Some(message) = self.receiver.recv().await {
-                    self.buffer_message(message);
-                } else {
-                    log::info!(
-                        "Session {session_id} TurboReader EOF after processing {} bytes",
-                        self.state.write()
-                    );
-                    bail!("TurboReader EOF: {}", self.read_error.as_ref().unwrap())
-                }
-            } else {
-                // Buffer available control/retransmit messages queued by the writer.
-                while let Ok(message) = self.receiver.try_recv() {
-                    self.buffer_message(message);
-                }
-            }
-
-            // If we have enough bytes in our buffer, return those.
-            if let Some(b) = self.ready_bytes(session_id, &len) {
-                return Ok(b);
-            }
-
-            // We need to supply more bytes, try to get some from our source.
-            if self.read_error.is_none() {
-                let message = self.read_source(session_id).await;
-                self.buffer_message(message);
-            }
-        }
+    fn put_message(&mut self, message: Message) {
+        self.buffer.put_slice(&message.serialize());
+        log::trace!("Buffered for sending: {message:?}");
     }
 
-    fn ready_bytes(&mut self, session_id: u64, len: &Range<usize>) -> Option<Bytes> {
-        if self.buffer.len() >= len.start {
-            let read_len = self.buffer.len().min(len.end);
-            log::debug!(
-                "Session {session_id} requested to read [{}:{}), returning {read_len}",
-                len.start,
-                len.end
-            );
-            Some(self.buffer.split_to(read_len).freeze())
+    fn get_bytes(&mut self, range: &Range<usize>) -> Option<Bytes> {
+        if self.buffer.len() >= range.start {
+            let len = self.buffer.len().min(range.end);
+            let bytes = self.buffer.split_to(len).freeze();
+            log::trace!("Removed {len} message bytes from read buffer");
+            Some(bytes)
         } else {
             None
         }
     }
 
-    async fn read_source(&mut self, session_id: u64) -> Message {
-        log::trace!("Reading application bytes asynchronously...");
-        match self.src.read_bytes(1..u16::MAX as usize).await {
-            Ok(app_bytes) => {
-                // Create a Forward message containing the app data and buffer it.
-                log::trace!("Packaging a new Forward message");
-                self.package_forward_message(session_id, app_bytes)
+    async fn serialize_messages(&mut self, range: Range<usize>) -> anyhow::Result<Bytes> {
+        // We do not start making messages until we have set a session id.
+        // XXX: This will deadlock if the server must send first and requires a non-zero payload.
+        let _ = self.state.wait_id().await;
+
+        loop {
+            while let Some(message) = self.try_next_message() {
+                self.put_message(message);
             }
-            Err(e) => {
-                // Error or EOF, we won't be reading any more app bytes.
-                log::debug!("TurboReader got error on src.read_bytes(): {e}");
-                self.read_error = Some(e);
-                self.state.set_write_end();
-                self.package_shutdown_message(session_id)
+
+            if let Some(bytes) = self.get_bytes(&range) {
+                return Ok(bytes);
+            }
+
+            match self.next_message().await {
+                Ok(message) => self.put_message(message),
+                Err(e) => {
+                    log::info!(
+                        "Session {} TurboReader returning {e:?} after processing {} bytes",
+                        self.state.id(),
+                        self.state.write()
+                    );
+                    bail!(e)
+                }
             }
         }
     }
 
-    fn buffer_message(&mut self, message: Message) {
-        let before = self.buffer.len();
-        self.buffer.put_slice(&message.serialize());
-        let n = self.buffer.len() - before;
-        log::trace!("Added {n} message bytes to read buffer");
-    }
-
-    fn package_resume_message(&self, session_id: u64) -> Message {
-        Message {
-            session_id,
-            command: Command::Resume(self.state.read()),
+    fn try_next_message(&mut self) -> Option<Message> {
+        // TODO: We could try_recv on our src too if it was AsyncRead.
+        match self.state.protocol_state() {
+            ProtocolState::LocalShutRemoteShut => {
+                if self.receiver.is_empty() {
+                    None
+                } else {
+                    self.receiver.try_recv().ok()
+                }
+            }
+            _ => self.receiver.try_recv().ok(),
         }
     }
 
-    fn package_forward_message(&mut self, session_id: u64, data: Bytes) -> Message {
-        let len = data.len() as u64;
-        let (write, write_new) = self.state.increment_write(len);
-        let read = self.state.read();
+    async fn next_message(&mut self) -> anyhow::Result<Message> {
+        // Loop to handle the case where the protocol state is changed by the
+        // TurboWriter while we are in an async/await block.
+        loop {
+            let result = match self.state.protocol_state() {
+                ProtocolState::Start => self.next_message_channel().await,
+                ProtocolState::Resuming => self.next_message_channel().await,
+                ProtocolState::LocalOpenRemoteOpen => self.next_message_any().await,
+                ProtocolState::LocalShuttingRemoteOpen => self.next_message_channel().await,
+                ProtocolState::LocalShutRemoteOpen => self.next_message_channel().await,
+                ProtocolState::LocalOpenRemoteShutting => self.next_message_any().await,
+                ProtocolState::LocalOpenRemoteShut => self.next_message_any().await,
+                ProtocolState::LocalShuttingRemoteShutting => self.next_message_channel().await,
+                ProtocolState::LocalShutRemoteShutting => self.next_message_channel().await,
+                ProtocolState::LocalShuttingRemoteShut => self.next_message_channel().await,
+                ProtocolState::LocalShutRemoteShut => {
+                    if self.receiver.is_empty() {
+                        Err(NextMessageError::ProtocolShut)
+                    } else {
+                        self.next_message_channel().await
+                    }
+                }
+            };
+
+            match result {
+                Ok(message) => return Ok(message),
+                Err(e) => match e {
+                    NextMessageError::ProtocolStateChanged => continue,
+                    NextMessageError::Timeout => continue,
+                    _ => bail!("{e:?}"),
+                },
+            }
+        }
+    }
+
+    async fn next_message_channel(&mut self) -> Result<Message, NextMessageError> {
+        tokio::select! {
+            _ = self.state.wait_protocol_state() => Err(NextMessageError::ProtocolStateChanged),
+            _ = tokio::time::sleep(Duration::from_secs(1)) => Err(NextMessageError::Timeout),
+            message_maybe = self.receiver.recv() => message_maybe.ok_or(NextMessageError::ChannelClosed),
+        }
+    }
+
+    async fn next_message_any(&mut self) -> Result<Message, NextMessageError> {
+        tokio::select! {
+            _ = self.state.wait_protocol_state() => Err(NextMessageError::ProtocolStateChanged),
+            _ = tokio::time::sleep(Duration::from_secs(1)) => Err(NextMessageError::Timeout),
+            message_maybe = self.receiver.recv() => message_maybe.ok_or(NextMessageError::ChannelClosed),
+            result = self.src.read_bytes(1..READ_CAPACITY*2) => {
+                match result {
+                    Ok(payload) => {
+                        // Create a Forward message containing the app payload.
+                        log::trace!("Packaging a new Forward message");
+                        Ok(self.state.build_forward_message(payload))
+                    }
+                    Err(e) => {
+                        // Error/EOF, reading from the app is now shut.
+                        log::debug!("TurboReader: error reading src: {e}");
+                        match self.state.protocol_state() {
+                            ProtocolState::LocalOpenRemoteOpen => {
+                                self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteOpen)
+                            },
+                            ProtocolState::LocalOpenRemoteShutting => {
+                                self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShutting)
+                            },
+                            ProtocolState::LocalOpenRemoteShut => {
+                                self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShut)
+                            },
+                            _ => assert!(false)
+                        };
+                        Ok(self.state.build_shut_message())
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<W: Writer + Send> TurboWriter<W> {
+    pub fn new(dst: W, state: SharedTurboState, sender: UnboundedSender<Message>) -> Self {
+        Self {
+            dst,
+            buffer: BytesMut::new(),
+            state,
+            sender,
+        }
+    }
+
+    fn push_message(&self, message: Message) {
+        // If the channel receiver closed, we don't want to send any more control messages.
+        let _ = self.sender.send(message);
+        // self.sender.send(message).unwrap()
+    }
+
+    async fn deserialize_messages(&mut self, bytes: &Bytes) -> anyhow::Result<usize> {
+        // Append the incoming bytes to our write buffer.
+        self.buffer.put_slice(bytes);
+
+        // Process all complete turbo messages from our buffer.
+        loop {
+            let mut read_cursor = Cursor::new(&self.buffer);
+            let Some(message) = Formatter::default().deserialize_frame(&mut read_cursor) else {
+                break;
+            };
+
+            // We got a full message, mark that we consumed the bytes from our buffer.
+            self.buffer.advance(read_cursor.position() as usize);
+
+            // Process the message and if we have payload, write it to the destination app.
+            if let Some(payload) = self.process_message(message) {
+                if let Err(e) = self.dst.write_bytes(&payload).await {
+                    // TODO: We need to handle IO error on the write side. Do we
+                    // need a new Close command and protocol state to track that
+                    // the app disappeared and we cant write to it?
+                    warn!("Error writing payload to application: {e}")
+                };
+            }
+        }
+
+        // We always report that we have processed all of the bytes given to us.
+        return Ok(bytes.len());
+    }
+
+    fn process_message(&mut self, message: Message) -> Option<Bytes> {
+        log::trace!("Processing message {message:?}");
+
+        // First we establish our session id if we don't have one yet.
+        if let ProtocolState::Start = self.state.protocol_state() {
+            if let Command::Resume(_) = message.command {
+                self.state.notify_id(message.session_id)
+            }
+        }
+
+        // Drop if the message was intended for a different session.
+        if !self.state.id_equal(message.session_id) {
+            self.drop_message(message);
+            return None;
+        }
+
+        // Conditional processing.
+        match self.state.protocol_state() {
+            ProtocolState::Start => match message.command {
+                Command::Resume(cursor) => {
+                    self.process_resume(cursor, ProtocolState::LocalOpenRemoteOpen)
+                }
+                _ => self.drop_message(message),
+            },
+            ProtocolState::Resuming => match message.command {
+                Command::ResumeOk(cursor) => {
+                    self.process_resume_ok(cursor, ProtocolState::LocalOpenRemoteOpen);
+                }
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalOpenRemoteOpen => match message.command {
+                Command::Forward(payload) => return self.process_payload(payload, false),
+                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                Command::Shut(cursor) => self.process_shut(
+                    cursor,
+                    ProtocolState::LocalOpenRemoteShut,
+                    ProtocolState::LocalOpenRemoteShutting,
+                ),
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalShuttingRemoteOpen => match message.command {
+                Command::Forward(payload) => return self.process_payload(payload, true),
+                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                Command::Shut(cursor) => self.process_shut(
+                    cursor,
+                    ProtocolState::LocalShuttingRemoteShut,
+                    ProtocolState::LocalShuttingRemoteShutting,
+                ),
+                Command::ShutOk(cursor) => {
+                    self.process_shut_ok(cursor, ProtocolState::LocalShutRemoteOpen)
+                }
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalShutRemoteOpen => match message.command {
+                Command::Forward(payload) => return self.process_payload(payload, true),
+                Command::Shut(cursor) => self.process_shut(
+                    cursor,
+                    ProtocolState::LocalShutRemoteShut,
+                    ProtocolState::LocalShutRemoteShutting,
+                ),
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalOpenRemoteShutting => match message.command {
+                Command::Forward(payload) => return self.process_payload(payload, false),
+                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalOpenRemoteShut => match message.command {
+                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalShuttingRemoteShutting => match message.command {
+                Command::Forward(payload) => return self.process_payload(payload, true),
+                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                Command::ShutOk(cursor) => {
+                    self.process_shut_ok(cursor, ProtocolState::LocalShutRemoteShutting)
+                }
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalShutRemoteShutting => match message.command {
+                Command::Forward(payload) => return self.process_payload(payload, true),
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalShuttingRemoteShut => match message.command {
+                Command::ForwardOk(cursor) => self.state.set_ack_max_log(cursor),
+                Command::ShutOk(cursor) => {
+                    self.process_shut_ok(cursor, ProtocolState::LocalShutRemoteShut)
+                }
+                _ => self.drop_message(message),
+            },
+            ProtocolState::LocalShutRemoteShut => self.drop_message(message),
+        };
+
+        None
+    }
+
+    fn process_resume(&self, cursor: DataCursor, resume: ProtocolState) {
+        self.state.set_write_unacked(cursor);
+        let message = self.state.build_resume_ok_message();
+        self.push_message(message);
+        self.state.set_protocol_state(resume);
+    }
+
+    fn process_resume_ok(&self, cursor: DataCursor, resume: ProtocolState) {
+        self.state.set_write_unacked(cursor);
+        self.state.set_protocol_state(resume);
+    }
+
+    fn process_payload(&self, payload: Payload, send_ack: bool) -> Option<Bytes> {
+        if payload.write != self.state.read() {
+            // Could be a dup or a gap: TODO is this where we need to initiate a resume?
+            warn!("Dup or gap detected");
+            return None;
+        }
+
+        let len = payload.data.len() as u64;
+        let (read_old, read_new) = self.state.increment_read(len);
+        let (ack_old, ack_new) = self.state.set_ack_max(payload.read);
+        let write = self.state.write();
 
         log::debug!(
-            "Session {session_id} sending {len} bytes; read {read} write {} ack {}",
-            format_status(write, write_new),
-            self.state.write_ack(),
+            "Session {} received {len} bytes; read {} write {} ack {}",
+            self.state.id(),
+            format_status(read_old, read_new),
+            format_status(write, write),
+            format_status(ack_old, ack_new),
         );
 
-        Message {
-            session_id,
-            command: Command::Forward(Payload { write, read, data }),
+        if send_ack {
+            let message = self.state.build_forward_ok_message();
+            self.push_message(message);
+        }
+
+        Some(payload.data)
+    }
+
+    fn process_shut(&self, cursor: DataCursor, shut: ProtocolState, shutting: ProtocolState) {
+        self.state.set_read_end(cursor);
+        if self.state.is_read_complete() {
+            let message = self.state.build_shut_ok_message();
+            self.push_message(message);
+            self.state.set_protocol_state(shut);
+        } else {
+            self.state.set_protocol_state(shutting);
         }
     }
 
-    fn package_shutdown_message(&self, session_id: u64) -> Message {
-        Message {
-            session_id,
-            command: Command::Shutdown(ShutWhich::Write(self.state.write())),
+    fn process_shut_ok(&self, cursor: DataCursor, shut: ProtocolState) {
+        self.state.set_ack_max_log(cursor);
+        if self.state.is_ack_complete() {
+            self.state.set_protocol_state(shut);
+        } else {
+            log::warn!(
+                "Got ShutOk({cursor}) but our write cursor is {}.",
+                self.state.write()
+            );
         }
+    }
+
+    fn drop_message(&self, message: Message) {
+        log::trace!(
+            "Session {} dropping message {message:?} from protocol state {:?}",
+            self.state.id(),
+            self.state.protocol_state()
+        );
     }
 }
 
@@ -326,165 +698,6 @@ impl<R: Reader + Send> Reader for TurboReader<R> {
     {
         log::trace!("read_frame() is called on TurboReader");
         unimplemented!()
-    }
-}
-
-impl<W: Writer + Send> TurboWriter<W> {
-    pub fn new(dst: W, state: SharedTurboState, sender: UnboundedSender<Message>) -> Self {
-        Self {
-            dst,
-            buffer: BytesMut::new(),
-            state,
-            sender: Some(sender),
-        }
-    }
-
-    fn push_message(&self, message: Message) {
-        if let Some(sender) = self.sender.as_ref() {
-            if self.state.read_complete() && self.state.write_complete() {
-                // Best effort as the receiver may have closed.
-                let _ = sender.send(message);
-            } else {
-                // Receiver should not have closed yet.
-                sender.send(message).unwrap()
-            }
-        }
-    }
-
-    fn push_status_message(&self, session_id: u64, status: Status) {
-        let message = Message {
-            session_id,
-            command: Command::Notify(status),
-        };
-        self.push_message(message);
-    }
-
-    fn push_shutdown_message(&self, session_id: u64) {
-        let message = Message {
-            session_id,
-            command: Command::Shutdown(ShutWhich::Read(self.state.read())),
-        };
-        self.push_message(message);
-    }
-
-    async fn deserialize_messages(&mut self, bytes: &Bytes) -> anyhow::Result<usize> {
-        // Append the incoming bytes to our write buffer.
-        self.buffer.put_slice(bytes);
-
-        // Process all complete turbo messages from our buffer.
-        loop {
-            let mut src = Cursor::new(&self.buffer);
-            if let Some(msg) = Formatter::default().deserialize_frame(&mut src) {
-                // Mark the bytes as consumed.
-                let num_consumed = src.position() as usize;
-                self.buffer.advance(num_consumed);
-                self.process_message(msg).await?;
-            } else {
-                break;
-            }
-        }
-
-        // We always report that we have processed all of the bytes.
-        Ok(bytes.len())
-    }
-
-    async fn process_message(&mut self, msg: Message) -> anyhow::Result<()> {
-        let session_id = msg.session_id;
-
-        let command_str = match &msg.command {
-            Command::Connect(_) => "Connect",
-            Command::Resume(_) => "Resume",
-            Command::Forward(_) => "Forward",
-            Command::Shutdown(_) => "Shutdown",
-            Command::Notify(_) => "Notify",
-            Command::Invalid => "Invalid",
-        };
-        log::trace!("Session {session_id} processing a {command_str} message");
-
-        if self.state.read_complete() && self.state.write_complete() {
-            bail!("TurboWriter EOF")
-        }
-
-        // Take the necessary action depending on the message type.
-        match msg.command {
-            Command::Resume(write) => {
-                self.state.notify_id(session_id);
-
-                if !self.state.id_equal(session_id) || !self.state.set_write_if_unacked(write) {
-                    self.push_status_message(session_id, Status::ResumeError);
-                    bail!("Got error in a Resume command")
-                }
-
-                self.push_status_message(session_id, Status::ResumeOk(self.state.write()));
-            }
-            Command::Forward(payload) => {
-                if !self.state.id_equal(session_id) || payload.write != self.state.read() {
-                    self.push_status_message(session_id, Status::ForwardError);
-                    bail!("Got error in a Forward command")
-                }
-
-                let len = payload.data.len() as u64;
-
-                log::trace!("Writing {len} application bytes asynchronously...");
-                self.dst.write_bytes(&payload.data).await?;
-
-                let (read_old, read_new) = self.state.increment_read(len);
-                let (ack_old, ack_new) = self.state.set_write_ack_max(payload.read);
-                let write = self.state.write();
-
-                log::debug!(
-                    "Session {session_id} received {len} bytes; read {} write {} ack {}",
-                    format_status(read_old, read_new),
-                    format_status(write, write),
-                    format_status(ack_old, ack_new),
-                );
-
-                // Send an ACK that we read some data, but only if we are done
-                // sending Forward message which would already contain an ack.
-                if self.state.write_end() {
-                    self.push_status_message(session_id, Status::ForwardOk(read_new));
-                }
-            }
-            Command::Shutdown(which) => match which {
-                ShutWhich::Read(ack) => self.process_ack(session_id, ack),
-                ShutWhich::Write(end) => {
-                    self.state.set_read_end(end);
-                    self.push_status_message(session_id, Status::ShutdownOk(self.state.read()))
-                }
-                ShutWhich::Invalid => self.push_status_message(session_id, Status::ShutdownError),
-            },
-            Command::Notify(status) => match status {
-                Status::ForwardOk(ack) => self.process_ack(session_id, ack),
-                Status::ShutdownOk(ack) => self.process_ack(session_id, ack),
-                _ => {}
-            },
-            _ => todo!(),
-        }
-
-        if self.state.read_complete() && self.state.write_complete() {
-            self.push_shutdown_message(session_id);
-            log::info!(
-                "Session {session_id} TurboWriter EOF after processing {} bytes",
-                self.state.read()
-            );
-            // Drop the sender to close the message channel.
-            let _ = self.sender.take();
-            self.sender = None;
-            bail!("TurboWriter EOF")
-        } else {
-            Ok(())
-        }
-    }
-
-    fn process_ack(&mut self, session_id: u64, ack: u64) {
-        let (ack_old, ack_new) = self.state.set_write_ack_max(ack);
-        let len = ack_new.saturating_sub(ack_old);
-        log::debug!(
-            "Session {session_id} acked {len} bytes; read {} write {} ack {}",
-            self.state.read(),
-            self.state.write(),
-            format_status(ack_old, ack_new),
-        );
     }
 }
 
@@ -524,4 +737,420 @@ fn format_status(old: u64, new: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::io::Cursor;
+
+    use bytes::{Buf, BufMut, Bytes, BytesMut};
+    use rand::Rng;
+    use tokio::io::{AsyncWriteExt, DuplexStream};
+
+    use crate::common::mock;
+    use crate::net::proto::turbo::TurboSession;
+    use crate::net::proto::turbo::formatter::Formatter;
+    use crate::net::proto::turbo::frames::{Command, Message};
+    use crate::net::proto::turbo::session::{ProtocolState, TurboReader, TurboWriter};
+    use crate::net::{BufReader, Connection, Deserializer, Reader, Serialize, Writer};
+
+    struct TurboNode {
+        payload: Bytes,
+        app: Connection<BufReader<DuplexStream>, DuplexStream>,
+        tr: TurboReader<BufReader<DuplexStream>>,
+        tw: TurboWriter<DuplexStream>,
+    }
+
+    #[derive(Debug)]
+    enum TurboTransferError {
+        #[allow(dead_code)]
+        Get(TurboGetError),
+        Put(TurboPutError),
+    }
+
+    #[derive(Debug)]
+    enum TurboGetError {
+        EndOfFile,
+        IncompleteMessage,
+    }
+
+    #[derive(Debug)]
+    enum TurboPutError {
+        WriteFailed,
+    }
+
+    #[derive(Debug)]
+    enum TurboShutError {
+        Failed,
+    }
+
+    impl TurboNode {
+        async fn new(payload_len: usize, is_client: bool) -> TurboNode {
+            let (mut app, proxy) = mock::connection_pair(usize::MAX);
+
+            // Load the app with payload that can be read from the proxy.
+            let payload = mock::payload(payload_len);
+            app.dst.write_all(&payload).await.unwrap();
+
+            // When this proxy reads, the above payload is returned.
+            let (tr, tw) = if is_client {
+                TurboSession::new_connected_client(proxy)
+            } else {
+                TurboSession::new_connected_server(proxy)
+            };
+
+            TurboNode {
+                payload,
+                app,
+                tr,
+                tw,
+            }
+        }
+
+        async fn shut_app(&mut self) -> Result<(), TurboShutError> {
+            Writer::shutdown(&mut self.app.dst)
+                .await
+                .map_err(|_| TurboShutError::Failed)
+        }
+
+        async fn get(&mut self) -> Result<Message, TurboGetError> {
+            let bytes = self
+                .tr
+                .read_bytes(1..usize::MAX)
+                .await
+                .map_err(|_| TurboGetError::EndOfFile)?;
+            deserialize(&bytes).ok_or(TurboGetError::IncompleteMessage)
+        }
+
+        async fn put(&mut self, message: &Message) -> Result<usize, TurboPutError> {
+            let bytes = serialize(message);
+            self.tw
+                .write_bytes(&bytes)
+                .await
+                .map_err(|_| TurboPutError::WriteFailed)
+        }
+
+        fn state(&self) -> ProtocolState {
+            self.tr.state.protocol_state()
+        }
+
+        async fn assert_delivered_payload(&mut self, expected: &Bytes) {
+            let mut delivered = BytesMut::with_capacity(expected.len());
+
+            while delivered.len() < expected.len() {
+                let chunk = self.app.src.read_bytes(1..usize::MAX).await.unwrap();
+                delivered.put(chunk);
+            }
+
+            assert_eq!(expected.len(), delivered.len());
+            assert_eq!(&expected[..], &delivered[..]);
+        }
+    }
+
+    async fn open_turbo_pair(client_len: usize, server_len: usize) -> (TurboNode, TurboNode) {
+        let mut client = TurboNode::new(client_len, true).await;
+        let mut server = TurboNode::new(server_len, false).await;
+
+        // Perform the 1 round handshake to get into the open state.
+        transfer_message(&mut client, &mut server).await.unwrap();
+        transfer_message(&mut server, &mut client).await.unwrap();
+
+        (client, server)
+    }
+
+    fn deserialize(bytes: &Bytes) -> Option<Message> {
+        let mut buf = BytesMut::from(bytes.clone());
+        let mut cursor = Cursor::new(&buf);
+
+        if let Some(message) = Formatter::default().deserialize_frame(&mut cursor) {
+            buf.advance(cursor.position() as usize);
+            // We might need to deserialize multiple messages at once.
+            assert!(buf.is_empty());
+            Some(message)
+        } else {
+            None
+        }
+    }
+
+    fn serialize(message: &Message) -> Bytes {
+        Message::serialize(message)
+    }
+
+    async fn transfer_message(
+        src: &mut TurboNode,
+        dst: &mut TurboNode,
+    ) -> Result<usize, TurboTransferError> {
+        let message = src.get().await.map_err(|e| TurboTransferError::Get(e))?;
+        dst.put(&message)
+            .await
+            .map_err(|e| TurboTransferError::Put(e))
+    }
+
+    async fn transfer_payload(
+        src: &mut TurboNode,
+        dst: &mut TurboNode,
+    ) -> Result<usize, TurboTransferError> {
+        let mut total = 0;
+        let mut remaining = src.payload.len();
+
+        while remaining > 0 {
+            let message = src.get().await.map_err(|e| TurboTransferError::Get(e))?;
+
+            total += dst
+                .put(&message)
+                .await
+                .map_err(|e| TurboTransferError::Put(e))?;
+
+            if let Command::Forward(payload) = message.command {
+                remaining = remaining.saturating_sub(payload.data.len());
+            }
+        }
+
+        Ok(total)
+    }
+
+    #[tokio::test]
+    async fn check() {
+        for role in [true, false] {
+            let _ = TurboNode::new(0, role).await;
+            for len in mock::tests::payload_len_iter() {
+                let _ = TurboNode::new(len, role).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn open_with_resume() {
+        for (c_len, s_len) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            let (client, server) = open_turbo_pair(c_len, s_len).await;
+
+            assert_eq!(client.state(), ProtocolState::LocalOpenRemoteOpen);
+            assert_eq!(client.state(), client.tw.state.protocol_state());
+            assert_eq!(server.state(), ProtocolState::LocalOpenRemoteOpen);
+            assert_eq!(server.state(), server.tw.state.protocol_state());
+        }
+    }
+
+    #[tokio::test]
+    async fn forward_client() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, 0).await;
+            transfer_payload(&mut client, &mut server).await.unwrap();
+            server.assert_delivered_payload(&client.payload).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn forward_server() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(0, len).await;
+            transfer_payload(&mut server, &mut client).await.unwrap();
+            client.assert_delivered_payload(&server.payload).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn forward_client_and_server() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, len).await;
+            transfer_payload(&mut client, &mut server).await.unwrap();
+            transfer_payload(&mut server, &mut client).await.unwrap();
+            server.assert_delivered_payload(&client.payload).await;
+            client.assert_delivered_payload(&server.payload).await;
+        }
+    }
+
+    async fn forward_until_error(
+        src: &mut TurboReader<BufReader<DuplexStream>>,
+        dst: &mut TurboWriter<DuplexStream>,
+        reliability: u8,
+    ) -> Result<(), TurboTransferError> {
+        let mut rng = rand::thread_rng();
+        loop {
+            let bytes = src
+                .read_bytes(1..usize::MAX)
+                .await
+                .map_err(|_| TurboTransferError::Get(TurboGetError::EndOfFile))?;
+            if rng.gen_range(0..100) < reliability {
+                dst.write_bytes(&bytes)
+                    .await
+                    .map_err(|_| TurboTransferError::Put(TurboPutError::WriteFailed))?;
+            } else {
+                let message = deserialize(&bytes);
+                log::warn!("DROPPING: {message:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn forward_bidirectional_reliable() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, len).await;
+            client.shut_app().await.unwrap();
+            server.shut_app().await.unwrap();
+
+            let (_, _) = tokio::join!(
+                forward_until_error(&mut client.tr, &mut server.tw, 100),
+                forward_until_error(&mut server.tr, &mut client.tw, 100)
+            );
+
+            assert_eq!(client.state(), ProtocolState::LocalShutRemoteShut);
+            assert_eq!(server.state(), ProtocolState::LocalShutRemoteShut);
+            client.assert_delivered_payload(&server.payload).await;
+            server.assert_delivered_payload(&client.payload).await;
+        }
+    }
+
+    async fn shutdown_node_half(
+        node1: &mut TurboNode,
+        node2: &mut TurboNode,
+        is_payload_first: bool,
+    ) {
+        if is_payload_first {
+            transfer_payload(node1, node2).await.unwrap();
+            node1.shut_app().await.unwrap();
+        } else {
+            node1.shut_app().await.unwrap();
+            transfer_payload(node1, node2).await.unwrap();
+        }
+
+        // This should cause EOF to propagate from app to turbo layer.
+        transfer_message(node1, node2).await.unwrap();
+
+        assert_eq!(node1.state(), ProtocolState::LocalShuttingRemoteOpen);
+        assert_eq!(node2.state(), ProtocolState::LocalOpenRemoteShut);
+    }
+
+    #[tokio::test]
+    async fn shutdown_client_after_payload() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, 0).await;
+            shutdown_node_half(&mut client, &mut server, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_client_before_payload() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, 0).await;
+            shutdown_node_half(&mut client, &mut server, false).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_server_after_payload() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(0, len).await;
+            shutdown_node_half(&mut server, &mut client, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_server_before_payload() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(0, len).await;
+            shutdown_node_half(&mut server, &mut client, false).await;
+        }
+    }
+
+    async fn shutdown_node_full(
+        node1: &mut TurboNode,
+        node2: &mut TurboNode,
+        is_payload_first: bool,
+    ) {
+        if is_payload_first {
+            transfer_payload(node1, node2).await.unwrap();
+            transfer_payload(node2, node1).await.unwrap();
+            node1.shut_app().await.unwrap();
+            node2.shut_app().await.unwrap();
+        } else {
+            node1.shut_app().await.unwrap();
+            node2.shut_app().await.unwrap();
+            transfer_payload(node1, node2).await.unwrap();
+            transfer_payload(node2, node1).await.unwrap();
+        }
+
+        assert_eq!(node1.state(), ProtocolState::LocalOpenRemoteOpen);
+        assert_eq!(node2.state(), ProtocolState::LocalOpenRemoteOpen);
+
+        // This should cause EOF to propagate from app to turbo layer.
+        transfer_message(node1, node2).await.unwrap();
+
+        assert_eq!(node1.state(), ProtocolState::LocalShuttingRemoteOpen);
+        assert_eq!(node2.state(), ProtocolState::LocalOpenRemoteShut);
+
+        transfer_message(node2, node1).await.unwrap();
+
+        assert_eq!(node1.state(), ProtocolState::LocalShutRemoteOpen);
+        assert_eq!(node2.state(), ProtocolState::LocalOpenRemoteShut);
+
+        transfer_message(node2, node1).await.unwrap();
+
+        assert_eq!(node1.state(), ProtocolState::LocalShutRemoteShut);
+        assert_eq!(node2.state(), ProtocolState::LocalShuttingRemoteShut);
+
+        transfer_message(node1, node2).await.unwrap();
+
+        assert_eq!(node1.state(), ProtocolState::LocalShutRemoteShut);
+        assert_eq!(node2.state(), ProtocolState::LocalShutRemoteShut);
+    }
+
+    #[tokio::test]
+    async fn shutdown_both_after_payload() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, len).await;
+            shutdown_node_full(&mut server, &mut client, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_both_before_payload() {
+        for len in mock::tests::payload_len_iter() {
+            let (mut client, mut server) = open_turbo_pair(len, len).await;
+            shutdown_node_full(&mut server, &mut client, false).await;
+        }
+    }
+
+    async fn get_message(node: &mut TurboNode) -> Message {
+        node.get()
+            .await
+            .map_err(|e| TurboTransferError::Get(e))
+            .unwrap()
+    }
+
+    async fn put_message(node: &mut TurboNode, message: &Message) {
+        node.put(&message)
+            .await
+            .map_err(|e| TurboTransferError::Put(e))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_simultaneous() {
+        let (mut client, mut server) = open_turbo_pair(0, 0).await;
+
+        client.shut_app().await.unwrap();
+        server.shut_app().await.unwrap();
+
+        let c_shut = get_message(&mut client).await;
+        assert_eq!(client.state(), ProtocolState::LocalShuttingRemoteOpen);
+
+        let s_shut = get_message(&mut server).await;
+        assert_eq!(server.state(), ProtocolState::LocalShuttingRemoteOpen);
+
+        put_message(&mut client, &s_shut).await;
+        assert_eq!(client.state(), ProtocolState::LocalShuttingRemoteShut);
+
+        put_message(&mut server, &c_shut).await;
+        assert_eq!(server.state(), ProtocolState::LocalShuttingRemoteShut);
+
+        let c_shut_ok = get_message(&mut client).await;
+        assert_eq!(client.state(), ProtocolState::LocalShuttingRemoteShut);
+
+        let s_shut_ok = get_message(&mut server).await;
+        assert_eq!(server.state(), ProtocolState::LocalShuttingRemoteShut);
+
+        put_message(&mut client, &s_shut_ok).await;
+        assert_eq!(client.state(), ProtocolState::LocalShutRemoteShut);
+
+        put_message(&mut server, &c_shut_ok).await;
+        assert_eq!(server.state(), ProtocolState::LocalShutRemoteShut);
+    }
+}

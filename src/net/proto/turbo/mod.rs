@@ -140,6 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn session() {
+        let _ = env_logger::try_init();
         for len in mock::tests::payload_len_iter() {
             let result =
                 mock::run_proxy_network(NullSpec {}, NullSpec {}, &run_session_copier, len).await;

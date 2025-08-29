@@ -1,33 +1,10 @@
+use std::fmt::Debug;
 use std::io::Cursor;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::net::proto::socks::address::Socks5Address;
 use crate::net::{Deserialize, Serialize};
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ShutWhich {
-    /// Shutdown reads after receiving all data up to the given write cursor.
-    Read(DataCursor),
-    /// Shutdown writes, data after the given read cursor will be dropped.
-    Write(DataCursor),
-    /// An invalid value found during deserialization.
-    Invalid,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Status {
-    ConnectOk,
-    ConnectError,
-    ResumeOk(DataCursor),
-    ResumeError,
-    ForwardOk(DataCursor),
-    ForwardError,
-    ShutdownOk(DataCursor),
-    ShutdownError,
-    /// An invalid value found during deserialization.
-    Invalid,
-}
 
 pub type DataCursor = u64;
 
@@ -40,10 +17,13 @@ pub struct Message {
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Connect(Target),
+    ConnectOk,
     Resume(DataCursor),
+    ResumeOk(DataCursor),
     Forward(Payload),
-    Shutdown(ShutWhich),
-    Notify(Status),
+    ForwardOk(DataCursor),
+    Shut(DataCursor),
+    ShutOk(DataCursor),
     /// An invalid value found during deserialization.
     Invalid,
 }
@@ -56,7 +36,7 @@ pub struct Target {
     pub port: u16,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct Payload {
     /// The byte location to write this data in the stream. Similar to TCP sequence number.
     pub write: DataCursor,
@@ -94,20 +74,26 @@ impl Serialize<Command> for Command {
 
         let command_type = match self {
             Command::Connect(_) => 0,
-            Command::Resume(_) => 1,
-            Command::Forward(_) => 2,
-            Command::Shutdown(_) => 3,
-            Command::Notify(_) => 4,
+            Command::ConnectOk => 1,
+            Command::Resume(_) => 2,
+            Command::ResumeOk(_) => 3,
+            Command::Forward(_) => 4,
+            Command::ForwardOk(_) => 5,
+            Command::Shut(_) => 6,
+            Command::ShutOk(_) => 7,
             Command::Invalid => u8::MAX,
         };
         buf.put_u8(command_type);
 
         let bytes = match self {
             Command::Connect(target) => target.serialize(),
+            Command::ConnectOk => Bytes::new(),
             Command::Resume(sequence) => sequence.serialize(),
+            Command::ResumeOk(cursor) => cursor.serialize(),
             Command::Forward(payload) => payload.serialize(),
-            Command::Shutdown(which) => which.serialize(),
-            Command::Notify(status) => status.serialize(),
+            Command::ForwardOk(cursor) => cursor.serialize(),
+            Command::Shut(cursor) => cursor.serialize(),
+            Command::ShutOk(cursor) => cursor.serialize(),
             Command::Invalid => Bytes::new(),
         };
 
@@ -122,10 +108,13 @@ impl Deserialize<Command> for Command {
 
         let command = match command_type {
             0 => Command::Connect(Target::deserialize(src)?),
-            1 => Command::Resume(DataCursor::deserialize(src)?),
-            2 => Command::Forward(Payload::deserialize(src)?),
-            3 => Command::Shutdown(ShutWhich::deserialize(src)?),
-            4 => Command::Notify(Status::deserialize(src)?),
+            1 => Command::ConnectOk,
+            2 => Command::Resume(DataCursor::deserialize(src)?),
+            3 => Command::ResumeOk(DataCursor::deserialize(src)?),
+            4 => Command::Forward(Payload::deserialize(src)?),
+            5 => Command::ForwardOk(DataCursor::deserialize(src)?),
+            6 => Command::Shut(DataCursor::deserialize(src)?),
+            7 => Command::ShutOk(DataCursor::deserialize(src)?),
             _ => Command::Invalid,
         };
 
@@ -195,91 +184,15 @@ impl Deserialize<Payload> for Payload {
     }
 }
 
-impl Serialize<ShutWhich> for ShutWhich {
-    fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-
-        let code = match self {
-            ShutWhich::Read(_) => 0,
-            ShutWhich::Write(_) => 1,
-            ShutWhich::Invalid => u8::MAX,
-        };
-        buf.put_u8(code);
-
-        match self {
-            ShutWhich::Read(wr_cursor) => buf.put_slice(&wr_cursor.serialize()),
-            ShutWhich::Write(rd_cursor) => buf.put_slice(&rd_cursor.serialize()),
-            ShutWhich::Invalid => {}
-        };
-
-        buf.freeze()
-    }
-}
-
-impl Deserialize<ShutWhich> for ShutWhich {
-    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<ShutWhich> {
-        let code = (src.remaining() >= 1).then(|| src.get_u8())?;
-
-        let which = match code {
-            0 => ShutWhich::Read(DataCursor::deserialize(src)?),
-            1 => ShutWhich::Write(DataCursor::deserialize(src)?),
-            _ => ShutWhich::Invalid,
-        };
-
-        Some(which)
-    }
-}
-
-impl Serialize<Status> for Status {
-    fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-
-        let code = match self {
-            Status::ConnectOk => 0,
-            Status::ConnectError => 1,
-            Status::ResumeOk(_) => 2,
-            Status::ResumeError => 3,
-            Status::ForwardOk(_) => 4,
-            Status::ForwardError => 5,
-            Status::ShutdownOk(_) => 6,
-            Status::ShutdownError => 7,
-            Status::Invalid => u8::MAX,
-        };
-        buf.put_u8(code);
-
-        match self {
-            Status::ConnectOk => {}
-            Status::ConnectError => {}
-            Status::ResumeOk(wr_cursor) => buf.put_slice(&wr_cursor.serialize()),
-            Status::ResumeError => {}
-            Status::ForwardOk(rd_cursor) => buf.put_slice(&rd_cursor.serialize()),
-            Status::ForwardError => {}
-            Status::ShutdownOk(rd_cursor) => buf.put_slice(&rd_cursor.serialize()),
-            Status::ShutdownError => {}
-            Status::Invalid => {}
-        };
-
-        buf.freeze()
-    }
-}
-
-impl Deserialize<Status> for Status {
-    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<Status> {
-        let code = (src.remaining() >= 1).then(|| src.get_u8())?;
-
-        let status = match code {
-            0 => Status::ConnectOk,
-            1 => Status::ConnectError,
-            2 => Status::ResumeOk(DataCursor::deserialize(src)?),
-            3 => Status::ResumeError,
-            4 => Status::ForwardOk(DataCursor::deserialize(src)?),
-            5 => Status::ForwardError,
-            6 => Status::ShutdownOk(DataCursor::deserialize(src)?),
-            7 => Status::ShutdownError,
-            _ => Status::Invalid,
-        };
-
-        Some(status)
+impl Debug for Payload {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Payload {{write: {}, read: {}, data: [len={}] }}",
+            self.write,
+            self.read,
+            self.data.len()
+        )
     }
 }
 
@@ -314,10 +227,28 @@ mod tests {
     }
 
     #[test]
+    fn connect_ok() {
+        let msg = Message {
+            session_id: 123456789,
+            command: Command::ConnectOk,
+        };
+        assert_serialize_deserialize(msg);
+    }
+
+    #[test]
     fn resume() {
         let msg = Message {
             session_id: 123456789,
             command: Command::Resume(987654321),
+        };
+        assert_serialize_deserialize(msg);
+    }
+
+    #[test]
+    fn resume_ok() {
+        let msg = Message {
+            session_id: 123456789,
+            command: Command::ResumeOk(12345),
         };
         assert_serialize_deserialize(msg);
     }
@@ -336,39 +267,30 @@ mod tests {
     }
 
     #[test]
-    fn shutdown() {
-        for which in [
-            ShutWhich::Read(123456),
-            ShutWhich::Write(654321),
-            ShutWhich::Invalid,
-        ] {
-            let msg = Message {
-                session_id: 123456789,
-                command: Command::Shutdown(which),
-            };
-            assert_serialize_deserialize(msg);
-        }
+    fn forward_ok() {
+        let msg = Message {
+            session_id: 123456789,
+            command: Command::ForwardOk(12345),
+        };
+        assert_serialize_deserialize(msg);
     }
 
     #[test]
-    fn notify() {
-        for status in [
-            Status::ConnectOk,
-            Status::ConnectError,
-            Status::ResumeOk(123),
-            Status::ResumeError,
-            Status::ForwardOk(123),
-            Status::ForwardError,
-            Status::ShutdownOk(123),
-            Status::ShutdownError,
-            Status::Invalid,
-        ] {
-            let msg = Message {
-                session_id: 123456789,
-                command: Command::Notify(status),
-            };
-            assert_serialize_deserialize(msg);
-        }
+    fn shut() {
+        let msg = Message {
+            session_id: 123456789,
+            command: Command::Shut(12345),
+        };
+        assert_serialize_deserialize(msg);
+    }
+
+    #[test]
+    fn shut_ok() {
+        let msg = Message {
+            session_id: 123456789,
+            command: Command::ShutOk(12345),
+        };
+        assert_serialize_deserialize(msg);
     }
 
     #[test]
