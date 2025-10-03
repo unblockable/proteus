@@ -220,7 +220,7 @@ impl SharedTurboState {
             session_id,
             write,
             read,
-            command: Command::Forward(data),
+            command: Command::Forward(Payload::from(data)),
         }
     }
 
@@ -549,7 +549,7 @@ impl<W: Writer + Send> TurboWriter<W> {
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalOpenRemoteOpen => match message.command {
-                Command::Forward(payload) => return Some(payload),
+                Command::Forward(payload) => return Some(payload.data),
                 Command::Shut => self.process_shut(
                     message.write,
                     ProtocolState::LocalOpenRemoteShut,
@@ -560,7 +560,7 @@ impl<W: Writer + Send> TurboWriter<W> {
             ProtocolState::LocalShuttingRemoteOpen => match message.command {
                 Command::Forward(payload) => {
                     self.send_ack();
-                    return Some(payload);
+                    return Some(payload.data);
                 }
                 Command::Shut => self.process_shut(
                     message.write,
@@ -575,7 +575,7 @@ impl<W: Writer + Send> TurboWriter<W> {
             ProtocolState::LocalShutRemoteOpen => match message.command {
                 Command::Forward(payload) => {
                     self.send_ack();
-                    return Some(payload);
+                    return Some(payload.data);
                 }
                 Command::Shut => self.process_shut(
                     message.write,
@@ -585,7 +585,7 @@ impl<W: Writer + Send> TurboWriter<W> {
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalOpenRemoteShutting => match message.command {
-                Command::Forward(payload) => return Some(payload),
+                Command::Forward(payload) => return Some(payload.data),
                 _ => self.drop_message(message),
             },
             ProtocolState::LocalOpenRemoteShut => match message.command {
@@ -594,7 +594,7 @@ impl<W: Writer + Send> TurboWriter<W> {
             ProtocolState::LocalShuttingRemoteShutting => match message.command {
                 Command::Forward(payload) => {
                     self.send_ack();
-                    return Some(payload);
+                    return Some(payload.data);
                 }
                 Command::ShutOk => {
                     self.process_shut_ok(message.read, ProtocolState::LocalShutRemoteShutting)
@@ -604,7 +604,7 @@ impl<W: Writer + Send> TurboWriter<W> {
             ProtocolState::LocalShutRemoteShutting => match message.command {
                 Command::Forward(payload) => {
                     self.send_ack();
-                    return Some(payload);
+                    return Some(payload.data);
                 }
                 _ => self.drop_message(message),
             },
@@ -874,7 +874,7 @@ mod tests {
                 .map_err(|e| TurboTransferError::Put(e))?;
 
             if let Command::Forward(payload) = message.command {
-                remaining = remaining.saturating_sub(payload.len());
+                remaining = remaining.saturating_sub(payload.data.len());
             }
         }
 

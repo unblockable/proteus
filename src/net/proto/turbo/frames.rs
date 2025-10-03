@@ -24,7 +24,7 @@ pub enum Command {
     ConnectOk,
     Resume,
     ResumeOk,
-    Forward(Bytes),
+    Forward(Payload),
     ForwardOk,
     Shut,
     ShutOk,
@@ -93,7 +93,7 @@ impl Serialize<Command> for Command {
 
         let bytes = match self {
             Command::Connect(target) => target.serialize(),
-            Command::Forward(payload) => payload.serialize(),
+            Command::Forward(payload) => payload.data.serialize(),
             _ => Bytes::new(),
         };
 
@@ -111,7 +111,7 @@ impl Deserialize<Command> for Command {
             1 => Command::ConnectOk,
             2 => Command::Resume,
             3 => Command::ResumeOk,
-            4 => Command::Forward(Bytes::deserialize(src)?),
+            4 => Command::Forward(Payload::from(Bytes::deserialize(src)?)),
             5 => Command::ForwardOk,
             6 => Command::Shut,
             7 => Command::ShutOk,
@@ -174,6 +174,18 @@ impl Deserialize<Bytes> for Bytes {
         let len = (src.remaining() >= 2).then(|| src.get_u16() as usize)?;
         let payload = (src.remaining() >= len).then(|| src.copy_to_bytes(len))?;
         Some(payload)
+    }
+}
+
+impl From<Bytes> for Payload {
+    fn from(value: Bytes) -> Self {
+        Payload { data: value}
+    }
+}
+
+impl Debug for Payload {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Payload(len: {}))", self.data.len())
     }
 }
 
@@ -248,7 +260,7 @@ mod tests {
             session_id: 123456789,
             write: 123,
             read: 321,
-            command: Command::Forward(Bytes::from("This is the payload.")),
+            command: Command::Forward(Payload::from(Bytes::from("This is the payload."))),
         };
         assert_serialize_deserialize(msg);
     }
