@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use rand::RngCore;
 use rand::rngs::ThreadRng;
 use tokio::sync::mpsc;
@@ -22,15 +24,21 @@ pub struct TurboSession {}
 
 impl TurboSession {
     fn new_split<R: Reader + Send, W: Writer + Send>(
-        app_conn: Connection<R, W>,
+        app_conn: Option<Connection<R, W>>,
         id: Option<u64>,
     ) -> (TurboReader<R>, TurboWriter<W>) {
-        let (app_src, app_dst) = app_conn.into_split();
         let state = SharedTurboState::new(id);
         let (sender, receiver) = mpsc::unbounded_channel();
 
-        let reader = TurboReader::new(app_src, state.clone(), receiver);
-        let writer = TurboWriter::new(app_dst, state, sender);
+        let (src, dst) = if let Some(conn) = app_conn {
+            let (app_src, app_dst) = conn.into_split();
+            (Some(app_src), Some(app_dst))
+        } else {
+            (None, None)
+        };
+
+        let reader = TurboReader::new(src, state.clone(), receiver);
+        let writer = TurboWriter::new(dst, state, sender);
 
         (reader, writer)
     }
@@ -40,15 +48,27 @@ impl TurboSession {
     /// in a state where it expects us to forward raw data to a target network peer.
     pub fn new_connected_client<R: Reader + Send, W: Writer + Send>(
         app_conn: Connection<R, W>,
+        proxy_to: Option<SocketAddr>,
     ) -> (TurboReader<R>, TurboWriter<W>) {
         let id = generate_session_id();
-        TurboSession::new_split(app_conn, Some(id))
+        let (mut reader, writer) = TurboSession::new_split(Some(app_conn), Some(id));
+
+        match proxy_to {
+            Some(addr) => reader.init_connect(addr),
+            None => reader.init_resume(),
+        };
+
+        (reader, writer)
     }
 
     pub fn new_connected_server<R: Reader + Send, W: Writer + Send>(
         app_conn: Connection<R, W>,
     ) -> (TurboReader<R>, TurboWriter<W>) {
-        TurboSession::new_split(app_conn, None)
+        TurboSession::new_split(Some(app_conn), None)
+    }
+
+    pub fn new_server<R: Reader + Send, W: Writer + Send>() -> (TurboReader<R>, TurboWriter<W>) {
+        TurboSession::new_split(None, None)
     }
 }
 
@@ -122,7 +142,7 @@ mod tests {
 
         // Make a session from the app connection.
         let (app_r, app_w) = if is_client {
-            TurboSession::new_connected_client(app_conn)
+            TurboSession::new_connected_client(app_conn, None)
         } else {
             TurboSession::new_connected_server(app_conn)
         };

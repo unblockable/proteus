@@ -65,7 +65,33 @@ pub enum Command {
 }
 
 #[derive(Args)]
-pub struct SocksArgs {}
+pub struct SocksArgs {
+    #[arg(required = true)]
+    pub protocol: PathBuf,
+    #[command(subcommand)]
+    pub role: Role,
+}
+
+#[derive(Subcommand)]
+/// Holds the supported subcommands and their args.
+pub enum Role {
+    Client(ClientArgs),
+    Server(ServerArgs),
+}
+
+#[derive(Args)]
+pub struct ClientArgs {
+    #[arg(long, default_value = "127.0.0.1:0")]
+    pub listen: String,
+    #[arg(long, required = true)]
+    pub connect: String,
+}
+
+#[derive(Args)]
+pub struct ServerArgs {
+    #[arg(long, default_value = "127.0.0.1:0")]
+    pub listen: String,
+}
 
 #[derive(Args)]
 pub struct PtArgs {}

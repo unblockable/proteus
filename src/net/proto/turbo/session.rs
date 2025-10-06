@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::net::{IpAddr, SocketAddr, SocketAddrV4};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
@@ -6,18 +7,24 @@ use anyhow::bail;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use log::warn;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Duration;
 
+use crate::net::proto::socks::address::Socks5Address;
 use crate::net::proto::turbo::formatter::Formatter;
-use crate::net::proto::turbo::frames::{Command, DataCursor, Message, Payload};
-use crate::net::{Deserializer, READ_CAPACITY, Reader, Serialize, Serializer, Writer};
+use crate::net::proto::turbo::frames::{Command, DataCursor, Message, Payload, Target};
+use crate::net::{
+    BufReader, Connector, Deserializer, READ_CAPACITY, Reader, Serialize, Serializer, TcpConnector,
+    Writer,
+};
 
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 enum ProtocolState {
     #[default]
     Start,
+    Connecting,
     Resuming,
     LocalOpenRemoteOpen,
     LocalShuttingRemoteOpen,
@@ -54,6 +61,7 @@ pub struct SharedTurboState {
     inner: Arc<Mutex<TurboState>>,
     id_notify: Option<Arc<Notify>>,
     state_notify: Arc<Notify>,
+    src2: Arc<Mutex<Option<BufReader<OwnedReadHalf>>>>,
 }
 
 impl SharedTurboState {
@@ -65,6 +73,7 @@ impl SharedTurboState {
             inner: Arc::new(Mutex::new(state)),
             id_notify: id.map_or_else(|| Some(Arc::new(Notify::new())), |_| None),
             state_notify: Arc::new(Notify::new()),
+            src2: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -166,6 +175,36 @@ impl SharedTurboState {
             .write_end
             .map(|end| state.write_ack >= end)
             .unwrap_or(false)
+    }
+
+    fn build_connect_message(&self, addr: SocketAddr) -> Message {
+        let (session_id, write, read) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
+        };
+
+        Message {
+            session_id,
+            write,
+            read,
+            command: Command::Connect(Target::from(addr)),
+        }
+    }
+
+    fn build_connect_ok_message(&self) -> Message {
+        let (session_id, write, read) = {
+            let mut state = self.inner.lock().unwrap();
+            state.write += 1;
+            (state.id.unwrap(), state.write - 1, state.read)
+        };
+
+        Message {
+            session_id,
+            write,
+            read,
+            command: Command::ConnectOk,
+        }
     }
 
     fn build_resume_message(&self) -> Message {
@@ -280,6 +319,7 @@ impl Clone for SharedTurboState {
             inner: self.inner.clone(),
             id_notify: self.id_notify.clone(),
             state_notify: self.state_notify.clone(),
+            src2: self.src2.clone(),
         }
     }
 }
@@ -296,7 +336,7 @@ enum NextMessageError {
 /// bytes to the interpreter. This wraps app data inside of our turbo protocol
 /// to enable support for session resumption.
 pub struct TurboReader<R: Reader + Send> {
-    src: R,
+    src: Option<R>,
     buffer: BytesMut,
     state: SharedTurboState,
     receiver: UnboundedReceiver<Message>,
@@ -307,25 +347,43 @@ pub struct TurboReader<R: Reader + Send> {
 /// data from our turbo protocol frames and then writes it to the app, to enable
 /// support for session resumption.
 pub struct TurboWriter<W: Writer + Send> {
-    dst: W,
+    dst: Option<W>,
+    dst2: Option<OwnedWriteHalf>,
     buffer: BytesMut,
     state: SharedTurboState,
     sender: UnboundedSender<Message>,
 }
 
 impl<R: Reader + Send> TurboReader<R> {
-    pub fn new(src: R, state: SharedTurboState, receiver: UnboundedReceiver<Message>) -> Self {
-        let mut reader = Self {
+    pub fn new(
+        src: Option<R>,
+        state: SharedTurboState,
+        receiver: UnboundedReceiver<Message>,
+    ) -> Self {
+        Self {
             src,
             buffer: BytesMut::new(),
             state,
             receiver,
-        };
-        if reader.state.has_id() {
-            reader.put_message(reader.state.build_resume_message());
-            reader.state.set_protocol_state(ProtocolState::Resuming);
         }
-        reader
+    }
+
+    pub fn init_resume(&mut self) -> anyhow::Result<()> {
+        if !self.state.has_id() {
+            bail!("Need ID to initiate protocol")
+        }
+        self.put_message(self.state.build_resume_message());
+        self.state.set_protocol_state(ProtocolState::Resuming);
+        Ok(())
+    }
+
+    pub fn init_connect(&mut self, proxy_to: SocketAddr) -> anyhow::Result<()> {
+        if !self.state.has_id() {
+            bail!("Need ID to initiate protocol")
+        }
+        self.put_message(self.state.build_connect_message(proxy_to));
+        self.state.set_protocol_state(ProtocolState::Connecting);
+        Ok(())
     }
 
     fn put_message(&mut self, message: Message) {
@@ -393,6 +451,7 @@ impl<R: Reader + Send> TurboReader<R> {
             let result = match self.state.protocol_state() {
                 ProtocolState::Start => self.next_message_channel().await,
                 ProtocolState::Resuming => self.next_message_channel().await,
+                ProtocolState::Connecting => self.next_message_channel().await,
                 ProtocolState::LocalOpenRemoteOpen => self.next_message_any().await,
                 ProtocolState::LocalShuttingRemoteOpen => self.next_message_channel().await,
                 ProtocolState::LocalShutRemoteOpen => self.next_message_channel().await,
@@ -430,34 +489,81 @@ impl<R: Reader + Send> TurboReader<R> {
     }
 
     async fn next_message_any(&mut self) -> Result<Message, NextMessageError> {
-        tokio::select! {
-            _ = self.state.wait_protocol_state() => Err(NextMessageError::ProtocolStateChanged),
-            _ = tokio::time::sleep(Duration::from_secs(1)) => Err(NextMessageError::Timeout),
-            message_maybe = self.receiver.recv() => message_maybe.ok_or(NextMessageError::ChannelClosed),
-            result = self.src.read_bytes(1..READ_CAPACITY*2) => {
-                match result {
-                    Ok(payload) => {
-                        // Create a Forward message containing the app payload.
-                        log::trace!("Packaging a new Forward message");
-                        Ok(self.state.build_forward_message(payload))
+        // If we are the server side and have not yet connect to the forward destination,
+        // then make sure we don't try to read bytes from it.
+        if let Some(src) = self.src.as_mut() {
+            tokio::select! {
+                _ = self.state.wait_protocol_state() => Err(NextMessageError::ProtocolStateChanged),
+                _ = tokio::time::sleep(Duration::from_secs(1)) => Err(NextMessageError::Timeout),
+                message_maybe = self.receiver.recv() => message_maybe.ok_or(NextMessageError::ChannelClosed),
+                result = src.read_bytes(1..READ_CAPACITY*2) => {
+                    match result {
+                        Ok(payload) => {
+                            // Create a Forward message containing the app payload.
+                            log::trace!("Packaging a new Forward message");
+                            Ok(self.state.build_forward_message(payload))
+                        }
+                        Err(e) => {
+                            // Error/EOF, reading from the app is now shut.
+                            log::debug!("TurboReader: error reading src: {e}");
+                            match self.state.protocol_state() {
+                                ProtocolState::LocalOpenRemoteOpen => {
+                                    self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteOpen)
+                                },
+                                ProtocolState::LocalOpenRemoteShutting => {
+                                    self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShutting)
+                                },
+                                ProtocolState::LocalOpenRemoteShut => {
+                                    self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShut)
+                                },
+                                _ => assert!(false)
+                            };
+                            Ok(self.state.build_shut_message())
+                        }
                     }
-                    Err(e) => {
-                        // Error/EOF, reading from the app is now shut.
-                        log::debug!("TurboReader: error reading src: {e}");
-                        match self.state.protocol_state() {
-                            ProtocolState::LocalOpenRemoteOpen => {
-                                self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteOpen)
-                            },
-                            ProtocolState::LocalOpenRemoteShutting => {
-                                self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShutting)
-                            },
-                            ProtocolState::LocalOpenRemoteShut => {
-                                self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShut)
-                            },
-                            _ => assert!(false)
-                        };
-                        Ok(self.state.build_shut_message())
+                }
+            }
+        } else {
+            let opt = self.state.src2.lock().unwrap().take();
+            if let Some(mut src) = opt {
+                let r = tokio::select! {
+                    _ = self.state.wait_protocol_state() => Err(NextMessageError::ProtocolStateChanged),
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => Err(NextMessageError::Timeout),
+                    message_maybe = self.receiver.recv() => message_maybe.ok_or(NextMessageError::ChannelClosed),
+                    result = src.read_bytes(1..READ_CAPACITY*2) => {
+                        match result {
+                            Ok(payload) => {
+                                // Create a Forward message containing the app payload.
+                                log::trace!("Packaging a new Forward message");
+                                Ok(self.state.build_forward_message(payload))
+                            }
+                            Err(e) => {
+                                // Error/EOF, reading from the app is now shut.
+                                log::debug!("TurboReader: error reading src: {e}");
+                                match self.state.protocol_state() {
+                                    ProtocolState::LocalOpenRemoteOpen => {
+                                        self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteOpen)
+                                    },
+                                    ProtocolState::LocalOpenRemoteShutting => {
+                                        self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShutting)
+                                    },
+                                    ProtocolState::LocalOpenRemoteShut => {
+                                        self.state.set_protocol_state(ProtocolState::LocalShuttingRemoteShut)
+                                    },
+                                    _ => assert!(false)
+                                };
+                                Ok(self.state.build_shut_message())
+                            }
+                        }
                     }
+                };
+                let _ = self.state.src2.lock().unwrap().insert(src);
+                r
+            } else {
+                tokio::select! {
+                    _ = self.state.wait_protocol_state() => Err(NextMessageError::ProtocolStateChanged),
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => Err(NextMessageError::Timeout),
+                    message_maybe = self.receiver.recv() => message_maybe.ok_or(NextMessageError::ChannelClosed),
                 }
             }
         }
@@ -465,9 +571,10 @@ impl<R: Reader + Send> TurboReader<R> {
 }
 
 impl<W: Writer + Send> TurboWriter<W> {
-    pub fn new(dst: W, state: SharedTurboState, sender: UnboundedSender<Message>) -> Self {
+    pub fn new(dst: Option<W>, state: SharedTurboState, sender: UnboundedSender<Message>) -> Self {
         Self {
             dst,
+            dst2: None,
             buffer: BytesMut::new(),
             state,
             sender,
@@ -495,13 +602,21 @@ impl<W: Writer + Send> TurboWriter<W> {
             self.buffer.advance(read_cursor.position() as usize);
 
             // Process the message and if we have payload, write it to the destination app.
-            if let Some(payload) = self.process_message(message) {
-                if let Err(e) = self.dst.write_bytes(&payload).await {
-                    // TODO: We need to handle IO error on the write side. Do we
-                    // need a new Close command and protocol state to track that
-                    // the app disappeared and we cant write to it?
-                    warn!("Error writing payload to application: {e}")
-                };
+            if let Some(payload) = self.process_message(message).await {
+                if let Some(dst) = self.dst.as_mut() {
+                    if let Err(e) = dst.write_bytes(&payload).await {
+                        // TODO: We need to handle IO error on the write side. Do we
+                        // need a new Close command and protocol state to track that
+                        // the app disappeared and we cant write to it?
+                        warn!("Error writing payload to application: {e}")
+                    };
+                } else if let Some(dst) = self.dst2.as_mut() {
+                    if let Err(e) = dst.write_bytes(&payload).await {
+                        warn!("Error writing payload to application: {e}")
+                    };
+                } else {
+                    warn!("Error writing payload to application: destination does not yet exist")
+                }
             }
         }
 
@@ -509,12 +624,14 @@ impl<W: Writer + Send> TurboWriter<W> {
         return Ok(bytes.len());
     }
 
-    fn process_message(&mut self, message: Message) -> Option<Bytes> {
+    async fn process_message(&mut self, message: Message) -> Option<Bytes> {
         log::trace!("Processing message {message:?}");
 
         // First we establish our session id if we don't have one yet.
         if let ProtocolState::Start = self.state.protocol_state() {
-            if matches!(message.command, Command::Resume) {
+            if matches!(message.command, Command::Resume)
+                || matches!(message.command, Command::Connect(_))
+            {
                 self.state.notify_id(message.session_id)
             }
         }
@@ -537,8 +654,18 @@ impl<W: Writer + Send> TurboWriter<W> {
         // Conditional processing.
         match self.state.protocol_state() {
             ProtocolState::Start => match message.command {
+                Command::Connect(target) => {
+                    self.process_connect(message.read, target, ProtocolState::LocalOpenRemoteOpen)
+                        .await
+                }
                 Command::Resume => {
                     self.process_resume(message.read, ProtocolState::LocalOpenRemoteOpen)
+                }
+                _ => self.drop_message(message),
+            },
+            ProtocolState::Connecting => match message.command {
+                Command::ConnectOk => {
+                    self.process_connect_ok(message.read, ProtocolState::LocalOpenRemoteOpen);
                 }
                 _ => self.drop_message(message),
             },
@@ -620,6 +747,49 @@ impl<W: Writer + Send> TurboWriter<W> {
         None
     }
 
+    async fn process_connect(
+        &mut self,
+        cursor: DataCursor,
+        target: Target,
+        connect: ProtocolState,
+    ) {
+        self.state.set_write_unacked(cursor);
+
+        // TcpConnector::from(target_addr)
+        match target.addr {
+            Socks5Address::IpAddr(ip_addr) => match ip_addr {
+                IpAddr::V4(ipv4_addr) => {
+                    let addr = SocketAddr::V4(SocketAddrV4::new(ipv4_addr, target.port));
+                    match TcpConnector::from(addr).connect().await {
+                        Ok((app_conn, local_addr)) => {
+                            log::debug!("Connection to {addr} succeeded (bound to {local_addr})");
+                            let (app_src, app_dst) = app_conn.into_split();
+                            let _ = self.dst2.insert(app_dst);
+                            {
+                                let _ = self.state.src2.lock().unwrap().insert(app_src);
+                            }
+                        }
+                        Err(e) => {
+                            log::debug!("Connection to {addr} failed: {e}");
+                        }
+                    }
+                }
+                IpAddr::V6(_ipv6_addr) => unimplemented!(),
+            },
+            Socks5Address::Name(_) => unimplemented!(),
+            Socks5Address::Unknown => todo!(),
+        }
+
+        let message = self.state.build_connect_ok_message();
+        self.push_message(message);
+        self.state.set_protocol_state(connect);
+    }
+
+    fn process_connect_ok(&self, cursor: DataCursor, connect: ProtocolState) {
+        self.state.set_write_unacked(cursor);
+        self.state.set_protocol_state(connect);
+    }
+
     fn process_resume(&self, cursor: DataCursor, resume: ProtocolState) {
         self.state.set_write_unacked(cursor);
         let message = self.state.build_resume_ok_message();
@@ -685,7 +855,7 @@ impl<R: Reader + Send> Reader for TurboReader<R> {
 }
 
 #[async_trait]
-impl<W: Writer + Send> Writer for TurboWriter<W> {
+impl<W: Writer + Send + Sync> Writer for TurboWriter<W> {
     async fn write_bytes(&mut self, bytes: &Bytes) -> anyhow::Result<usize> {
         log::trace!("write_bytes() is called on TurboWriter");
         self.deserialize_messages(bytes).await
@@ -702,12 +872,24 @@ impl<W: Writer + Send> Writer for TurboWriter<W> {
 
     async fn flush(&mut self) -> anyhow::Result<()> {
         log::trace!("flush() is called on TurboWriter");
-        self.dst.flush().await
+        if let Some(dst) = self.dst.as_mut() {
+            dst.flush().await
+        } else if let Some(dst) = self.dst2.as_mut() {
+            dst.flush().await
+        } else {
+            Ok(())
+        }
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         log::trace!("shutdown() is called on TurboWriter");
-        self.dst.shutdown().await
+        if let Some(dst) = self.dst.as_mut() {
+            dst.shutdown().await
+        } else if let Some(dst) = self.dst2.as_mut() {
+            dst.shutdown().await
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -766,7 +948,7 @@ mod tests {
 
             // When this proxy reads, the above payload is returned.
             let (tr, tw) = if is_client {
-                TurboSession::new_connected_client(proxy)
+                TurboSession::new_connected_client(proxy, None)
             } else {
                 TurboSession::new_connected_server(proxy)
             };

@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::io::Cursor;
+use std::net::{IpAddr, SocketAddr};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
@@ -179,13 +180,28 @@ impl Deserialize<Bytes> for Bytes {
 
 impl From<Bytes> for Payload {
     fn from(value: Bytes) -> Self {
-        Payload { data: value}
+        Payload { data: value }
     }
 }
 
 impl Debug for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Payload(len: {}))", self.data.len())
+    }
+}
+
+impl From<SocketAddr> for Target {
+    fn from(value: SocketAddr) -> Self {
+        match value {
+            SocketAddr::V4(socket_addr_v4) => Target {
+                addr: Socks5Address::IpAddr(IpAddr::V4(*socket_addr_v4.ip())),
+                port: socket_addr_v4.port(),
+            },
+            SocketAddr::V6(socket_addr_v6) => Target {
+                addr: Socks5Address::IpAddr(IpAddr::V6(*socket_addr_v6.ip())),
+                port: socket_addr_v6.port(),
+            },
+        }
     }
 }
 

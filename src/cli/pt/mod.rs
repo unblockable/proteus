@@ -151,7 +151,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) ->
                     log::debug!("Connection to {target_addr} succeeded (bound to {local_addr})");
 
                     let (net_src, net_dst) = net_conn.into_split();
-                    let (app_src, app_dst) = TurboSession::new_connected_client(app_conn);
+                    let (app_src, app_dst) = TurboSession::new_connected_client(app_conn, None);
 
                     match Interpreter::run_split(net_src, net_dst, app_src, app_dst, client_spec)
                         .await
