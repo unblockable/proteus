@@ -29,30 +29,53 @@ hosts:
       args: ${TGENSERVERCONF}
       start_time: 1
       expected_final_state: running
+  socksproxy:
+    network_node_id: 0
+    ip_addr: 100.0.0.2
+    processes:
+    - path: ${PROTEUSBINPATH}
+      args: --log-level debug socks ${PSFPATH} server --listen 100.0.0.2:443
+      start_time: 60
+      expected_final_state: running
+  socksclient:
+    network_node_id: 0
+    processes:
+    - path: ${PROTEUSBINPATH}
+      args: --log-level debug socks ${PSFPATH} client --listen 127.0.0.1:1080 --connect 100.0.0.2:443
+      start_time: 60
+      expected_final_state: running
+    - path: tgen
+      environment: { OPENBLAS_NUM_THREADS: "1" }
+      args: ${TGENSOCKSCLIENTCONF}
+      start_time: 120
+      expected_final_state: {exited: 0}
+  ptproxy:
+    network_node_id: 0
+    ip_addr: 100.0.0.3
+    processes:
     - path: ${PROTEUSBINPATH}
       environment: { TOR_PT_MANAGED_TRANSPORT_VER: "1",
                      TOR_PT_STATE_LOCATION: "/tmp/proteus_server", 
                      TOR_PT_SERVER_TRANSPORTS: "proteus",
                      TOR_PT_SERVER_TRANSPORT_OPTIONS: "proteus:psf=${PSFPATH}",
-                     TOR_PT_SERVER_BINDADDR: "proteus-100.0.0.1:1080",
-                     TOR_PT_ORPORT: "127.0.0.1:80",
+                     TOR_PT_SERVER_BINDADDR: "proteus-100.0.0.3:443",
+                     TOR_PT_ORPORT: "100.0.0.1:80",
                      RUST_BACKTRACE: "1" }
-      args: pt --log-level debug
+      args: --log-level debug pt
       start_time: 60
       expected_final_state: running
-  client:
+  ptclient:
     network_node_id: 0
-    ip_addr: 100.0.0.2
     processes:
     - path: ${PROTEUSBINPATH}
       environment: { TOR_PT_MANAGED_TRANSPORT_VER: "1",
                      TOR_PT_STATE_LOCATION: "/tmp/proteus_client",
                      TOR_PT_CLIENT_TRANSPORTS: "proteus", 
                      RUST_BACKTRACE: "1" }
-      args: pt --log-level debug
+      args: --log-level debug pt
       start_time: 60
       expected_final_state: running
-    # The socks5 listen port is written to stdout by the proteus client.
+    # The socks5 listen port is written to stdout by the proteus pt client.
     # Here we copy the chosen port into the tgen client config before tgen starts.
     - path: python3
       args: |
@@ -62,15 +85,15 @@ hosts:
               if line.startswith('CMETHOD proteus socks5 127.0.0.1:'):
                 return line.strip().split(' ')[3].split(':')[1]
           return '0'
-        with open('../../../tgen-client.graphml.xml.template','r') as fin:
+        with open('../../../tgen-ptclient.graphml.template','r') as fin:
           data = fin.read().replace('${SOCKS5LISTENPORT}', getport())
-        with open('tgen-client.graphml.xml','w') as fout:
+        with open('tgen-ptclient.graphml','w') as fout:
           fout.write(data)"
       environment: { PYTHONUNBUFFERED: "1" }
       start_time: 61
       expected_final_state: {exited: 0}
     - path: tgen
       environment: { OPENBLAS_NUM_THREADS: "1" }
-      args: tgen-client.graphml.xml
+      args: tgen-ptclient.graphml
       start_time: 120
       expected_final_state: {exited: 0}

@@ -26,15 +26,19 @@ fn run_test([psf_filepath]: [&Path; 1]) {
         .success()
     );
 
-    let client = PathBuf::from(format!(
-        "{run_dir_str}/shadow.data/hosts/client/tgen.1003.stdout",
+    let ptclient = PathBuf::from(format!(
+        "{run_dir_str}/shadow.data/hosts/ptclient/tgen.1003.stdout",
+    ));
+    let socksclient = PathBuf::from(format!(
+        "{run_dir_str}/shadow.data/hosts/socksclient/tgen.1002.stdout",
     ));
     let server = PathBuf::from(format!(
         "{run_dir_str}/shadow.data/hosts/server/tgen.1000.stdout",
     ));
 
-    assert_eq!(super::count_tgen_stream_successes(client), 5);
-    assert_eq!(super::count_tgen_stream_successes(server), 5);
+    assert_eq!(super::count_tgen_stream_successes(ptclient), 5);
+    assert_eq!(super::count_tgen_stream_successes(socksclient), 5);
+    assert_eq!(super::count_tgen_stream_successes(server), 10);
 }
 
 fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> PathBuf {
@@ -48,16 +52,21 @@ fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> PathBuf 
 
     // The tgen server conf does not change, so just use the one from test_dir_in.
     let server_path =
-        fs::canonicalize(format!("{}/tgen-server.graphml.xml", in_dir_path.display()))
+        fs::canonicalize(format!("{}/tgen-server.graphml", in_dir_path.display()))
+            .expect("Canonicalize path");
+
+    // The tgen socks client conf does not change, so just use the one from test_dir_in.
+    let socksclient_path =
+        fs::canonicalize(format!("{}/tgen-socksclient.graphml", in_dir_path.display()))
             .expect("Canonicalize path");
 
     // Shadow needs a clear working directory.
     super::remove_and_create_all(out_dir_path.clone());
 
-    // Copy the tgen client config. We keep the template suffix because we only
+    // Copy the tgen ptclient config. We keep the template suffix because we only
     // partially instantiate it here and the rest happens during the sim.
     {
-        let conf = "tgen-client.graphml.xml.template";
+        let conf = "tgen-ptclient.graphml.template";
         let in_path = PathBuf::from(format!("{}/{conf}", in_dir_path.display()));
         let out_path = PathBuf::from(format!("{}/{conf}", out_dir_path.display()));
         let replacements = vec![("${PSFPATH}", psf_path.to_str().unwrap())];
@@ -70,6 +79,7 @@ fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> PathBuf 
         let out_path = PathBuf::from(format!("{}/shadow.yaml", out_dir_path.display()));
         let replacements = vec![
             ("${TGENSERVERCONF}", server_path.to_str().unwrap()),
+            ("${TGENSOCKSCLIENTCONF}", socksclient_path.to_str().unwrap()),
             ("${PSFPATH}", psf_path.to_str().unwrap()),
             ("${PROTEUSBINPATH}", bin_path.to_str().unwrap()),
         ];
