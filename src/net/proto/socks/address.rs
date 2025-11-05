@@ -1,11 +1,73 @@
+use std::fmt::Display;
 use std::io::Cursor;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::net::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+pub struct Socks5Target {
+    addr: Socks5Address,
+    port: u16,
+}
+
+impl Socks5Target {
+    pub fn new(addr: Socks5Address, port: u16) -> Self {
+        Self { addr, port }
+    }
+
+    pub fn addr(&self) -> Socks5Address {
+        self.addr.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+impl Serialize<Socks5Target> for Socks5Target {
+    fn serialize(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+
+        buf.put_slice(&self.addr.serialize());
+        buf.put_u16(self.port);
+
+        buf.freeze()
+    }
+}
+
+impl Deserialize<Socks5Target> for Socks5Target {
+    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<Socks5Target> {
+        Some(Socks5Target {
+            addr: Socks5Address::deserialize(src)?,
+            port: (src.remaining() >= 2).then(|| src.get_u16())?,
+        })
+    }
+}
+
+impl From<SocketAddr> for Socks5Target {
+    fn from(value: SocketAddr) -> Self {
+        match value {
+            SocketAddr::V4(socket_addr_v4) => Socks5Target {
+                addr: Socks5Address::IpAddr(IpAddr::V4(*socket_addr_v4.ip())),
+                port: socket_addr_v4.port(),
+            },
+            SocketAddr::V6(socket_addr_v6) => Socks5Target {
+                addr: Socks5Address::IpAddr(IpAddr::V6(*socket_addr_v6.ip())),
+                port: socket_addr_v6.port(),
+            },
+        }
+    }
+}
+
+impl Display for Socks5Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.addr, self.port)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Socks5Address {
     IpAddr(IpAddr),
     Name(String),
@@ -104,6 +166,16 @@ impl Deserialize<Socks5Address> for Socks5Address {
     }
 }
 
+impl Display for Socks5Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Socks5Address::IpAddr(ip_addr) => write!(f, "{ip_addr}"),
+            Socks5Address::Name(s) => write!(f, "{s}"),
+            Socks5Address::Unknown => write!(f, "<unknown>"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -119,12 +191,14 @@ mod tests {
         ];
 
         for addr in addresses {
+            let target = Socks5Target { addr, port: 12345 };
+
             let mut buf = BytesMut::new();
-            buf.put(addr.serialize());
+            buf.put(target.serialize());
 
             assert_eq!(
-                addr,
-                Socks5Address::deserialize(&mut Cursor::new(&buf)).unwrap()
+                target,
+                Socks5Target::deserialize(&mut Cursor::new(&buf)).unwrap()
             );
         }
     }

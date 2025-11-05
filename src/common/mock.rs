@@ -8,7 +8,9 @@ use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
 use crate::net::{BufReader, Connection, Reader};
 
-pub type MockConnection = Connection<BufReader<DuplexStream>, DuplexStream>;
+pub type MockReader = BufReader<DuplexStream>;
+pub type MockWriter = DuplexStream;
+pub type MockConnection = Connection<MockReader, MockWriter>;
 pub type MockPayload = Bytes;
 
 pub struct Result {

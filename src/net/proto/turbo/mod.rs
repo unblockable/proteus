@@ -1,91 +1,25 @@
-use std::net::SocketAddr;
-
-use rand::RngCore;
-use rand::rngs::ThreadRng;
-use tokio::sync::mpsc;
-
-use crate::net::proto::turbo::session::{SharedTurboState, TurboReader, TurboWriter};
-use crate::net::{Connection, Reader, Writer};
-
+pub mod broker;
 mod formatter;
 mod frames;
 mod session;
-
-fn generate_session_id() -> u64 {
-    loop {
-        let id = ThreadRng::default().next_u64();
-        if id > 0 {
-            return id;
-        }
-    }
-}
-
-pub struct TurboSession {}
-
-impl TurboSession {
-    fn new_split<R: Reader + Send, W: Writer + Send>(
-        app_conn: Option<Connection<R, W>>,
-        id: Option<u64>,
-    ) -> (TurboReader<R>, TurboWriter<W>) {
-        let state = SharedTurboState::new(id);
-        let (sender, receiver) = mpsc::unbounded_channel();
-
-        let (src, dst) = if let Some(conn) = app_conn {
-            let (app_src, app_dst) = conn.into_split();
-            (Some(app_src), Some(app_dst))
-        } else {
-            (None, None)
-        };
-
-        let reader = TurboReader::new(src, state.clone(), receiver);
-        let writer = TurboWriter::new(dst, state, sender);
-
-        (reader, writer)
-    }
-
-    /// A client session is a singular connection to an application, after the preliminary
-    /// handshake protocol (e.g., SOCKS) is completed. The app connection should be
-    /// in a state where it expects us to forward raw data to a target network peer.
-    pub fn new_connected_client<R: Reader + Send, W: Writer + Send>(
-        app_conn: Connection<R, W>,
-        proxy_to: Option<SocketAddr>,
-    ) -> (TurboReader<R>, TurboWriter<W>) {
-        let id = generate_session_id();
-        let (mut reader, writer) = TurboSession::new_split(Some(app_conn), Some(id));
-
-        match proxy_to {
-            Some(addr) => reader.init_connect(addr),
-            None => reader.init_resume(),
-        };
-
-        (reader, writer)
-    }
-
-    pub fn new_connected_server<R: Reader + Send, W: Writer + Send>(
-        app_conn: Connection<R, W>,
-    ) -> (TurboReader<R>, TurboWriter<W>) {
-        TurboSession::new_split(Some(app_conn), None)
-    }
-
-    pub fn new_server<R: Reader + Send, W: Writer + Send>() -> (TurboReader<R>, TurboWriter<W>) {
-        TurboSession::new_split(None, None)
-    }
-}
+pub mod tunnel;
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
     use std::ops::Range;
 
     use anyhow::bail;
     use async_trait::async_trait;
     use bytes::{Bytes, BytesMut};
-    use tokio::io::{AsyncReadExt, DuplexStream};
+    use tokio::io::{AsyncRead, AsyncReadExt, DuplexStream};
 
     use crate::common::mock::tests::NullSpec;
     use crate::common::mock::{self, MockConnection};
     use crate::lang::ir::bridge::TaskProvider;
-    use crate::net::proto::turbo::TurboSession;
-    use crate::net::{Deserializer, Reader, Writer};
+    use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
+    use crate::net::proto::turbo::broker::SessionBroker;
+    use crate::net::{AsyncConnect, Deserializer, Reader, Writer};
 
     #[async_trait]
     impl Reader for DuplexStream {
@@ -100,6 +34,31 @@ mod tests {
             D: Deserializer<F> + Send,
         {
             unimplemented!()
+        }
+    }
+
+    pub struct MockConnector {}
+
+    #[async_trait]
+    impl AsyncConnect<DuplexStream, DuplexStream> for MockConnector {
+        async fn connect(&self) -> anyhow::Result<(DuplexStream, DuplexStream, SocketAddr)> {
+            unimplemented!()
+        }
+    }
+
+    impl From<Socks5Target> for MockConnector {
+        fn from(_: Socks5Target) -> Self {
+            Self {}
+        }
+    }
+
+    impl AsyncRead for MockConnector {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            todo!()
         }
     }
 
@@ -141,18 +100,35 @@ mod tests {
         let net_r = net_r.into_inner();
 
         // Make a session from the app connection.
-        let (app_r, app_w) = if is_client {
-            TurboSession::new_connected_client(app_conn, None)
+        let (src, dst) = app_conn.into_split();
+        let src = src.into_inner();
+
+        let session_id = 12345;
+
+        let broker: SessionBroker<DuplexStream, DuplexStream, MockConnector> = if is_client {
+            let mut broker = SessionBroker::new_pt_client();
+            broker
+                .add_session_client_test(
+                    src,
+                    dst,
+                    session_id,
+                    Socks5Target::new(Socks5Address::Unknown, 0),
+                )
+                .await;
+            broker
         } else {
-            TurboSession::new_connected_server(app_conn)
+            let mock_target = Socks5Target::new(Socks5Address::Unknown, 0);
+            let mut broker = SessionBroker::new_pt_server(mock_target);
+            broker.add_session_server_test(src, dst, session_id).await;
+            broker
         };
 
         // We need to move the streams into `forward()` so that the DuplexStreams close
         // when the tokio::io::copy function receives EOF and returns. Otherwise the EOF
         // does not properly propagate backward.
         let (_, _) = tokio::join!(
-            forward_app_to_net(app_r, net_w),
-            forward_net_to_app(net_r, app_w)
+            forward_app_to_net(broker.clone(), net_w),
+            forward_net_to_app(net_r, broker)
         );
 
         Ok(())

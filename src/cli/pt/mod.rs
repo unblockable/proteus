@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::{io, process};
 
 use control::PtLogLevel;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::args::PtArgs;
@@ -13,8 +14,9 @@ use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks;
-use crate::net::proto::turbo::TurboSession;
-use crate::net::{Connection, Connector, TcpConnector};
+use crate::net::proto::turbo::broker::SessionBroker;
+use crate::net::proto::turbo::tunnel::Tunnel;
+use crate::net::{Connection, TcpConnector, TcpReader, TcpWriter};
 
 pub mod config;
 pub mod control;
@@ -105,13 +107,17 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
     }
 }
 
-async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) -> io::Result<()> {
-    let app_addr = app_stream.peer_addr()?;
-    log::debug!("Accepted new stream from client {app_addr}");
+async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
+    let peer_name = match app_stream.peer_addr() {
+        Ok(addr) => format!("<{addr}>"),
+        Err(_) => format!("<unknown>"),
+    };
+
+    log::debug!("Accepted new stream from client {peer_name}");
 
     match socks::run_socks5_server(Connection::from(app_stream)).await {
-        Ok((app_conn, username_opt, _, target_addr)) => {
-            log::debug!("Socks5 with peer {app_addr} succeeded");
+        Ok((app_conn, username_opt, _, target)) => {
+            log::debug!("Socks5 with peer {peer_name} succeeded");
 
             let options = match username_opt {
                 Some(username) => {
@@ -137,44 +143,28 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) ->
             let client_spec = Compiler::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
-                "Running Proteus client protocol to forward data from {app_addr} to {target_addr}",
+                "Running Proteus client protocol to forward data from {peer_name} to proxy server at {target}",
             );
 
             // Normally this connection would have been done during the SOCKS handshake,
             // so that we could return a SOCKS error if the connection fails.
             // We currently removed that from our SOCKS impl to handle other modes.
-            log::debug!("Connecting network tunnel to target {target_addr}");
-            let net_connector = TcpConnector::from(target_addr);
+            log::debug!("Will need to connect network tunnel to proxy server {target}");
+            let net_connector = TcpConnector::from(target.clone());
 
-            match net_connector.connect().await {
-                Ok((net_conn, local_addr)) => {
-                    log::debug!("Connection to {target_addr} succeeded (bound to {local_addr})");
+            let controller = Tunnel::new_client(net_connector);
+            let mut broker = SessionBroker::new_pt_client();
 
-                    let (net_src, net_dst) = net_conn.into_split();
-                    let (app_src, app_dst) = TurboSession::new_connected_client(app_conn, None);
+            let (app_src, app_dst) = app_conn.into_split();
+            let app_src = app_src.into_inner();
+            broker.add_session_pt_client(app_src, app_dst).await;
 
-                    match Interpreter::run_split(net_src, net_dst, app_src, app_dst, client_spec)
-                        .await
-                    {
-                        Ok(_) => log::debug!(
-                            "Stream from peer {app_addr} succeeded over tunnel {target_addr}",
-                        ),
-                        Err(e) => log::debug!(
-                            "Stream from peer {app_addr} failed over tunnel {target_addr}: {e}",
-                        ),
-                    }
-                }
-                Err(e) => {
-                    log::debug!("Connection to {target_addr} failed: {e}");
-                }
-            }
+            run_interpreter(controller, broker, client_spec).await;
         }
         Err(e) => {
-            log::debug!("Stream from peer {app_addr} failed during Socks5 protocol: {e}");
+            log::debug!("Stream from peer {peer_name} failed during Socks5 protocol: {e}");
         }
     }
-
-    Ok(())
 }
 
 async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io::Result<()> {
@@ -213,60 +203,60 @@ async fn run_server(_common_conf: CommonConfig, server_conf: ServerConfig) -> io
     }
 }
 
-async fn handle_server_connection<T>(
-    net_stream: TcpStream,
-    conf: ServerConfig,
-    server_spec: T,
-) -> anyhow::Result<()>
+async fn handle_server_connection<T>(net_stream: TcpStream, conf: ServerConfig, server_spec: T)
 where
     T: TaskProvider + Clone + Send,
 {
-    let net_addr = net_stream.peer_addr()?;
-    log::debug!("Accepted new stream from Proteus client {net_addr}");
+    let peer_name = match net_stream.peer_addr() {
+        Ok(addr) => format!("<{addr}>"),
+        Err(_) => format!("<unknown>"),
+    };
 
-    let target_addr = conf.forward_addr;
+    log::debug!("Accepted new network stream from Proteus client {peer_name}");
 
     match conf.forward_proto {
         ForwardProtocol::Basic => {
             // No special OR handshake required.
-            log::debug!("Using basic 'data only' protocol with forward server {target_addr}",);
+            log::debug!(
+                "Using basic 'data only' protocol with forward server {}",
+                conf.forward_addr
+            );
         }
         ForwardProtocol::Extended(_cookie_path) => {
-            log::debug!("Using extended OR protocol with forward server {target_addr}",);
+            log::debug!(
+                "Using extended OR protocol with forward server {}",
+                conf.forward_addr
+            );
             unimplemented!("Extended OR protocol is not yet supported.")
             // or::run_extor_client(fwd_conn).await
         }
     }
 
-    log::debug!(
-        "Running Proteus server protocol to forward data between {net_addr} and {target_addr}",
-    );
-
+    let net_conn = Connection::from(net_stream);
+    let (net_src, net_dst) = net_conn.into_split();
+    
+    let controller = Tunnel::new_server(net_src, net_dst);
     // In PT mode, we pin the already configured forward addr for all app connections.
-    let app_connector = TcpConnector::from(target_addr);
+    let broker = SessionBroker::new_pt_server(conf.forward_addr.into());
 
-    match app_connector.connect().await {
-        Ok((app_conn, local_addr)) => {
-            log::debug!("Connection to {target_addr} succeeded (bound to {local_addr})");
+    run_interpreter(controller, broker, server_spec).await;
+}
 
-            let net_conn = Connection::from(net_stream);
-            let (net_src, net_dst) = net_conn.into_split();
-            let (app_src, app_dst) = TurboSession::new_connected_server(app_conn);
-
-            // Run a new server session over the tunnel.
-            match Interpreter::run_split(net_src, net_dst, app_src, app_dst, server_spec).await {
-                Ok(_) => {
-                    log::debug!("Stream from peer {net_addr} succeeded forwarding to {target_addr}",)
-                }
-                Err(e) => log::debug!(
-                    "Stream from peer {net_addr} failed forwarding to {target_addr}: {e}",
-                ),
-            }
-        }
-        Err(e) => {
-            log::debug!("Connection to {target_addr} failed: {e}");
-        }
+async fn run_interpreter(
+    controller: Tunnel<TcpReader, TcpWriter, TcpConnector>,
+    broker: SessionBroker<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    protocol_spec: impl TaskProvider + Send + Clone,
+) {
+    match Interpreter::run_split(
+        controller.clone(),
+        controller,
+        broker.clone(),
+        broker,
+        protocol_spec,
+    )
+    .await
+    {
+        Ok(_) => log::debug!("Tunnel protocol succeeded",),
+        Err(e) => log::debug!("Tunnel protocol failed: {e}",),
     }
-
-    Ok(())
 }

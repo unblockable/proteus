@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use crate::net;
+use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 
 pub mod proto;
 
@@ -56,7 +57,12 @@ pub trait Deserializer<F> {
 #[async_trait]
 pub trait Connector<R: Reader, W: Writer> {
     async fn connect(&self) -> anyhow::Result<(Connection<R, W>, SocketAddr)>;
-    fn into_self(self, addr: SocketAddr) -> Self;
+    // fn into_self(self, target: Socks5Target) -> Self;
+}
+
+#[async_trait]
+pub trait AsyncConnect<R: AsyncRead, W: AsyncWrite> {
+    async fn connect(&self) -> anyhow::Result<(R, W, SocketAddr)>;
 }
 
 #[async_trait]
@@ -95,9 +101,12 @@ impl<R: AsyncRead + Send + Unpin> BufReader<R> {
         }
     }
 
-    #[cfg(test)]
+    // #[cfg(test)]
     /// Note that this will lose buffered bytes if there are any.
     pub fn into_inner(self) -> R {
+        // XXX TODO remove this!! and FIX
+        log::debug!("Socks into_inner() we have {} bytes left", self.buffer.len());
+        assert!(self.buffer.is_empty());
         self.source
     }
 }
@@ -182,41 +191,75 @@ impl<R: Reader, W: Writer> Connection<R, W> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TcpConnector {
-    addr: Option<SocketAddr>,
+    target: Option<Socks5Target>,
 }
 
 impl From<SocketAddr> for TcpConnector {
     fn from(value: SocketAddr) -> Self {
-        Self { addr: Some(value) }
+        Self {
+            target: Some(Socks5Target::from(value)),
+        }
     }
 }
 
+impl From<Socks5Target> for TcpConnector {
+    fn from(value: Socks5Target) -> Self {
+        Self {
+            target: Some(value),
+        }
+    }
+}
+
+pub type TcpReader = BufReader<OwnedReadHalf>;
+pub type TcpWriter = OwnedWriteHalf;
+
 #[async_trait]
-impl Connector<BufReader<OwnedReadHalf>, OwnedWriteHalf> for TcpConnector {
-    async fn connect(
-        &self,
-    ) -> anyhow::Result<(
-        Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf>,
-        SocketAddr,
-    )> {
+impl Connector<TcpReader, TcpWriter> for TcpConnector {
+    async fn connect(&self) -> anyhow::Result<(Connection<TcpReader, TcpWriter>, SocketAddr)> {
         // Might be `None` if created with `default()`.
-        let Some(addr) = self.addr else {
+        let Some(target) = &self.target else {
             bail!("Unable to connect: connector has no address")
         };
-        let stream = TcpStream::connect(addr).await?;
+
+        let stream = match target.addr() {
+            Socks5Address::IpAddr(addr) => TcpStream::connect((addr, target.port())).await?,
+            Socks5Address::Name(name) => {
+                TcpStream::connect(format!("{name}:{}", target.port())).await?
+            }
+            Socks5Address::Unknown => bail!("Unable to connect: connector has unknown address"),
+        };
+
         let local_addr = stream.local_addr()?;
         let conn = Connection::from(stream);
         Ok((conn, local_addr))
     }
+}
 
-    fn into_self(self, addr: SocketAddr) -> Self {
-        Self::from(addr)
+#[async_trait]
+impl AsyncConnect<OwnedReadHalf, OwnedWriteHalf> for TcpConnector {
+    async fn connect(&self) -> anyhow::Result<(OwnedReadHalf, OwnedWriteHalf, SocketAddr)> {
+        // Might be `None` if created with `default()`.
+        let Some(target) = &self.target else {
+            bail!("Unable to connect: connector has no address")
+        };
+
+        let stream = match target.addr() {
+            Socks5Address::IpAddr(addr) => TcpStream::connect((addr, target.port())).await?,
+            Socks5Address::Name(name) => {
+                TcpStream::connect(format!("{name}:{}", target.port())).await?
+            }
+            Socks5Address::Unknown => bail!("Unable to connect: connector has unknown address"),
+        };
+
+        let local_addr = stream.local_addr()?;
+        let (read_half, write_half) = stream.into_split();
+        Ok((read_half, write_half, local_addr))
     }
 }
 
-impl From<TcpStream> for Connection<BufReader<OwnedReadHalf>, OwnedWriteHalf> {
+impl From<TcpStream> for Connection<TcpReader, TcpWriter> {
     fn from(stream: TcpStream) -> Self {
         let (read_half, write_half) = stream.into_split();
         Connection {

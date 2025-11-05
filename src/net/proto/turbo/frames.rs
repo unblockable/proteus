@@ -1,10 +1,9 @@
 use std::fmt::Debug;
 use std::io::Cursor;
-use std::net::{IpAddr, SocketAddr};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::net::proto::socks::address::Socks5Address;
+use crate::net::proto::socks::address::Socks5Target;
 use crate::net::{Deserialize, Serialize};
 
 pub type DataCursor = u64;
@@ -21,7 +20,7 @@ pub struct Message {
 
 #[derive(Debug, PartialEq)]
 pub enum Command {
-    Connect(Target),
+    Connect(Socks5Target),
     ConnectOk,
     Resume,
     ResumeOk,
@@ -31,14 +30,6 @@ pub enum Command {
     ShutOk,
     /// An invalid value found during deserialization.
     Invalid,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Target {
-    /// The target host address to which the server side of the tunnel should connect.
-    pub addr: Socks5Address,
-    /// The target host port to which the server side of the tunnel should connect.
-    pub port: u16,
 }
 
 #[derive(PartialEq)]
@@ -108,7 +99,7 @@ impl Deserialize<Command> for Command {
         let command_type = (src.remaining() >= 1).then(|| src.get_u8())?;
 
         let command = match command_type {
-            0 => Command::Connect(Target::deserialize(src)?),
+            0 => Command::Connect(Socks5Target::deserialize(src)?),
             1 => Command::ConnectOk,
             2 => Command::Resume,
             3 => Command::ResumeOk,
@@ -120,26 +111,6 @@ impl Deserialize<Command> for Command {
         };
 
         Some(command)
-    }
-}
-
-impl Serialize<Target> for Target {
-    fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-
-        buf.put_slice(&self.addr.serialize());
-        buf.put_u16(self.port);
-
-        buf.freeze()
-    }
-}
-
-impl Deserialize<Target> for Target {
-    fn deserialize(src: &mut Cursor<&BytesMut>) -> Option<Target> {
-        Some(Target {
-            addr: Socks5Address::deserialize(src)?,
-            port: (src.remaining() >= 2).then(|| src.get_u16())?,
-        })
     }
 }
 
@@ -190,24 +161,11 @@ impl Debug for Payload {
     }
 }
 
-impl From<SocketAddr> for Target {
-    fn from(value: SocketAddr) -> Self {
-        match value {
-            SocketAddr::V4(socket_addr_v4) => Target {
-                addr: Socks5Address::IpAddr(IpAddr::V4(*socket_addr_v4.ip())),
-                port: socket_addr_v4.port(),
-            },
-            SocketAddr::V6(socket_addr_v6) => Target {
-                addr: Socks5Address::IpAddr(IpAddr::V6(*socket_addr_v6.ip())),
-                port: socket_addr_v6.port(),
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    use crate::net::proto::socks::address::Socks5Address;
 
     use super::*;
 
@@ -231,7 +189,7 @@ mod tests {
                 session_id: 123456789,
                 write: 123,
                 read: 321,
-                command: Command::Connect(Target { addr, port: 12345 }),
+                command: Command::Connect(Socks5Target::new(addr, 12345)),
             };
             assert_serialize_deserialize(msg);
         }

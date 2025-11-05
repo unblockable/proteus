@@ -1,5 +1,5 @@
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 
 use address::Socks5Address;
 use anyhow::bail;
@@ -9,6 +9,7 @@ use frames::{
 };
 
 use crate::net::proto::socks;
+use crate::net::proto::socks::address::Socks5Target;
 use crate::net::{self, Connection, Reader, Writer};
 
 pub mod address;
@@ -34,7 +35,7 @@ type SocksConnectInfo<R, W> = (
     Connection<R, W>,
     Option<std::string::String>,
     Option<std::string::String>,
-    std::net::SocketAddr,
+    Socks5Target,
 );
 
 enum Error {
@@ -393,7 +394,7 @@ struct ServerConnectRequest<R: Reader, W: Writer> {
     request: ConnectRequest,
 }
 
-fn parse_connect_request(request: &ConnectRequest) -> Result<SocketAddr, Error> {
+fn parse_connect_request(request: &ConnectRequest) -> Result<Socks5Target, Error> {
     if request.version != SOCKS_VERSION_5 {
         return Err(Error::Version);
     }
@@ -407,8 +408,11 @@ fn parse_connect_request(request: &ConnectRequest) -> Result<SocketAddr, Error> 
     }
 
     match request.dest_addr {
-        Socks5Address::IpAddr(a) => Ok(SocketAddr::new(a, request.dest_port)),
-        _ => Err(Error::ConnectAddress),
+        Socks5Address::Unknown => Err(Error::ConnectAddress),
+        _ => Ok(Socks5Target::new(
+            request.dest_addr.clone(),
+            request.dest_port,
+        )),
     }
 }
 
@@ -464,7 +468,7 @@ struct ServerConnectResponse<R: Reader, W: Writer> {
     username: Option<String>,
     password: Option<String>,
     response: ConnectResponse,
-    result: Result<SocketAddr, Error>,
+    result: Result<Socks5Target, Error>,
 }
 
 impl<R: Reader, W: Writer> ServerConnectResponse<R, W> {
@@ -491,6 +495,8 @@ impl<R: Reader, W: Writer> ServerConnectResponse<R, W> {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
     use async_trait::async_trait;
     use bytes::Bytes;
     use net::{BufReader, Serialize};
@@ -516,10 +522,6 @@ mod tests {
                 Builder::new().build(),
             );
             Ok((client, MockConnector::default_addr()))
-        }
-
-        fn into_self(self, _addr: SocketAddr) -> Self {
-            Self {}
         }
     }
 
