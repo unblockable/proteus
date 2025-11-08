@@ -9,7 +9,7 @@ use tokio_util::io::{poll_read_buf, poll_write_buf};
 
 use crate::net::READ_CAPACITY;
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::turbo::frames::{Command, Message, Payload};
+use crate::net::proto::turbo::message::{Command, Message, Payload, Request};
 
 #[derive(Debug)]
 pub enum TurboError {
@@ -54,7 +54,7 @@ where
             session_id: self.id,
             write: 0,
             read: 0,
-            command: Command::Connect(target),
+            command: Command::Request(Request::Open(target)),
         };
         self.stream.init = Some(msg);
     }
@@ -105,7 +105,7 @@ impl<R: AsyncRead + Unpin> Stream for TurboStream<R> {
                 session_id: self.state.id,
                 write: 0,
                 read: 0,
-                command: Command::Forward(Payload { data: buf.freeze() }),
+                command: Command::Request(Request::Forward(Payload { data: buf.freeze() })),
             })),
             Poll::Ready(Err(_e)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -123,7 +123,7 @@ impl<W: AsyncWrite + Unpin> TurboSink<W> {
     fn process_message(&mut self, msg: Message) -> Result<(), TurboError> {
         // Make sure we store the payload bytes in the pending option if we have payload to write.
 
-        if let Command::Forward(payload) = msg.command {
+        if let Command::Request(Request::Forward(payload)) = msg.command {
             if self.pending.is_none() {
                 let _ = self.pending.insert(BytesMut::from(payload.data));
                 Ok(())

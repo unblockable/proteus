@@ -13,6 +13,7 @@ use crate::net::proto::socks::address::Socks5Target;
 use crate::net::{self, Connection, Reader, Writer};
 
 pub mod address;
+pub mod codec;
 mod formatter;
 mod frames;
 

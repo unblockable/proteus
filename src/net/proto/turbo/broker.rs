@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::io::Cursor;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::bail;
 use async_trait::async_trait;
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use futures::SinkExt;
 use futures::stream::{SelectAll, StreamExt};
 use rand::RngCore;
@@ -14,12 +13,13 @@ use rand::rngs::ThreadRng;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio_util::codec::{Decoder, Encoder};
 
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
-use crate::net::proto::turbo::formatter::Formatter;
-use crate::net::proto::turbo::frames::Command;
+use crate::net::proto::turbo::codec::TurboCodec;
+use crate::net::proto::turbo::message::{Command, Request};
 use crate::net::proto::turbo::session::{TurboSession, TurboSink, TurboStream};
-use crate::net::{AsyncConnect, Deserializer, Reader, Serialize, Serializer, Writer};
+use crate::net::{AsyncConnect, Deserializer, Reader, Serializer, Writer};
 
 pub struct SessionBroker<R, W, C>
 where
@@ -233,7 +233,9 @@ where
                 match next_result {
                     Some(msg) => {
                         log::trace!("Buffering next message in read buffer: {msg:?}");
-                        state.buffer.extend_from_slice(&msg.serialize());
+                        if let Err(e) = TurboCodec.encode(msg, &mut state.buffer) {
+                            bail!("Turbo message encode error: {e}")
+                        }
 
                         if state.buffer.len() >= len.start {
                             let end = state.buffer.len().min(len.end);
@@ -290,25 +292,22 @@ where
         // Process all complete turbo messages from our buffer.
         loop {
             // Check if we have a full message in our buffer.
-            let (msg, num_bytes) = {
-                let mut read_cursor = Cursor::new(&state.buffer);
-                let Some(message) = Formatter::default().deserialize_frame(&mut read_cursor) else {
-                    break;
-                };
-                (message, read_cursor.position() as usize)
+            let msg = {
+                match TurboCodec.decode(&mut state.buffer) {
+                    Ok(Some(msg)) => msg,
+                    Ok(None) => break,
+                    Err(e) => bail!("Turbo message decode error: {e}")
+                }
             };
 
             log::trace!("Got new message to send to the sink: {msg:?}");
-
-            // Mark that we consumed the message bytes.
-            state.buffer.advance(num_bytes);
 
             while let Ok(sink) = state.pending.try_recv() {
                 state.sinks.insert(sink.id(), sink);
             }
 
             // Process the message.
-            if let Command::Connect(target) = &msg.command {
+            if let Command::Request(Request::Open(target)) = &msg.command {
                 log::debug!("Intercepted incoming connect message for {target}");
                 if !state.sinks.contains_key(&msg.session_id) {
                     drop(state);

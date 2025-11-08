@@ -1,6 +1,6 @@
 pub mod broker;
-mod formatter;
-mod frames;
+mod codec;
+mod message;
 mod session;
 pub mod tunnel;
 
