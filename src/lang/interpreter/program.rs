@@ -1,7 +1,8 @@
+use tokio::io::{AsyncRead, AsyncWrite};
+
 use super::vm::VirtualMachine;
 use crate::lang::Execute;
 use crate::lang::ir::bridge::{Task, TaskID};
-use crate::net::{Reader, Writer};
 
 pub struct Program {
     task: Task,
@@ -20,7 +21,7 @@ impl Program {
         self.task.id
     }
 
-    pub async fn execute<R: Reader, W: Writer>(
+    pub async fn execute<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
         vm: &mut VirtualMachine<R, W>,
     ) -> anyhow::Result<()> {

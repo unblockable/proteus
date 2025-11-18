@@ -1,8 +1,8 @@
 use loader::Loader;
+use tokio::io::{AsyncRead, AsyncWrite};
 use vm::VirtualMachine;
 
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::{Connection, Reader, Writer};
 
 mod crypto;
 mod io;
@@ -22,26 +22,6 @@ pub struct Interpreter {}
 impl Interpreter {
     /// Run the configured proteus protocol instance to completion. This returns
     /// when the proteus protocol terminates and all connections can be closed.
-    pub async fn run<R1, R2, W1, W2, T>(
-        net_conn: Connection<R1, W1>,
-        app_conn: Connection<R2, W2>,
-        protospec: T,
-    ) -> anyhow::Result<()>
-    where
-        R1: Reader,
-        R2: Reader,
-        W1: Writer,
-        W2: Writer,
-        T: TaskProvider + Clone + Send,
-    {
-        // Get the source and sink ends so that we can forward data in both
-        // directions concurrently.
-        let (net_src, net_dst) = net_conn.into_split();
-        let (app_src, app_dst) = app_conn.into_split();
-
-        Interpreter::run_split(net_src, net_dst, app_src, app_dst, protospec).await
-    }
-
     pub async fn run_split<R1, R2, W1, W2, T>(
         net_src: R1,
         net_dst: W1,
@@ -50,10 +30,10 @@ impl Interpreter {
         protospec: T,
     ) -> anyhow::Result<()>
     where
-        R1: Reader,
-        R2: Reader,
-        W1: Writer,
-        W2: Writer,
+        R1: AsyncRead + Unpin,
+        R2: AsyncRead + Unpin,
+        W1: AsyncWrite + Unpin,
+        W2: AsyncWrite + Unpin,
         T: TaskProvider + Clone + Send,
     {
         // Buffers for data we are proxying. The inner src is unobfuscated data
@@ -85,8 +65,8 @@ impl Interpreter {
         direction: ForwardingDirection,
     ) -> anyhow::Result<()>
     where
-        R: Reader,
-        W: Writer,
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
         T: TaskProvider + Clone + Send,
     {
         loop {

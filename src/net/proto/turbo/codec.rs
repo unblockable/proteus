@@ -3,8 +3,8 @@ use std::io::{self, Cursor};
 use bytes::{Buf, BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::net::proto::socks;
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::socks::codec::Socks5Codec;
 use crate::net::proto::turbo::message::{
     self, Command, DataCursor, Message, Payload, Request, Response,
 };
@@ -211,11 +211,11 @@ impl TurboCodec {
     }
 
     fn encode_target(&mut self, target: Socks5Target, dst: &mut BytesMut) -> io::Result<()> {
-        Socks5Codec.encode_target(target, dst)
+        socks::codec::encode_target(target, dst)
     }
 
     fn decode_target(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Socks5Target>> {
-        Socks5Codec.decode_target(src)
+        socks::codec::decode_target(src)
     }
 
     fn encode_payload(&mut self, payload: Payload, dst: &mut BytesMut) -> io::Result<()> {

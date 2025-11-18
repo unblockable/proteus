@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::crypto::chacha::CipherKind;
 use crate::crypto::kdf;
@@ -14,9 +15,8 @@ use crate::lang::ir::v1::*;
 use crate::lang::message::Message;
 use crate::lang::types::{Identifier, PubkeyEncoding};
 use crate::lang::{Execute, Role, Runtime};
-use crate::net::{Reader, Writer};
 
-pub struct VirtualMachine<R: Reader, W: Writer> {
+pub struct VirtualMachine<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> {
     heap: Heap,
     io: IoStream<R, W>,
     crypto: CryptoStream,
@@ -27,7 +27,7 @@ pub struct SharedVmState {
     crypto_state: SharedCryptoState,
 }
 
-impl<R: Reader, W: Writer> VirtualMachine<R, W> {
+impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
     pub fn new(src: R, dst: W, state: Option<SharedVmState>) -> Self {
         Self {
             heap: Heap::new(),
@@ -47,7 +47,7 @@ impl<R: Reader, W: Writer> VirtualMachine<R, W> {
     }
 }
 
-impl<R: Reader, W: Writer> Runtime for VirtualMachine<R, W> {
+impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, W> {
     fn store<T: Into<Data>>(&mut self, addr: Identifier, data: T) -> anyhow::Result<()> {
         self.heap.insert(addr, data)
     }

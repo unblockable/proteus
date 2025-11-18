@@ -1,18 +1,29 @@
 use std::ops::Range;
+use std::pin::Pin;
+use std::task::{Context, Poll, Waker};
 
-use anyhow::bail;
-use bytes::Bytes;
+use anyhow::{anyhow, bail};
+use bytes::{BufMut, Bytes, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use crate::net::{Reader, Writer};
+use crate::net::READ_CAPACITY;
 
-pub struct IoStream<R: Reader, W: Writer> {
+pub struct IoStream<R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     src: R,
     n_recv_src: usize,
     dst: W,
     n_sent_dst: usize,
 }
 
-impl<R: Reader, W: Writer> IoStream<R, W> {
+impl<R, W> IoStream<R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     pub fn new(src: R, dst: W) -> Self {
         Self {
             src,
@@ -22,13 +33,13 @@ impl<R: Reader, W: Writer> IoStream<R, W> {
         }
     }
 
-    pub async fn send(&mut self, bytes: Bytes) -> anyhow::Result<usize> {
+    pub async fn send(&mut self, mut bytes: Bytes) -> anyhow::Result<usize> {
         log::trace!("trying to send {} bytes to dst", bytes.len());
 
-        let num_written = match self.dst.write_bytes(&bytes).await {
-            Ok(num) => num,
-            Err(e) => bail!("Error sending to dst: {e}"),
-        };
+        let num_written = bytes.len();
+        if let Err(e) = self.dst.write_all_buf(&mut bytes).await {
+            bail!("Error sending to dst: {e}")
+        }
 
         self.n_sent_dst += num_written;
         log::trace!("sent {num_written} bytes to dst");
@@ -37,29 +48,348 @@ impl<R: Reader, W: Writer> IoStream<R, W> {
     }
 
     pub async fn flush(&mut self) -> anyhow::Result<()> {
-        self.dst.flush().await
+        self.dst
+            .flush()
+            .await
+            .map_err(|e| anyhow!("Error flushing dst: {e}"))
     }
 
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        self.dst.shutdown().await
+        self.dst
+            .shutdown()
+            .await
+            .map_err(|e| anyhow!("Error shutting down dst: {e}"))
     }
 
     pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
-        log::trace!("Trying to receive {len:?} bytes from src",);
+        log::trace!("Trying to receive {len:?} bytes from src");
 
-        let data = match self.src.read_bytes(len).await {
-            Ok(data) => data,
-            Err(e) => {
-                // Our byte src is done, so we won't be writing to the dst either.
-                let _ = self.shutdown().await;
-                bail!(e)
+        let bytes = self.recv_inner(len).await?;
+
+        self.n_recv_src += bytes.len();
+        log::trace!("received {} bytes from src", bytes.len());
+
+        Ok(bytes)
+    }
+
+    async fn recv_inner(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
+        // TODO: it would be simpler if the compiler gave us the desired read operation
+        // rather than an ambiguous length range here.
+        if len.end <= len.start {
+            Ok(Bytes::new())
+        } else if len.end.saturating_sub(len.start) == 1 {
+            if len.start == 0 {
+                Ok(Bytes::new())
+            } else {
+                self.read_exact(len.start).await
             }
-        };
+        } else if len.start == 0 {
+            self.try_read(len.end.saturating_sub(1))
+        } else if len.start == 1 {
+            self.read(len.end - 1).await
+        } else {
+            let required = self.read_exact(len.start).await?;
+            match self.try_read(len.end.saturating_sub(len.start).saturating_sub(1)) {
+                Ok(more) => {
+                    let mut all = BytesMut::from(required);
+                    all.extend_from_slice(&more);
+                    Ok(all.freeze())
+                }
+                Err(_) => Ok(required),
+            }
+        }
+    }
 
-        let n_bytes = data.len();
-        self.n_recv_src += n_bytes;
-        log::trace!("Received {n_bytes} bytes from src");
+    /// Reads up to len bytes. May read less than len if fewer bytes are available.
+    async fn read(&mut self, len: usize) -> anyhow::Result<Bytes> {
+        let mut buf = BytesMut::new().limit(len);
+        match self.src.read_buf(&mut buf).await {
+            Ok(0) => bail!("read got EOF on source"),
+            Ok(_) => Ok(buf.into_inner().freeze()),
+            Err(e) => bail!("read got error on source: {e}"),
+        }
+    }
 
-        Ok(data)
+    /// Like read, but returns immediately even if no bytes are available.
+    fn try_read(&mut self, len: usize) -> anyhow::Result<Bytes> {
+        // Here we need to pre-allocate, but the len is not exactly requested.
+        // Let's limit the capacity to avoid large allocations.
+        let limit = len.min(READ_CAPACITY);
+
+        let mut buf = BytesMut::with_capacity(limit);
+        buf.resize(limit, 0);
+        let mut read_buf = ReadBuf::new(&mut buf);
+
+        let mut noop_context = Context::from_waker(Waker::noop());
+
+        match Pin::new(&mut self.src).poll_read(&mut noop_context, &mut read_buf) {
+            Poll::Ready(Ok(_)) => {
+                let n_bytes = read_buf.filled().len();
+                if n_bytes == 0 {
+                    bail!("try_read got EOF on source")
+                } else {
+                    buf.truncate(n_bytes);
+                    Ok(buf.freeze())
+                }
+            }
+            Poll::Ready(Err(e)) => bail!("read got error on source: {e}"),
+            Poll::Pending => Ok(Bytes::new()),
+        }
+    }
+
+    /// Reads exactly len bytes, waiting until len bytes are available.
+    async fn read_exact(&mut self, len: usize) -> anyhow::Result<Bytes> {
+        // Here we need to pre-allocate, but the len is exactly requested.
+        let mut buf = BytesMut::with_capacity(len);
+        buf.resize(len, 0);
+        match self.src.read_exact(&mut buf).await {
+            Ok(_) => Ok(buf.freeze()),
+            Err(e) => bail!("read_exact error: {e}"),
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use std::time::Duration;
+
+    use bytes::{BufMut, Bytes, BytesMut};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+    use tokio::time::timeout;
+    use tokio_test::io::Builder;
+
+    use crate::common::mock;
+    use crate::lang::interpreter::io::IoStream;
+
+    async fn bytes_mut_read_buf_limit(payload_len: usize, buf_limit: usize) {
+        let (mut reader, mut writer) = mock::simplex(payload_len);
+        let payload = mock::payload(payload_len);
+
+        assert!(writer.write_all(&payload).await.is_ok());
+
+        let mut read_buf = BytesMut::new().limit(buf_limit);
+        let read_result = reader.read_buf(&mut read_buf).await;
+        assert!(read_result.is_ok());
+
+        let read_len = read_result.unwrap();
+
+        if buf_limit < payload_len {
+            assert_eq!(read_len, buf_limit);
+        } else {
+            assert_eq!(read_len, payload_len);
+        }
+
+        let bytes = read_buf.into_inner().freeze();
+        assert_eq!(&payload[0..read_len], &bytes[..]);
+    }
+
+    #[tokio::test]
+    async fn bytes_mut_read_buf_low_limit() {
+        bytes_mut_read_buf_limit(16, 10).await;
+        bytes_mut_read_buf_limit(16, 15).await;
+    }
+
+    #[tokio::test]
+    async fn bytes_mut_read_buf_same_limit() {
+        bytes_mut_read_buf_limit(16, 16).await;
+    }
+
+    #[tokio::test]
+    async fn bytes_mut_read_buf_high_limit() {
+        bytes_mut_read_buf_limit(16, 17).await;
+        bytes_mut_read_buf_limit(16, 1024).await;
+    }
+
+    async fn bytes_mut_read_exact(payload_len: usize, buf_limit: usize) {
+        assert!(buf_limit <= payload_len);
+
+        let (mut reader, mut writer) = mock::simplex(payload_len);
+        let payload = mock::payload(payload_len);
+
+        assert!(writer.write_all(&payload).await.is_ok());
+
+        let mut read_buf = BytesMut::with_capacity(buf_limit);
+        read_buf.resize(buf_limit, 0);
+        let read_result = reader.read_exact(&mut read_buf).await;
+
+        let read_len = read_result.unwrap();
+        let bytes = read_buf.freeze();
+        assert_eq!(read_len, buf_limit);
+        assert_eq!(&payload[0..read_len], &bytes[..]);
+    }
+
+    #[tokio::test]
+    async fn bytes_mut_read_exact_low_limit() {
+        bytes_mut_read_exact(16, 10).await;
+        bytes_mut_read_exact(16, 15).await;
+    }
+
+    #[tokio::test]
+    async fn bytes_mut_read_exact_same_limit() {
+        bytes_mut_read_exact(16, 16).await;
+    }
+
+    #[test]
+    fn try_read_empty() {
+        let (reader, writer) = mock::simplex(64);
+        let mut io = IoStream::new(reader, writer);
+        let bytes = io.try_read(16).unwrap();
+        assert_eq!(bytes.len(), 0);
+    }
+
+    async fn new_readable_io(
+        payload_len: usize,
+    ) -> (IoStream<impl AsyncRead, impl AsyncWrite>, Bytes) {
+        let (reader, mut writer) = mock::simplex(payload_len);
+
+        let payload = mock::payload(payload_len);
+        if payload_len > 0 {
+            assert!(writer.write_all(&payload).await.is_ok());
+        }
+
+        (IoStream::new(reader, writer), payload)
+    }
+
+    #[tokio::test]
+    async fn try_read_low() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        for i in 0..3 {
+            let bytes = io.try_read(16).unwrap();
+            assert_eq!(bytes.len(), 16);
+            let (start, end) = (i * 16, (i + 1) * 16);
+            assert_eq!(&bytes, &payload[start..end])
+        }
+    }
+
+    #[tokio::test]
+    async fn try_read_same() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        let bytes = io.try_read(64).unwrap();
+
+        assert_eq!(bytes.len(), 64);
+        assert_eq!(&bytes, &payload);
+    }
+
+    #[tokio::test]
+    async fn try_read_high() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        let bytes = io.try_read(128).unwrap();
+        assert_eq!(bytes.len(), 64);
+        assert_eq!(&bytes, &payload);
+    }
+
+    #[test]
+    fn try_read_eof() {
+        // Mock readers return EOF when empty.
+        let mut io = IoStream::new(Builder::new().build(), Builder::new().build());
+        assert!(io.try_read(64).is_err());
+    }
+
+    #[tokio::test]
+    async fn read_empty() {
+        async fn this_should_block() {
+            let (reader, writer) = mock::simplex(64);
+            let mut io = IoStream::new(reader, writer);
+            let _ = io.read(16).await;
+        }
+
+        let result = timeout(Duration::from_millis(500), this_should_block()).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_low() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        for i in 0..3 {
+            let bytes = io.read(16).await.unwrap();
+            assert_eq!(bytes.len(), 16);
+            let (start, end) = (i * 16, (i + 1) * 16);
+            assert_eq!(&bytes, &payload[start..end])
+        }
+    }
+
+    #[tokio::test]
+    async fn read_same() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        let bytes = io.read(64).await.unwrap();
+
+        assert_eq!(bytes.len(), 64);
+        assert_eq!(&bytes, &payload);
+    }
+
+    #[tokio::test]
+    async fn read_high() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        let bytes = io.read(128).await.unwrap();
+        assert_eq!(bytes.len(), 64);
+        assert_eq!(&bytes, &payload);
+    }
+
+    #[tokio::test]
+    async fn read_eof() {
+        // Mock readers return EOF when empty.
+        let mut io = IoStream::new(Builder::new().build(), Builder::new().build());
+        assert!(io.read(64).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_exact_empty() {
+        async fn this_should_block() {
+            let (reader, writer) = mock::simplex(64);
+            let mut io = IoStream::new(reader, writer);
+            let _ = io.read_exact(16).await;
+        }
+
+        let result = timeout(Duration::from_millis(500), this_should_block()).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_exact_low() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        for i in 0..3 {
+            let bytes = io.read_exact(16).await.unwrap();
+            assert_eq!(bytes.len(), 16);
+            let (start, end) = (i * 16, (i + 1) * 16);
+            assert_eq!(&bytes, &payload[start..end])
+        }
+    }
+
+    #[tokio::test]
+    async fn read_exact_same() {
+        let (mut io, payload) = new_readable_io(64).await;
+
+        let bytes = io.read_exact(64).await.unwrap();
+
+        assert_eq!(bytes.len(), 64);
+        assert_eq!(&bytes, &payload);
+    }
+
+    #[tokio::test]
+    async fn read_exact_high() {
+        async fn this_should_block() {
+            let (mut io, _payload) = new_readable_io(64).await;
+            let _ = io.read_exact(128).await;
+        }
+
+        let result = timeout(Duration::from_millis(500), this_should_block()).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_exact_eof() {
+        // Mock readers return EOF when empty.
+        let mut io = IoStream::new(Builder::new().build(), Builder::new().build());
+        assert!(io.read_exact(64).await.is_err());
     }
 }

@@ -2,15 +2,14 @@ use std::future::Future;
 
 use bytes::{Bytes, BytesMut};
 use rand::distributions::{Alphanumeric, DistString};
-use tokio::io::{AsyncWriteExt, DuplexStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
 
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::{BufReader, Connection, Reader};
 
-pub type MockReader = BufReader<DuplexStream>;
+pub type MockReader = DuplexStream;
 pub type MockWriter = DuplexStream;
-pub type MockConnection = Connection<MockReader, MockWriter>;
+pub type MockConnection = (MockReader, MockWriter);
 pub type MockPayload = Bytes;
 
 pub struct Result {
@@ -22,12 +21,20 @@ pub struct Result {
     pub server_app: anyhow::Result<(MockPayload, MockPayload)>,
 }
 
+pub fn simplex(max_buf_size: usize) -> (impl AsyncRead, impl AsyncWrite) {
+    tokio::io::simplex(max_buf_size)
+}
+
+pub fn duplex(max_buf_size: usize) -> (impl AsyncRead + AsyncWrite, impl AsyncRead + AsyncWrite) {
+    tokio::io::duplex(max_buf_size)
+}
+
 pub fn connection_pair(max_buf_size: usize) -> (MockConnection, MockConnection) {
     let (client_w, server_r) = tokio::io::duplex(max_buf_size);
     let (server_w, client_r) = tokio::io::duplex(max_buf_size);
 
-    let client = Connection::new(BufReader::new(client_r), client_w);
-    let server = Connection::new(BufReader::new(server_r), server_w);
+    let client = (client_r, client_w);
+    let server = (server_r, server_w);
 
     (client, server)
 }
@@ -38,11 +45,21 @@ pub fn payload(len: usize) -> MockPayload {
     MockPayload::from(s)
 }
 
-async fn application_read(mut reader: BufReader<DuplexStream>) -> anyhow::Result<MockPayload> {
+async fn application_read(mut reader: MockReader) -> anyhow::Result<MockPayload> {
     let mut payload = BytesMut::new();
-    while let Ok(bytes) = reader.read_bytes(1..2usize.pow(12u32)).await {
-        payload.extend(bytes)
+
+    loop {
+        let mut buf = BytesMut::new();
+        match reader.read_buf(&mut buf).await {
+            Ok(n_bytes) => if n_bytes == 0 {
+                break;
+            } else {
+                payload.extend_from_slice(&buf);
+            },
+            Err(_) => break,
+        }
     }
+
     Ok(payload.freeze())
 }
 
@@ -57,7 +74,7 @@ async fn run_application(
     conn: MockConnection,
     write_len: usize,
 ) -> anyhow::Result<(MockPayload, MockPayload)> {
-    let (reader, writer) = conn.into_split();
+    let (reader, writer) = conn;
     let (r_result, w_result) = tokio::join!(
         application_read(reader),
         application_write(writer, write_len)
@@ -103,7 +120,9 @@ async fn run_interpreter<T: TaskProvider + Clone + Send>(
     app_conn: MockConnection,
     _: bool,
 ) -> anyhow::Result<()> {
-    Interpreter::run(net_conn, app_conn, protospec).await
+    let (net_r, net_w) = net_conn;
+    let (app_r, app_w) = app_conn;
+    Interpreter::run_split(net_r, net_w, app_r, app_w, protospec).await
 }
 
 pub async fn check_protocol_interpretability<T>(
@@ -142,12 +161,8 @@ pub mod tests {
         app_conn: MockConnection,
         _: bool,
     ) -> anyhow::Result<()> {
-        let (net_r, net_w) = net_conn.into_split();
-        let (app_r, app_w) = app_conn.into_split();
-
-        // Unwrap the BufReader too.
-        let net_r = net_r.into_inner();
-        let app_r = app_r.into_inner();
+        let (net_r, net_w) = net_conn;
+        let (app_r, app_w) = app_conn;
 
         // We need to move the streams into `forward()` so that the DuplexStreams close
         // when the tokio::io::copy function receives EOF and returns. Otherwise the EOF
@@ -172,8 +187,8 @@ pub mod tests {
         for len in payload_len_iter() {
             let (c, s) = mock::connection_pair(len);
 
-            let (c_reader, c_writer) = c.into_split();
-            let (s_reader, s_writer) = s.into_split();
+            let (c_reader, c_writer) = c;
+            let (s_reader, s_writer) = s;
 
             let c_sent = mock::application_write(c_writer, len).await.unwrap();
             let s_recv = mock::application_read(s_reader).await.unwrap();

@@ -13,10 +13,10 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
+use crate::net::TcpConnector;
 use crate::net::proto::socks;
 use crate::net::proto::turbo::broker::SessionBroker;
 use crate::net::proto::turbo::tunnel::Tunnel;
-use crate::net::{Connection, TcpConnector, TcpReader, TcpWriter};
 
 pub mod config;
 pub mod control;
@@ -114,16 +114,17 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
     };
 
     log::debug!("Accepted new stream from client {peer_name}");
+    let (mut app_src, mut app_dst) = app_stream.into_split();
 
-    match socks::run_socks5_server(Connection::from(app_stream)).await {
-        Ok((app_conn, username_opt, _, target)) => {
+    match socks::run_socks5_server(&mut app_src, &mut app_dst).await {
+        Ok(info) => {
             log::debug!("Socks5 with peer {peer_name} succeeded");
 
-            let options = match username_opt {
-                Some(username) => {
-                    log::debug!("Obtained Socks5 username: {username}");
+            let options = match info.creds {
+                Some(creds) => {
+                    log::debug!("Obtained Socks5 username: {}", creds.username);
                     let mut map = HashMap::new();
-                    for entry in username.split(';').collect::<Vec<&str>>() {
+                    for entry in creds.username.split(';').collect::<Vec<&str>>() {
                         let parts: Vec<&str> =
                             entry.split('=').filter(|tok| !tok.is_empty()).collect();
                         if parts.len() == 2 {
@@ -143,21 +144,32 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
             let client_spec = Compiler::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
-                "Running Proteus client protocol to forward data from {peer_name} to proxy server at {target}",
+                "Running Proteus client protocol to forward data from {peer_name} to proxy server at {}",
+                info.target
             );
 
             // Normally this connection would have been done during the SOCKS handshake,
             // so that we could return a SOCKS error if the connection fails.
             // We currently removed that from our SOCKS impl to handle other modes.
-            log::debug!("Will need to connect network tunnel to proxy server {target}");
-            let net_connector = TcpConnector::from(target.clone());
+            log::debug!(
+                "Will need to connect network tunnel to proxy server {}",
+                info.target
+            );
 
-            let controller = Tunnel::new_client(net_connector);
+            let controller = Tunnel::new_client(info.target);
             let mut broker = SessionBroker::new_pt_client();
 
-            let (app_src, app_dst) = app_conn.into_split();
-            let app_src = app_src.into_inner();
-            broker.add_session_pt_client(app_src, app_dst).await;
+            if info.remaining_read_buf.is_empty() {
+                broker.add_session_pt_client(app_src, app_dst).await;
+            } else {
+                log::error!(
+                    "Socks5 buffer has {} bytes remaining",
+                    info.remaining_read_buf.len()
+                );
+                // TODO
+                // let chained_reader = Cursor::new(info.remaining_read_buf).chain(app_src);
+                // broker.add_session_pt_client(chained_reader, app_dst).await;
+            }
 
             run_interpreter(controller, broker, client_spec).await;
         }
@@ -232,9 +244,8 @@ where
         }
     }
 
-    let net_conn = Connection::from(net_stream);
-    let (net_src, net_dst) = net_conn.into_split();
-    
+    let (net_src, net_dst) = net_stream.into_split();
+
     let controller = Tunnel::new_server(net_src, net_dst);
     // In PT mode, we pin the already configured forward addr for all app connections.
     let broker = SessionBroker::new_pt_server(conf.forward_addr.into());
@@ -243,7 +254,7 @@ where
 }
 
 async fn run_interpreter(
-    controller: Tunnel<TcpReader, TcpWriter, TcpConnector>,
+    controller: Tunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     broker: SessionBroker<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {

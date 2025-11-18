@@ -1,20 +1,27 @@
+use std::io;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use bytes::BytesMut;
-use futures::{Sink, Stream};
+use bytes::{Buf, BytesMut};
+use futures::{FutureExt, Sink, SinkExt, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::oneshot::{self, Receiver};
 use tokio_util::io::{poll_read_buf, poll_write_buf};
 
-use crate::net::READ_CAPACITY;
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::turbo::message::{Command, Message, Payload, Request};
+use crate::net::proto::turbo::message::{self, Command, Message, Payload, Request, Response};
+use crate::net::{AsyncConnectExt, READ_CAPACITY};
 
 #[derive(Debug)]
 pub enum TurboError {
     WouldBlock,
     Unknown,
+}
+
+enum TurboIo<T> {
+    Connected(T),
+    Disconnected(Receiver<io::Result<T>>),
 }
 
 pub struct TurboSession<R, W>
@@ -29,20 +36,60 @@ where
 
 impl<R, W> TurboSession<R, W>
 where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
 {
-    pub fn new(id: u64, src: R, dst: W) -> Self {
+    pub fn connected(id: u64, src: R, dst: W) -> Self {
         let state = SharedSessionState::new(id);
         Self {
             id,
             stream: TurboStream {
-                src,
+                io: TurboIo::Connected(src),
                 state: state.clone(),
                 init: None,
             },
             sink: TurboSink {
-                dst,
+                io: TurboIo::Connected(dst),
+                pending: None,
+                state,
+            },
+        }
+    }
+
+    pub fn disconnected<C>(id: u64, target: Socks5Target) -> Self
+    where
+        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+    {
+        let (read_tx, read_rx) = oneshot::channel();
+        let (write_tx, write_rx) = oneshot::channel();
+
+        // Spawn a background task to establish the connection and split the stream.
+        tokio::spawn(async move {
+            let mut connector = C::default();
+            let result = connector.connect(target).await;
+
+            match result {
+                Ok((reader, writer)) => {
+                    let _ = read_tx.send(Ok(reader));
+                    let _ = write_tx.send(Ok(writer));
+                }
+                Err(e) => {
+                    let _ = read_tx.send(Err(io::Error::from(e.kind())));
+                    let _ = write_tx.send(Err(e));
+                }
+            }
+        });
+
+        let state = SharedSessionState::new(id);
+        Self {
+            id,
+            stream: TurboStream {
+                io: TurboIo::Disconnected(read_rx),
+                state: state.clone(),
+                init: None,
+            },
+            sink: TurboSink {
+                io: TurboIo::Disconnected(write_rx),
                 pending: None,
                 state,
             },
@@ -65,7 +112,7 @@ where
 }
 
 pub struct TurboStream<R: AsyncRead + Unpin> {
-    src: R,
+    io: TurboIo<R>,
     state: SharedSessionState,
     init: Option<Message>,
 }
@@ -98,23 +145,48 @@ impl<R: AsyncRead + Unpin> Stream for TurboStream<R> {
             return Poll::Ready(Some(msg));
         }
 
-        let mut buf = BytesMut::with_capacity(READ_CAPACITY);
-        match poll_read_buf(Pin::new(&mut self.src), cx, &mut buf) {
-            Poll::Ready(Ok(0)) => Poll::Ready(None),
-            Poll::Ready(Ok(_len)) => Poll::Ready(Some(Message {
-                session_id: self.state.id,
-                write: 0,
-                read: 0,
-                command: Command::Request(Request::Forward(Payload { data: buf.freeze() })),
-            })),
-            Poll::Ready(Err(_e)) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
+        match &mut self.io {
+            TurboIo::Connected(src) => {
+                let mut buf = BytesMut::with_capacity(READ_CAPACITY);
+                match poll_read_buf(Pin::new(src), cx, &mut buf) {
+                    Poll::Ready(Ok(0)) => Poll::Ready(None),
+                    Poll::Ready(Ok(_len)) => Poll::Ready(Some(Message {
+                        session_id: self.state.id,
+                        write: 0,
+                        read: 0,
+                        command: Command::Request(Request::Forward(Payload { data: buf.freeze() })),
+                    })),
+                    Poll::Ready(Err(_e)) => Poll::Ready(None),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+            TurboIo::Disconnected(chan_rx) => match chan_rx.poll_unpin(cx) {
+                Poll::Ready(Ok(connect_result)) => match connect_result {
+                    Ok(src) => {
+                        self.io = TurboIo::Connected(src);
+                        Poll::Ready(Some(Message {
+                            session_id: self.state.id,
+                            write: 0,
+                            read: 0,
+                            command: Command::Response(Response::Open(message::Result::Ok)),
+                        }))
+                    }
+                    Err(_) => Poll::Ready(Some(Message {
+                        session_id: self.state.id,
+                        write: 0,
+                        read: 0,
+                        command: Command::Response(Response::Open(message::Result::Error)),
+                    })),
+                },
+                Poll::Ready(Err(_)) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            },
         }
     }
 }
 
 pub struct TurboSink<W: AsyncWrite + Unpin> {
-    dst: W,
+    io: TurboIo<W>,
     pending: Option<BytesMut>,
     state: SharedSessionState,
 }
@@ -171,25 +243,61 @@ impl<W: AsyncWrite + Unpin> Sink<Message> for TurboSink<W> {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        // If we have pending data, write that before flushing dst.
-        if let Some(mut buf) = self.pending.take() {
-            match poll_write_buf(Pin::new(&mut self.dst), cx, &mut buf) {
-                Poll::Ready(Ok(_)) => Pin::new(&mut self.dst).poll_flush(cx),
-                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                Poll::Pending => {
-                    let _ = self.pending.insert(buf);
-                    Poll::Pending
+        let this = self.get_mut();
+        loop {
+            match &mut this.io {
+                TurboIo::Connected(dst) => {
+                    // If we have pending data, write that before flushing dst.
+                    if let Some(mut buf) = this.pending.take() {
+                        // TODO I think I need a `while buf.has_remaining()` here in case we didnt write the full buf
+                        match poll_write_buf(Pin::new(dst), cx, &mut buf) {
+                            Poll::Ready(Ok(_)) => return Pin::new(dst).poll_flush(cx),
+                            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                            Poll::Pending => {
+                                let _ = this.pending.insert(buf);
+                                return Poll::Pending;
+                            }
+                        }
+                    } else {
+                        return Pin::new(dst).poll_flush(cx);
+                    }
+                }
+                TurboIo::Disconnected(chan_rx) => {
+                    if this.pending.is_some() {
+                        match chan_rx.poll_unpin(cx) {
+                            Poll::Ready(Ok(connect_result)) => match connect_result {
+                                Ok(dst) => {
+                                    this.io = TurboIo::Connected(dst);
+                                    continue;
+                                }
+                                Err(e) => return Poll::Ready(Err(e)),
+                            },
+                            Poll::Ready(Err(e)) => {
+                                return Poll::Ready(Err(std::io::Error::new(
+                                    std::io::ErrorKind::BrokenPipe,
+                                    format!("RecvError from connect pipe: {e}"),
+                                )));
+                            }
+                            Poll::Pending => return Poll::Pending,
+                        }
+                    } else {
+                        return Poll::Ready(Ok(()));
+                    }
                 }
             }
-        } else {
-            Pin::new(&mut self.dst).poll_flush(cx)
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         // Flush our own buffer, then shutdown the dst.
         match self.as_mut().poll_flush(cx) {
-            Poll::Ready(Ok(_)) => Pin::new(&mut self.dst).poll_shutdown(cx),
+            Poll::Ready(Ok(_)) => {
+                if let TurboIo::Connected(dst) = &mut self.io {
+                    Pin::new(dst).poll_shutdown(cx)
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            }
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
             Poll::Pending => Poll::Pending,
         }

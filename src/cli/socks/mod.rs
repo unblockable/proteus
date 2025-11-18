@@ -10,10 +10,11 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
+use crate::net::TcpConnector;
 use crate::net::proto::socks;
-use crate::net::proto::turbo::tunnel::Tunnel;
+use crate::net::proto::socks::address::Socks5Target;
 use crate::net::proto::turbo::broker::SessionBroker;
-use crate::net::{Connection, TcpConnector, TcpReader, TcpWriter};
+use crate::net::proto::turbo::tunnel::Tunnel;
 
 use super::args::SocksArgs;
 
@@ -45,7 +46,6 @@ async fn run_client(client_args: ClientArgs, psf_path: String) -> anyhow::Result
     );
     let server_addr = SocketAddr::from_str(client_args.connect.as_str())
         .map_err(|e| anyhow!("Error parsing server connect info: {e}"))?;
-    let server_connector = TcpConnector::from(server_addr);
 
     // We need a protocol that we should run over the tunnel to the proxy server.
     log::info!("Client configured with protocol specification file {psf_path}",);
@@ -66,7 +66,7 @@ async fn run_client(client_args: ClientArgs, psf_path: String) -> anyhow::Result
 
     // We use a controller to manage the tunnel to the proxy server, and a broker to
     // manage the incoming application stream sessions.
-    let controller = Tunnel::new_client(server_connector);
+    let controller = Tunnel::new_client(Socks5Target::from(server_addr));
     let broker = SessionBroker::new_socks_client();
 
     // Run a proteus protocol interpreter in the background. We only run one because we
@@ -95,13 +95,24 @@ async fn handle_client_connection(
     };
 
     log::debug!("Accepted new stream from client {peer_name}");
+    let (mut app_src, mut app_dst) = app_stream.into_split();
 
-    match socks::run_socks5_server(Connection::from(app_stream)).await {
-        Ok((app_conn, _, _, target)) => {
+    match socks::run_socks5_server(&mut app_src, &mut app_dst).await {
+        Ok(info) => {
             log::debug!("Socks5 with peer {peer_name} succeeded");
-            let (app_src, app_dst) = app_conn.into_split();
-            let app_src = app_src.into_inner();
-            broker.add_session_socks_client(app_src, app_dst, target).await;
+            if info.remaining_read_buf.is_empty() {
+                broker
+                    .add_session_socks_client(app_src, app_dst, info.target)
+                    .await;
+            } else {
+                log::error!(
+                    "Socks5 buffer has {} bytes remaining",
+                    info.remaining_read_buf.len()
+                );
+                // TODO
+                // let chained_reader = Cursor::new(info.remaining_read_buf).chain(app_src);
+                // broker.add_session_socks_client(chained_reader, app_dst, info.target).await;
+            }
         }
         Err(e) => {
             log::debug!("Stream from peer {peer_name} failed during Socks5 protocol: {e}");
@@ -143,8 +154,7 @@ async fn handle_server_connection(
 
     log::debug!("Accepted new network stream from Proteus client {peer_name}");
 
-    let net_conn = Connection::from(net_stream);
-    let (net_src, net_dst) = net_conn.into_split();
+    let (net_src, net_dst) = net_stream.into_split();
 
     // We use a controller to manage the tunnel to the client, and a broker to
     // manage the outgoing server stream sessions.
@@ -155,7 +165,7 @@ async fn handle_server_connection(
 }
 
 async fn run_interpreter(
-    controller: Tunnel<TcpReader, TcpWriter, TcpConnector>,
+    controller: Tunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     broker: SessionBroker<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
