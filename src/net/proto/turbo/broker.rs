@@ -286,7 +286,7 @@ where
         }
 
         // Start tracking pending streams from new sessions. The loop ends on a `Poll::Pending`,
-        // which ensures that a wakeup will occur when new streams arrive.
+        // which ensures that a wakeup will always occur when new streams arrive.
         while let Poll::Ready(maybe_stream) = state.pending.poll_recv(cx) {
             match maybe_stream {
                 Some(stream) => state.streams.push(stream),
@@ -294,10 +294,8 @@ where
             }
         }
 
-        // Read as many messages as needed to fill the ReadBuf if we can. Note we do not poll
-        // the SelectAll instance if it is empty to avoid it closing down; we may want to add
-        // more streams to it over time.
-        while !state.streams.is_empty() && state.buffer.len() < buf.remaining() {
+        // Read as many messages as needed to fill the ReadBuf if we can.
+        while state.buffer.len() < buf.remaining() {
             match state.streams.poll_next_unpin(cx) {
                 Poll::Ready(Some(msg)) => {
                     log::trace!("Buffering next message in read buffer: {msg:?}");
@@ -305,16 +303,10 @@ where
                     // codec and would be a bug, so let's panic in that case.
                     TurboCodec.encode(msg, &mut state.buffer).unwrap();
                 }
-                Poll::Ready(None) => {
-                    // This means that `poll_next` should not be invoked again. We avoid this
-                    // case by only polling if we have some streams (to support dynamically
-                    // adding streams later), so we should never get into this state.
-                    panic!("A non-empty `SelectAll` instance returned `Poll::Ready(None)`")
-                }
-                Poll::Pending => {
-                    // All streams are pending now, and a wakeup will occur when ready.
-                    break;
-                }
+                // All streams are closed; a wakeup will occur when a pending one arrives.
+                Poll::Ready(None) => break,
+                // All streams are pending, a wakeup will occur when a message is ready.
+                Poll::Pending => break,
             }
         }
 
@@ -424,5 +416,37 @@ where
 
 #[cfg(test)]
 mod tests {
-    // TODO
+    use futures::StreamExt;
+    use futures::stream::{self, SelectAll};
+
+    #[tokio::test]
+    async fn select_all_is_reusable() {
+        let stream1 = Box::new(stream::iter(vec![10]));
+        let stream2 = Box::new(stream::iter(vec![1]));
+
+        let mut all_streams = SelectAll::new();
+
+        assert!(all_streams.is_empty());
+        assert_eq!(all_streams.len(), 0);
+
+        all_streams.push(stream1);
+        assert_eq!(all_streams.len(), 1);
+
+        assert!(matches!(all_streams.next().await, Some(_)));
+        assert_eq!(all_streams.len(), 1);
+        assert!(matches!(all_streams.next().await, None));
+        assert_eq!(all_streams.len(), 0);
+
+        assert!(matches!(all_streams.next().await, None));
+        assert!(matches!(all_streams.next().await, None));
+        assert!(matches!(all_streams.next().await, None));
+
+        all_streams.push(stream2);
+        assert_eq!(all_streams.len(), 1);
+
+        assert!(matches!(all_streams.next().await, Some(_)));
+        assert_eq!(all_streams.len(), 1);
+        assert!(matches!(all_streams.next().await, None));
+        assert_eq!(all_streams.len(), 0);
+    }
 }
