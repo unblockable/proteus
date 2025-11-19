@@ -48,15 +48,9 @@ pub fn payload(len: usize) -> MockPayload {
 async fn application_read(mut reader: MockReader) -> anyhow::Result<MockPayload> {
     let mut payload = BytesMut::new();
 
-    loop {
-        let mut buf = BytesMut::new();
-        match reader.read_buf(&mut buf).await {
-            Ok(n_bytes) => if n_bytes == 0 {
-                break;
-            } else {
-                payload.extend_from_slice(&buf);
-            },
-            Err(_) => break,
+    while let Ok(n_bytes) = reader.read_buf(&mut payload).await {
+        if n_bytes == 0 {
+            break;
         }
     }
 
@@ -138,10 +132,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use tokio::io::DuplexStream;
-
-    use super::{MockConnection, MockPayload};
-    use crate::common::mock;
+    use crate::common::mock::{self, MockConnection, MockPayload, MockReader, MockWriter};
     use crate::lang::ir::bridge::{Task, TaskID, TaskProvider, TaskSet};
 
     pub fn payload_len_iter() -> impl Iterator<Item = usize> {
@@ -151,7 +142,7 @@ pub mod tests {
         .into_iter()
     }
 
-    async fn forward(mut src: DuplexStream, mut dst: DuplexStream) -> anyhow::Result<u64> {
+    async fn forward(mut src: MockReader, mut dst: MockWriter) -> anyhow::Result<u64> {
         Ok(tokio::io::copy(&mut src, &mut dst).await?)
     }
 

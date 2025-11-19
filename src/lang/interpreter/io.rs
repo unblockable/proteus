@@ -14,6 +14,7 @@ where
     W: AsyncWrite + Unpin,
 {
     src: R,
+    src_err_msg: Option<String>,
     n_recv_src: usize,
     dst: W,
     n_sent_dst: usize,
@@ -27,6 +28,7 @@ where
     pub fn new(src: R, dst: W) -> Self {
         Self {
             src,
+            src_err_msg: None,
             n_recv_src: 0,
             dst,
             n_sent_dst: 0,
@@ -64,15 +66,24 @@ where
     pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
         log::trace!("Trying to receive {len:?} bytes from src");
 
-        let bytes = self.recv_inner(len).await?;
+        let result = self.recv_inner(len.clone()).await;
 
-        self.n_recv_src += bytes.len();
-        log::trace!("received {} bytes from src", bytes.len());
-
-        Ok(bytes)
+        if let Ok(bytes) = result {
+            self.n_recv_src += bytes.len();
+            log::trace!("Wanted {len:?} received {} bytes from src", bytes.len());
+            Ok(bytes)
+        } else {
+            let _ = self.shutdown().await;
+            result
+        }
     }
 
     async fn recv_inner(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
+        // Propagate any previous eof we received from src.
+        if let Some(msg) = &self.src_err_msg {
+            bail!(msg.clone());
+        }
+
         // TODO: it would be simpler if the compiler gave us the desired read operation
         // rather than an ambiguous length range here.
         if len.end <= len.start {
@@ -102,44 +113,78 @@ where
 
     /// Reads up to len bytes. May read less than len if fewer bytes are available.
     async fn read(&mut self, len: usize) -> anyhow::Result<Bytes> {
-        let mut buf = BytesMut::new().limit(len);
-        match self.src.read_buf(&mut buf).await {
-            Ok(0) => bail!("read got EOF on source"),
-            Ok(_) => Ok(buf.into_inner().freeze()),
-            Err(e) => bail!("read got error on source: {e}"),
+        // To avoid large pre-allocation, we
+        // 1. use read_buf() to async-read the first chunk
+        // 2. if we get a full chunk, use try_read() to sync-read remaining available chunks
+        let limit = len.min(READ_CAPACITY);
+        let mut limited_buf = BytesMut::with_capacity(limit).limit(limit);
+
+        match self.src.read_buf(&mut limited_buf).await {
+            Ok(0) => {
+                let msg = format!("read got EOF on source");
+                self.src_err_msg = Some(msg.clone());
+                bail!(msg)
+            }
+            Ok(n_bytes) => {
+                let mut buf = limited_buf.into_inner();
+                if n_bytes == limit && n_bytes < len {
+                    // Any err msg from try_read will be set internally.
+                    if let Ok(more) = self.try_read(len - buf.len()) {
+                        buf.extend_from_slice(&more);
+                    }
+                }
+                Ok(buf.freeze())
+            }
+            Err(e) => {
+                let msg = format!("read got error on source: {e}");
+                self.src_err_msg = Some(msg.clone());
+                bail!(msg)
+            }
         }
     }
 
     /// Like read, but returns immediately even if no bytes are available.
     fn try_read(&mut self, len: usize) -> anyhow::Result<Bytes> {
-        // Here we need to pre-allocate, but the len is not exactly requested.
-        // Let's limit the capacity to avoid large allocations.
-        let limit = len.min(READ_CAPACITY);
-
-        let mut buf = BytesMut::with_capacity(limit);
-        buf.resize(limit, 0);
-        let mut read_buf = ReadBuf::new(&mut buf);
-
+        // We sync-read in chunks to avoid large allocations.
+        let mut buf = BytesMut::new();
         let mut noop_context = Context::from_waker(Waker::noop());
 
-        match Pin::new(&mut self.src).poll_read(&mut noop_context, &mut read_buf) {
-            Poll::Ready(Ok(_)) => {
-                let n_bytes = read_buf.filled().len();
-                if n_bytes == 0 {
-                    bail!("try_read got EOF on source")
-                } else {
-                    buf.truncate(n_bytes);
-                    Ok(buf.freeze())
+        while buf.len() < len {
+            let limit = READ_CAPACITY.min(len - buf.len());
+            let mut chunk = BytesMut::with_capacity(limit);
+            chunk.resize(limit, 0);
+
+            let mut read_buf = ReadBuf::new(&mut chunk);
+
+            match Pin::new(&mut self.src).poll_read(&mut noop_context, &mut read_buf) {
+                Poll::Ready(Ok(_)) => {
+                    let n_bytes = read_buf.filled().len();
+                    if n_bytes > 0 {
+                        chunk.truncate(n_bytes);
+                        buf.extend_from_slice(&chunk);
+                    } else {
+                        self.src_err_msg = Some(format!("try_read got EOF on source"));
+                        break;
+                    }
                 }
+                Poll::Ready(Err(e)) => {
+                    self.src_err_msg = Some(format!("read got error on source: {e}"));
+                    break;
+                }
+                Poll::Pending => break,
             }
-            Poll::Ready(Err(e)) => bail!("read got error on source: {e}"),
-            Poll::Pending => Ok(Bytes::new()),
+        }
+
+        if buf.len() > 0 || self.src_err_msg.is_none() {
+            Ok(buf.freeze())
+        } else {
+            bail!(self.src_err_msg.clone().unwrap())
         }
     }
 
     /// Reads exactly len bytes, waiting until len bytes are available.
     async fn read_exact(&mut self, len: usize) -> anyhow::Result<Bytes> {
-        // Here we need to pre-allocate, but the len is exactly requested.
+        // Here we need to pre-allocate with the exactly requested len.
         let mut buf = BytesMut::with_capacity(len);
         buf.resize(len, 0);
         match self.src.read_exact(&mut buf).await {
@@ -167,7 +212,10 @@ pub mod tests {
 
         assert!(writer.write_all(&payload).await.is_ok());
 
-        let mut read_buf = BytesMut::new().limit(buf_limit);
+        // If you use BytesMut::new() here, you'll only get a 64 byte allocated buffer.
+        // We need with_capacity() if we want read_buf to give us more than 64 bytes.
+        // Because we are using limit(), we don't need to call resize().
+        let mut read_buf = BytesMut::with_capacity(payload_len).limit(buf_limit);
         let read_result = reader.read_buf(&mut read_buf).await;
         assert!(read_result.is_ok());
 
@@ -227,6 +275,13 @@ pub mod tests {
     #[tokio::test]
     async fn bytes_mut_read_exact_same_limit() {
         bytes_mut_read_exact(16, 16).await;
+    }
+
+    #[tokio::test]
+    async fn bytes_mut_large_reads() {
+        bytes_mut_read_buf_limit(1_000_000, 100_000).await;
+        bytes_mut_read_buf_limit(1_000_000, 1_000_000).await;
+        bytes_mut_read_buf_limit(1_000_000, 2_000_000).await;
     }
 
     #[test]
@@ -391,5 +446,17 @@ pub mod tests {
         // Mock readers return EOF when empty.
         let mut io = IoStream::new(Builder::new().build(), Builder::new().build());
         assert!(io.read_exact(64).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn large_reads() {
+        // If source has full payload available, we expect to receive it all.
+        for len in mock::tests::payload_len_iter() {
+            let (mut io, payload) = new_readable_io(len).await;
+
+            let bytes = io.recv(1..len + 1).await.unwrap();
+            assert_eq!(bytes.len(), len);
+            assert_eq!(&bytes, &payload);
+        }
     }
 }
