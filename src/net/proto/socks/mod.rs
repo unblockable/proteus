@@ -42,7 +42,7 @@ pub struct Socks5Info {
 
 pub struct SocksAuthCredentials {
     pub username: String,
-    pub password: String,
+    pub _password: String,
 }
 
 enum Error {
@@ -109,12 +109,15 @@ where
         match auth_result {
             Ok(_) => Some(SocksAuthCredentials {
                 username: auth_req.username,
-                password: auth_req.password,
+                _password: auth_req.password,
             }),
             Err(e) => bail!("{e}"),
         }
-    } else {
+    } else if choice.auth_method == SOCKS_AUTH_NONE {
         None
+    } else {
+        // SOCKS_AUTH_UNSUPPORTED
+        bail!("{}", Error::AuthMethod);
     };
 
     // Handshake is done. Now handle the main connection request.
@@ -289,32 +292,16 @@ fn prepare_connect_response(status: u8) -> ConnectResponse {
 mod tests {
     use std::net::SocketAddr;
 
-    // use async_trait::async_trait;
     use bytes::Bytes;
-    use tokio_test::io::{Builder, Mock};
+    use tokio_test::io::Builder;
+    use tokio_util::codec::Encoder;
 
     use super::*;
-    // use crate::net::AsyncConnect;
 
-    pub struct MockConnector {}
-
-    impl MockConnector {
-        fn default_addr() -> SocketAddr {
-            // We return zeros for our localhost bind address.
-            "0.0.0.0:0".parse().expect("Valid socket addr")
-        }
+    fn default_addr() -> SocketAddr {
+        // We return zeros for our localhost bind address.
+        "0.0.0.0:0".parse().expect("Valid socket addr")
     }
-
-    // #[async_trait]
-    // impl AsyncConnect<Mock, Mock> for MockConnector {
-    //     async fn connect(&self) -> anyhow::Result<(Mock, Mock, SocketAddr)> {
-    //         Ok((
-    //             Builder::new().build(),
-    //             Builder::new().build(),
-    //             MockConnector::default_addr(),
-    //         ))
-    //     }
-    // }
 
     fn greeting(auth_method: u8) -> Greeting {
         Greeting {
@@ -358,7 +345,7 @@ mod tests {
     }
 
     fn connect_response() -> ConnectResponse {
-        let sock_addr = MockConnector::default_addr();
+        let sock_addr = default_addr();
         ConnectResponse {
             version: SOCKS_VERSION_5,
             status: SOCKS_STATUS_REQ_GRANTED,
@@ -368,50 +355,58 @@ mod tests {
         }
     }
 
-    // #[tokio::test]
-    // async fn userpass_auth_method() {
-    //     let reader = Builder::new()
-    //         .read(&greeting(SOCKS_AUTH_USERPASS).serialize())
-    //         .read(&userpass_auth_request().serialize())
-    //         .read(&connect_request().serialize())
-    //         .build();
-    //     let writer = Builder::new()
-    //         .write(&choice(SOCKS_AUTH_USERPASS).serialize())
-    //         .write(&userpass_auth_response().serialize())
-    //         .write(&connect_response().serialize())
-    //         .build();
+    fn encode<T>(frame: T) -> Bytes
+    where
+        Message: From<T>,
+    {
+        let mut buf = BytesMut::new();
+        let mut codec = Socks5Codec::new();
+        codec.encode(Message::from(frame), &mut buf).unwrap();
+        buf.freeze()
+    }
 
-    //     let s = run_socks5_server(&mut reader, &mut writer).await;
-    //     assert!(s.is_ok())
-    // }
+    #[tokio::test]
+    async fn userpass_auth_method() {
+        let mut reader = Builder::new()
+            .read(&encode(greeting(SOCKS_AUTH_USERPASS)))
+            .read(&encode(userpass_auth_request()))
+            .read(&encode(connect_request()))
+            .build();
+        let mut writer = Builder::new()
+            .write(&encode(choice(SOCKS_AUTH_USERPASS)))
+            .write(&encode(userpass_auth_response()))
+            .write(&encode(connect_response()))
+            .build();
 
-    // #[tokio::test]
-    // async fn none_auth_method() {
-    //     let reader = Builder::new()
-    //         .read(&greeting(SOCKS_AUTH_NONE).serialize())
-    //         .read(&connect_request().serialize())
-    //         .build();
-    //     let writer = Builder::new()
-    //         .write(&choice(SOCKS_AUTH_NONE).serialize())
-    //         .write(&connect_response().serialize())
-    //         .build();
-    //     let conn = Connection::new(BufReader::new(reader), writer);
+        let s = run_socks5_server(&mut reader, &mut writer).await;
+        assert!(s.is_ok())
+    }
 
-    //     let s = run_socks5_server(conn).await;
-    //     assert!(s.is_ok())
-    // }
+    #[tokio::test]
+    async fn none_auth_method() {
+        let mut reader = Builder::new()
+            .read(&encode(greeting(SOCKS_AUTH_NONE)))
+            .read(&encode(connect_request()))
+            .build();
+        let mut writer = Builder::new()
+            .write(&encode(choice(SOCKS_AUTH_NONE)))
+            .write(&encode(connect_response()))
+            .build();
 
-    // #[tokio::test]
-    // async fn unsupported_auth_method() {
-    //     let reader = Builder::new()
-    //         .read(&greeting(SOCKS_AUTH_UNSUPPORTED).serialize())
-    //         .build();
-    //     let writer = Builder::new()
-    //         .write(&choice(SOCKS_AUTH_UNSUPPORTED).serialize())
-    //         .build();
-    //     let conn = Connection::new(BufReader::new(reader), writer);
+        let s = run_socks5_server(&mut reader, &mut writer).await;
+        assert!(s.is_ok())
+    }
 
-    //     let s = run_socks5_server(conn).await;
-    //     assert!(s.is_err())
-    // }
+    #[tokio::test]
+    async fn unsupported_auth_method() {
+        let mut reader = Builder::new()
+            .read(&encode(greeting(SOCKS_AUTH_UNSUPPORTED)))
+            .build();
+        let mut writer = Builder::new()
+            .write(&encode(choice(SOCKS_AUTH_UNSUPPORTED)))
+            .build();
+
+        let s = run_socks5_server(&mut reader, &mut writer).await;
+        assert!(s.is_err())
+    }
 }

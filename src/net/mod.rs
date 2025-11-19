@@ -52,15 +52,6 @@ pub struct TcpConnector {
     future: Option<Pin<Box<dyn Future<Output = io::Result<TcpStream>> + Send + Sync>>>,
 }
 
-impl TcpConnector {
-    pub fn with_pinned_target(target: Socks5Target) -> Self {
-        Self {
-            pinned_target: Some(target),
-            future: None,
-        }
-    }
-}
-
 impl AsMut<TcpConnector> for TcpConnector {
     fn as_mut(&mut self) -> &mut TcpConnector {
         self
