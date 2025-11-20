@@ -69,7 +69,10 @@ where
         match self.recv_inner(len.clone()).await {
             Ok(bytes) => {
                 self.n_recv_src += bytes.len();
-                log::trace!("recv() requested {len:?} received {} bytes from src", bytes.len());
+                log::trace!(
+                    "recv() requested {len:?} received {} bytes from src",
+                    bytes.len()
+                );
                 Ok(bytes)
             }
             Err(e) => {
@@ -101,7 +104,7 @@ where
         } else if len.start == 0 {
             self.try_read(len.end.saturating_sub(1))
         } else if len.start == 1 {
-            self.read(len.end - 1).await
+            self.read(len.end.saturating_sub(1)).await
         } else {
             let required = self.read_exact(len.start).await?;
             match self.try_read(len.end.saturating_sub(len.start).saturating_sub(1)) {
@@ -462,5 +465,26 @@ pub mod tests {
             assert_eq!(bytes.len(), len);
             assert_eq!(&bytes, &payload);
         }
+    }
+
+    #[tokio::test]
+    async fn ranges() {
+        // If source has full payload available, we expect to receive it all.
+        let (mut io, _payload) = new_readable_io(64).await;
+
+        let bytes = io.recv(0..1).await.unwrap();
+        assert_eq!(bytes.len(), 0);
+
+        let bytes = io.recv(0..10).await.unwrap();
+        assert_eq!(bytes.len(), 9);
+
+        let bytes = io.recv(1..10).await.unwrap();
+        assert_eq!(bytes.len(), 9);
+
+        let bytes = io.recv(5..6).await.unwrap();
+        assert_eq!(bytes.len(), 5);
+
+        let bytes = io.recv(1..100).await.unwrap();
+        assert_eq!(bytes.len(), 64 - 9 - 9 - 5);
     }
 }
