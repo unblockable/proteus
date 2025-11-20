@@ -66,15 +66,19 @@ where
     pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
         log::trace!("Trying to receive {len:?} bytes from src");
 
-        let result = self.recv_inner(len.clone()).await;
-
-        if let Ok(bytes) = result {
-            self.n_recv_src += bytes.len();
-            log::trace!("Wanted {len:?} received {} bytes from src", bytes.len());
-            Ok(bytes)
-        } else {
-            let _ = self.shutdown().await;
-            result
+        match self.recv_inner(len.clone()).await {
+            Ok(bytes) => {
+                self.n_recv_src += bytes.len();
+                log::trace!("recv() requested {len:?} received {} bytes from src", bytes.len());
+                Ok(bytes)
+            }
+            Err(e) => {
+                // If our source of data had an error, we won't be forwarding
+                // any more to the dst either.
+                log::debug!("Shutting down dst after recv error: {e}");
+                let _ = self.shutdown().await;
+                Err(e)
+            }
         }
     }
 

@@ -58,7 +58,7 @@ impl From<Bytes> for Payload {
 
 impl Debug for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Payload(len: {}))", self.data.len())
+        write!(f, "Payload(len: {})", self.data.len())
     }
 }
 

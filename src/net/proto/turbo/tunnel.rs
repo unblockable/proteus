@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -15,6 +16,15 @@ use crate::net::proto::socks::address::Socks5Target;
 enum TunnelIo<T> {
     Connected(T),
     Disconnected((Arc<Notify>, Receiver<io::Result<T>>)),
+}
+
+impl<T> Debug for TunnelIo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            TunnelIo::Connected(_) => write!(f, "TunnelIo(State:Connected)"),
+            TunnelIo::Disconnected(_) => write!(f, "TunnelIo(State:Disconnected)"),
+        }
+    }
 }
 
 pub struct Tunnel<R, W, C>
@@ -113,12 +123,13 @@ where
         cx: &mut Context,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
-        log::trace!("poll_read() is called on TurboTunnelController");
-
+        // Obtain the read lock before proceeding.
         let mut r_future = Box::pin(self.reader.lock());
         let mut r_state = futures::ready!(r_future.as_mut().poll(cx));
 
-        match &mut *r_state {
+        let buf_len_before = buf.filled().len();
+
+        let result = match &mut *r_state {
             TunnelIo::Connected(reader) => Pin::new(reader).poll_read(cx, buf),
             TunnelIo::Disconnected((notify, receiver)) => {
                 // Notify the connnection task to do the connection now.
@@ -141,7 +152,17 @@ where
                     Poll::Pending => Poll::Pending,
                 }
             }
-        }
+        };
+
+        let buf_len_after = buf.filled().len();
+
+        log::trace!(
+            "poll_read({:?}) state: {:?}, result: {result:?}, buf_len: {buf_len_before}->{buf_len_after}",
+            self.peer,
+            &mut *r_state
+        );
+
+        result
     }
 }
 
@@ -156,12 +177,11 @@ where
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        log::trace!("poll_write() is called on TurboTunnelController");
-
+        // Obtain the write lock before proceeding.
         let mut w_future = Box::pin(self.writer.lock());
         let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
 
-        match &mut *w_state {
+        let result = match &mut *w_state {
             TunnelIo::Connected(writer) => Pin::new(writer).poll_write(cx, buf),
             TunnelIo::Disconnected((notify, receiver)) => {
                 // Notify the connnection task to do the connection now.
@@ -184,16 +204,22 @@ where
                     Poll::Pending => Poll::Pending,
                 }
             }
-        }
+        };
+
+        log::trace!(
+            "poll_write({:?}) state: {:?}, result: {result:?}",
+            self.peer,
+            &mut *w_state
+        );
+
+        result
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        log::trace!("poll_flush() is called on TurboTunnelController");
-
         let mut w_future = Box::pin(self.writer.lock());
         let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
 
-        match &mut *w_state {
+        let result = match &mut *w_state {
             TunnelIo::Connected(writer) => Pin::new(writer).poll_flush(cx),
             TunnelIo::Disconnected((notify, receiver)) => {
                 // Notify the connnection task to do the connection now.
@@ -216,7 +242,15 @@ where
                     Poll::Pending => Poll::Pending,
                 }
             }
-        }
+        };
+
+        log::trace!(
+            "poll_flush({:?}) state: {:?}, result: {result:?}",
+            self.peer,
+            &mut *w_state
+        );
+
+        result
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
@@ -225,7 +259,7 @@ where
         let mut w_future = Box::pin(self.writer.lock());
         let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
 
-        match &mut *w_state {
+        let result = match &mut *w_state {
             TunnelIo::Connected(writer) => Pin::new(writer).poll_shutdown(cx),
             TunnelIo::Disconnected((notify, receiver)) => {
                 // Notify the connnection task to do the connection now.
@@ -248,7 +282,15 @@ where
                     Poll::Pending => Poll::Pending,
                 }
             }
-        }
+        };
+
+        log::trace!(
+            "poll_shutdown({:?}) state: {:?}, result: {result:?}",
+            self.peer,
+            &mut *w_state
+        );
+
+        result
     }
 }
 

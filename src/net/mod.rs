@@ -48,7 +48,6 @@ impl<T: AsyncConnect + Unpin + AsMut<Self> + Send> AsyncConnectExt for T {}
 /// A connector for TCP sockets.
 #[derive(Default)]
 pub struct TcpConnector {
-    pinned_target: Option<Socks5Target>,
     future: Option<Pin<Box<dyn Future<Output = io::Result<TcpStream>> + Send + Sync>>>,
 }
 
@@ -69,9 +68,7 @@ impl AsyncConnect for TcpConnector {
     ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>> {
         // Initiate a connection if we don't have one pending.
         if self.future.is_none() {
-            // If we pinned a target, use it, otherwise use the provided.
-            let target = self.pinned_target.as_ref().unwrap_or(&target);
-
+            log::debug!("Initiating TCP connection to target {target}");
             match target.addr() {
                 Socks5Address::IpAddr(addr) => {
                     self.future = Some(Box::pin(TcpStream::connect((addr, target.port()))))
@@ -95,6 +92,11 @@ impl AsyncConnect for TcpConnector {
         let future = self.future.as_mut().unwrap();
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(stream)) => {
+                log::debug!(
+                    "TCP connection succeeded between {:?} and {:?}",
+                    stream.local_addr(),
+                    stream.peer_addr()
+                );
                 // Dropping the future allows us to do another connect.
                 self.future = None;
                 Poll::Ready(Ok(stream.into_split()))
@@ -107,9 +109,6 @@ impl AsyncConnect for TcpConnector {
 
 impl Clone for TcpConnector {
     fn clone(&self) -> Self {
-        Self {
-            pinned_target: self.pinned_target.clone(),
-            future: None,
-        }
+        Self { future: None }
     }
 }
