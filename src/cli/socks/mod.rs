@@ -10,11 +10,10 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
-use crate::net::TcpConnector;
 use crate::net::proto::socks;
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::turbo::broker::SessionBroker;
-use crate::net::proto::turbo::tunnel::Tunnel;
+use crate::net::proto::turbo::TurboTunnel;
+use crate::net::{Channel, TcpConnector};
 
 use super::args::SocksArgs;
 
@@ -62,32 +61,32 @@ async fn run_client(client_args: ClientArgs, psf_path: String) -> anyhow::Result
         listener.local_addr()?
     );
 
-    // TODO: when do we close down the broker/controller and start new ones?
+    // TODO: when do we close down the tunnel/channel and start new ones?
 
-    // We use a controller to manage the tunnel to the proxy server, and a broker to
-    // manage the incoming application stream sessions.
-    let controller = Tunnel::new_client(Socks5Target::from(server_addr));
-    let broker = SessionBroker::new_socks_client();
+    // We use a channel to manage the connection to the proxy server, and a tunnel to
+    // manage the incoming virtual application stream sessions.
+    let channel = Channel::disconnected::<TcpConnector>(Socks5Target::from(server_addr));
+    let tunnel = TurboTunnel::new_socks_client();
 
     // Run a proteus protocol interpreter in the background. We only run one because we
     // only have a single connection to the proxy server.
     {
-        let (controller, broker) = (controller.clone(), broker.clone());
-        tokio::spawn(async move { run_interpreter(controller, broker, protocol_spec).await });
+        let (channel, tunnel) = (channel.clone(), tunnel.clone());
+        tokio::spawn(async move { run_interpreter(channel, tunnel, protocol_spec).await });
     }
 
     // Main loop waiting for SOCKS5 connections from applications.
     // Note that a failure in a connection does not stop the listener.
     loop {
         let (app_stream, _) = listener.accept().await?;
-        let broker = broker.clone();
-        tokio::spawn(async move { handle_client_connection(app_stream, broker).await });
+        let tunnel = tunnel.clone();
+        tokio::spawn(async move { handle_client_connection(app_stream, tunnel).await });
     }
 }
 
 async fn handle_client_connection(
     app_stream: TcpStream,
-    mut broker: SessionBroker<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    mut tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
 ) {
     let peer_name = match app_stream.peer_addr() {
         Ok(addr) => format!("<{addr}>"),
@@ -101,7 +100,7 @@ async fn handle_client_connection(
         Ok(info) => {
             log::debug!("Socks5 with peer {peer_name} succeeded");
             if info.remaining_read_buf.is_empty() {
-                broker
+                tunnel
                     .add_session_socks_client(app_src, app_dst, info.target)
                     .await;
             } else {
@@ -111,7 +110,7 @@ async fn handle_client_connection(
                 );
                 // TODO
                 // let chained_reader = Cursor::new(info.remaining_read_buf).chain(app_src);
-                // broker.add_session_socks_client(chained_reader, app_dst, info.target).await;
+                // tunnel.add_session_socks_client(chained_reader, app_dst, info.target).await;
             }
         }
         Err(e) => {
@@ -156,24 +155,24 @@ async fn handle_server_connection(
 
     let (net_src, net_dst) = net_stream.into_split();
 
-    // We use a controller to manage the tunnel to the client, and a broker to
-    // manage the outgoing server stream sessions.
-    let controller = Tunnel::new_server(net_src, net_dst);
-    let broker = SessionBroker::new_socks_server();
+    // We use a channel to manage the connection to the client, and a tunnel to
+    // manage the outgoing virtual stream sessions with the server.
+    let channel = Channel::connected(net_src, net_dst);
+    let tunnel = TurboTunnel::new_socks_server();
 
-    run_interpreter(controller, broker, protocol_spec).await;
+    run_interpreter(channel, tunnel, protocol_spec).await;
 }
 
 async fn run_interpreter(
-    controller: Tunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
-    broker: SessionBroker<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    channel: Channel<OwnedReadHalf, OwnedWriteHalf>,
+    tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
     match Interpreter::run_split(
-        controller.clone(),
-        controller,
-        broker.clone(),
-        broker,
+        channel.clone(),
+        channel,
+        tunnel.clone(),
+        tunnel,
         protocol_spec,
     )
     .await

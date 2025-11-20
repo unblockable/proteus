@@ -10,6 +10,10 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 
 pub mod proto;
+mod channel;
+
+// Re-export to make these available in the net namespace.
+pub use channel::Channel;
 
 pub const READ_CAPACITY: usize = 2usize.pow(14u32); // 16 KiB
 

@@ -13,10 +13,9 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
-use crate::net::TcpConnector;
 use crate::net::proto::socks;
-use crate::net::proto::turbo::broker::SessionBroker;
-use crate::net::proto::turbo::tunnel::Tunnel;
+use crate::net::proto::turbo::TurboTunnel;
+use crate::net::{Channel, TcpConnector};
 
 pub mod config;
 pub mod control;
@@ -156,11 +155,11 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 info.target
             );
 
-            let controller = Tunnel::new_client(info.target);
-            let mut broker = SessionBroker::new_pt_client();
+            let channel = Channel::disconnected::<TcpConnector>(info.target);
+            let mut tunnel = TurboTunnel::new_pt_client();
 
             if info.remaining_read_buf.is_empty() {
-                broker.add_session_pt_client(app_src, app_dst).await;
+                tunnel.add_session_pt_client(app_src, app_dst).await;
             } else {
                 log::error!(
                     "Socks5 buffer has {} bytes remaining",
@@ -168,10 +167,10 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 );
                 // TODO
                 // let chained_reader = Cursor::new(info.remaining_read_buf).chain(app_src);
-                // broker.add_session_pt_client(chained_reader, app_dst).await;
+                // tunnel.add_session_pt_client(chained_reader, app_dst).await;
             }
 
-            run_interpreter(controller, broker, client_spec).await;
+            run_interpreter(channel, tunnel, client_spec).await;
         }
         Err(e) => {
             log::debug!("Stream from peer {peer_name} failed during Socks5 protocol: {e}");
@@ -246,23 +245,23 @@ where
 
     let (net_src, net_dst) = net_stream.into_split();
 
-    let controller = Tunnel::new_server(net_src, net_dst);
+    let channel = Channel::connected(net_src, net_dst);
     // In PT mode, we pin the already configured forward addr for all app connections.
-    let broker = SessionBroker::new_pt_server(conf.forward_addr.into());
+    let tunnel = TurboTunnel::new_pt_server(conf.forward_addr.into());
 
-    run_interpreter(controller, broker, server_spec).await;
+    run_interpreter(channel, tunnel, server_spec).await;
 }
 
 async fn run_interpreter(
-    controller: Tunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
-    broker: SessionBroker<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    channel: Channel<OwnedReadHalf, OwnedWriteHalf>,
+    tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
     match Interpreter::run_split(
-        controller.clone(),
-        controller,
-        broker.clone(),
-        broker,
+        channel.clone(),
+        channel,
+        tunnel.clone(),
+        tunnel,
         protocol_spec,
     )
     .await

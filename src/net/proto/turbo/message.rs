@@ -7,7 +7,7 @@ use crate::net::proto::socks::address::Socks5Target;
 pub type DataCursor = u64;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Message {
+pub struct TurboMessage {
     pub session_id: u64,
     /// Similar to TCP sequence number.
     pub write: DataCursor,

@@ -10,7 +10,7 @@ use tokio::sync::oneshot::{self, Receiver};
 use tokio_util::io::{poll_read_buf, poll_write_buf};
 
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::turbo::message::{self, Command, Message, Payload, Request, Response};
+use crate::net::proto::turbo::message::{self, Command, TurboMessage, Payload, Request, Response};
 use crate::net::{AsyncConnectExt, READ_CAPACITY};
 
 #[derive(Debug)]
@@ -97,7 +97,7 @@ where
     }
 
     pub fn open(&mut self, target: Socks5Target) {
-        let msg = Message {
+        let msg = TurboMessage {
             session_id: self.id,
             write: 0,
             read: 0,
@@ -114,7 +114,7 @@ where
 pub struct TurboStream<R: AsyncRead + Unpin> {
     io: TurboIo<R>,
     state: SharedSessionState,
-    init: Option<Message>,
+    init: Option<TurboMessage>,
 }
 
 impl<R: AsyncRead + Unpin> TurboStream<R> {
@@ -128,7 +128,7 @@ impl<R: AsyncRead + Unpin> TurboStream<R> {
 }
 
 impl<R: AsyncRead + Unpin> Stream for TurboStream<R> {
-    type Item = Message;
+    type Item = TurboMessage;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         // TODO
@@ -150,7 +150,7 @@ impl<R: AsyncRead + Unpin> Stream for TurboStream<R> {
                 let mut buf = BytesMut::with_capacity(READ_CAPACITY);
                 match poll_read_buf(Pin::new(src), cx, &mut buf) {
                     Poll::Ready(Ok(0)) => Poll::Ready(None),
-                    Poll::Ready(Ok(_len)) => Poll::Ready(Some(Message {
+                    Poll::Ready(Ok(_len)) => Poll::Ready(Some(TurboMessage {
                         session_id: self.state.id,
                         write: 0,
                         read: 0,
@@ -164,14 +164,14 @@ impl<R: AsyncRead + Unpin> Stream for TurboStream<R> {
                 Poll::Ready(Ok(connect_result)) => match connect_result {
                     Ok(src) => {
                         self.io = TurboIo::Connected(src);
-                        Poll::Ready(Some(Message {
+                        Poll::Ready(Some(TurboMessage {
                             session_id: self.state.id,
                             write: 0,
                             read: 0,
                             command: Command::Response(Response::Open(message::Result::Ok)),
                         }))
                     }
-                    Err(_) => Poll::Ready(Some(Message {
+                    Err(_) => Poll::Ready(Some(TurboMessage {
                         session_id: self.state.id,
                         write: 0,
                         read: 0,
@@ -192,7 +192,7 @@ pub struct TurboSink<W: AsyncWrite + Unpin> {
 }
 
 impl<W: AsyncWrite + Unpin> TurboSink<W> {
-    fn process_message(&mut self, msg: Message) -> Result<(), TurboError> {
+    fn process_message(&mut self, msg: TurboMessage) -> Result<(), TurboError> {
         // Make sure we store the payload bytes in the pending option if we have payload to write.
 
         if let Command::Request(Request::Forward(payload)) = msg.command {
@@ -203,7 +203,8 @@ impl<W: AsyncWrite + Unpin> TurboSink<W> {
                 Err(TurboError::WouldBlock)
             }
         } else {
-            Err(TurboError::Unknown)
+            // Err(TurboError::Unknown)
+            Ok(())
         }
     }
 
@@ -212,7 +213,7 @@ impl<W: AsyncWrite + Unpin> TurboSink<W> {
     }
 }
 
-impl<W: AsyncWrite + Unpin> Sink<Message> for TurboSink<W> {
+impl<W: AsyncWrite + Unpin> Sink<TurboMessage> for TurboSink<W> {
     type Error = std::io::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -225,7 +226,7 @@ impl<W: AsyncWrite + Unpin> Sink<Message> for TurboSink<W> {
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, msg: Message) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, msg: TurboMessage) -> Result<(), Self::Error> {
         if self.pending.is_none() {
             match self.process_message(msg) {
                 Ok(_) => Ok(()),

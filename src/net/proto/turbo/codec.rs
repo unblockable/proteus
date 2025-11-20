@@ -6,15 +6,15 @@ use tokio_util::codec::{Decoder, Encoder};
 use crate::net::proto::socks;
 use crate::net::proto::socks::address::Socks5Target;
 use crate::net::proto::turbo::message::{
-    self, Command, DataCursor, Message, Payload, Request, Response,
+    self, Command, DataCursor, TurboMessage, Payload, Request, Response,
 };
 
 pub struct TurboCodec;
 
-impl Encoder<Message> for TurboCodec {
+impl Encoder<TurboMessage> for TurboCodec {
     type Error = io::Error;
 
-    fn encode(&mut self, msg: Message, dst: &mut BytesMut) -> io::Result<()> {
+    fn encode(&mut self, msg: TurboMessage, dst: &mut BytesMut) -> io::Result<()> {
         let mut buf = BytesMut::new();
 
         // If we return early, the dst buffer is unmodified.
@@ -33,7 +33,7 @@ impl Encoder<Message> for TurboCodec {
 }
 
 impl Decoder for TurboCodec {
-    type Item = Message;
+    type Item = TurboMessage;
 
     type Error = io::Error;
 
@@ -58,7 +58,7 @@ impl Decoder for TurboCodec {
         let num_consumed = reader.position() as usize;
         src.advance(num_consumed);
 
-        Ok(Some(Message {
+        Ok(Some(TurboMessage {
             session_id,
             write,
             read,
@@ -282,7 +282,7 @@ mod tests {
 
     use super::*;
 
-    fn assert_encode_decode(msg: Message) {
+    fn assert_encode_decode(msg: TurboMessage) {
         let mut buf = BytesMut::new();
 
         let encode_result = TurboCodec.encode(msg.clone(), &mut buf);
@@ -295,8 +295,8 @@ mod tests {
         assert_eq!(msg, encoded_decoded_msg);
     }
 
-    fn message(command: Command) -> Message {
-        Message {
+    fn message(command: Command) -> TurboMessage {
+        TurboMessage {
             session_id: 123456789,
             write: 123,
             read: 321,
