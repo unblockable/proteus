@@ -1,25 +1,14 @@
 use std::future::Future;
+use std::io;
 
-use bytes::{Bytes, BytesMut};
+use anyhow::anyhow;
+use bytes::Bytes;
 use rand::distributions::{Alphanumeric, DistString};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
-
-pub type MockReader = DuplexStream;
-pub type MockWriter = DuplexStream;
-pub type MockConnection = (MockReader, MockWriter);
-pub type MockPayload = Bytes;
-
-pub struct Result {
-    /// Holds the app payloads that were (read, written).
-    pub client_app: anyhow::Result<(MockPayload, MockPayload)>,
-    pub client_proxy: anyhow::Result<()>,
-    pub server_proxy: anyhow::Result<()>,
-    /// Holds the app payloads that were (read, written).
-    pub server_app: anyhow::Result<(MockPayload, MockPayload)>,
-}
+use crate::net::READ_CAPACITY;
 
 pub fn simplex(max_buf_size: usize) -> (impl AsyncRead, impl AsyncWrite) {
     tokio::io::simplex(max_buf_size)
@@ -29,141 +18,55 @@ pub fn duplex(max_buf_size: usize) -> (impl AsyncRead + AsyncWrite, impl AsyncRe
     tokio::io::duplex(max_buf_size)
 }
 
-pub fn connection_pair(max_buf_size: usize) -> (MockConnection, MockConnection) {
-    let (client_w, server_r) = tokio::io::duplex(max_buf_size);
-    let (server_w, client_r) = tokio::io::duplex(max_buf_size);
-
-    let client = (client_r, client_w);
-    let server = (server_r, server_w);
-
-    (client, server)
+pub fn payload_len_iter() -> impl Iterator<Item = usize> {
+    [
+        1, 10, 100, 1000, 1500, 2000, 5000, 10_000, 100_000, 1_000_000,
+    ]
+    .into_iter()
 }
 
-pub fn payload(len: usize) -> MockPayload {
+pub fn payload(len: usize) -> Bytes {
     let mut rng = rand::thread_rng();
     let s = Alphanumeric.sample_string(&mut rng, len);
-    MockPayload::from(s)
+    Bytes::from(s)
 }
 
-async fn application_read(mut reader: MockReader) -> anyhow::Result<MockPayload> {
-    let mut payload = BytesMut::new();
+pub struct Result {
+    pub c_app_src: io::Result<Bytes>,
+    pub c_app_dst: io::Result<Bytes>,
+    pub c_app_to_net: anyhow::Result<()>,
+    pub c_net_to_app: anyhow::Result<()>,
+    pub s_app_to_net: anyhow::Result<()>,
+    pub s_net_to_app: anyhow::Result<()>,
+    pub s_app_src: io::Result<Bytes>,
+    pub s_app_dst: io::Result<Bytes>,
+}
 
-    while let Ok(n_bytes) = reader.read_buf(&mut payload).await {
-        if n_bytes == 0 {
-            break;
-        }
+impl Result {
+    fn assert(&self, len: usize) {
+        self.assert_success();
+
+        let c_src = self.c_app_src.as_ref().unwrap();
+        let s_dst = self.s_app_dst.as_ref().unwrap();
+        Self::assert_payload(c_src, s_dst, len);
+
+        let s_src = self.s_app_src.as_ref().unwrap();
+        let c_dst = self.c_app_dst.as_ref().unwrap();
+        Self::assert_payload(s_src, c_dst, len);
     }
 
-    Ok(payload.freeze())
-}
-
-async fn application_write(mut writer: DuplexStream, len: usize) -> anyhow::Result<MockPayload> {
-    let payload = payload(len);
-    writer.write_all(&payload[..]).await?;
-    writer.shutdown().await?;
-    Ok(payload)
-}
-
-async fn run_application(
-    conn: MockConnection,
-    write_len: usize,
-) -> anyhow::Result<(MockPayload, MockPayload)> {
-    let (reader, writer) = conn;
-    let (r_result, w_result) = tokio::join!(
-        application_read(reader),
-        application_write(writer, write_len)
-    );
-    Ok((r_result.unwrap(), w_result.unwrap()))
-}
-
-pub async fn run_proxy_network<T, F, Fut>(
-    client_spec: T,
-    server_spec: T,
-    run_proxy: F,
-    payload_len: usize,
-) -> self::Result
-where
-    T: TaskProvider + Send,
-    F: Fn(T, MockConnection, MockConnection, bool) -> Fut,
-    Fut: Future<Output = anyhow::Result<()>>,
-{
-    // We set up a mock network that represents the following:
-    // c_app <--> c_proxy <--> s_proxy <--> s_app
-    let (c_app_to_proxy, c_proxy_to_app) = connection_pair(payload_len);
-    let (c_proxy_to_proxy, s_proxy_to_proxy) = connection_pair(payload_len);
-    let (s_app_to_proxy, s_proxy_to_app) = connection_pair(payload_len);
-
-    let (c_app_res, c_proxy_res, s_proxy_res, s_app_res) = tokio::join!(
-        run_application(c_app_to_proxy, payload_len),
-        run_proxy(client_spec, c_proxy_to_proxy, c_proxy_to_app, true),
-        run_proxy(server_spec, s_proxy_to_proxy, s_proxy_to_app, false),
-        run_application(s_app_to_proxy, payload_len),
-    );
-
-    self::Result {
-        client_app: c_app_res,
-        client_proxy: c_proxy_res,
-        server_proxy: s_proxy_res,
-        server_app: s_app_res,
-    }
-}
-
-async fn run_interpreter<T: TaskProvider + Clone + Send>(
-    protospec: T,
-    net_conn: MockConnection,
-    app_conn: MockConnection,
-    _: bool,
-) -> anyhow::Result<()> {
-    let (net_r, net_w) = net_conn;
-    let (app_r, app_w) = app_conn;
-    Interpreter::run_split(net_r, net_w, app_r, app_w, protospec).await
-}
-
-pub async fn check_protocol_interpretability<T>(
-    client: T,
-    server: T,
-    payload_len: usize,
-) -> self::Result
-where
-    T: TaskProvider + Clone + Send,
-{
-    run_proxy_network(client, server, &run_interpreter, payload_len).await
-}
-
-#[cfg(test)]
-pub mod tests {
-    use crate::common::mock::{self, MockConnection, MockPayload, MockReader, MockWriter};
-    use crate::lang::ir::bridge::{Task, TaskID, TaskProvider, TaskSet};
-
-    pub fn payload_len_iter() -> impl Iterator<Item = usize> {
-        [
-            1, 10, 100, 1000, 1500, 2000, 5000, 10_000, 100_000, 1_000_000,
-        ]
-        .into_iter()
+    fn assert_success(&self) {
+        assert!(self.c_app_src.is_ok());
+        assert!(self.c_app_dst.is_ok());
+        assert!(self.c_app_to_net.is_ok());
+        assert!(self.c_net_to_app.is_ok());
+        assert!(self.s_app_to_net.is_ok());
+        assert!(self.s_net_to_app.is_ok());
+        assert!(self.s_app_src.is_ok());
+        assert!(self.s_app_dst.is_ok());
     }
 
-    async fn forward(mut src: MockReader, mut dst: MockWriter) -> anyhow::Result<u64> {
-        Ok(tokio::io::copy(&mut src, &mut dst).await?)
-    }
-
-    async fn run_io_copier<T: TaskProvider + Send>(
-        _: T,
-        net_conn: MockConnection,
-        app_conn: MockConnection,
-        _: bool,
-    ) -> anyhow::Result<()> {
-        let (net_r, net_w) = net_conn;
-        let (app_r, app_w) = app_conn;
-
-        // We need to move the streams into `forward()` so that the DuplexStreams close
-        // when the tokio::io::copy function receives EOF and returns. Otherwise the EOF
-        // does not properly propagate backward.
-        let (_, _) = tokio::join!(forward(app_r, net_w), forward(net_r, app_w));
-
-        Ok(())
-    }
-
-    fn assert_payload_result(a: MockPayload, b: MockPayload, len: usize) {
+    fn assert_payload(a: &Bytes, b: &Bytes, len: usize) {
         if len > 0 {
             assert!(!a.is_empty());
             assert!(!b.is_empty());
@@ -172,82 +75,292 @@ pub mod tests {
         assert_eq!(b.len(), len);
         assert_eq!(&a[..], &b[..]);
     }
+}
 
-    #[tokio::test]
-    async fn connection() {
-        for len in payload_len_iter() {
-            let (c, s) = mock::connection_pair(len);
+pub struct MockIo {
+    reader: Box<dyn AsyncRead + Unpin>,
+    writer: Box<dyn AsyncWrite + Unpin>,
+}
 
-            let (c_reader, c_writer) = c;
-            let (s_reader, s_writer) = s;
-
-            let c_sent = mock::application_write(c_writer, len).await.unwrap();
-            let s_recv = mock::application_read(s_reader).await.unwrap();
-
-            assert_payload_result(c_sent, s_recv, len);
-
-            let s_sent = mock::application_write(s_writer, len).await.unwrap();
-            let c_recv = mock::application_read(c_reader).await.unwrap();
-
-            assert_payload_result(s_sent, c_recv, len);
+impl MockIo {
+    fn new(
+        reader: impl AsyncRead + Unpin + 'static,
+        writer: impl AsyncWrite + Unpin + 'static,
+    ) -> Self {
+        Self {
+            reader: Box::new(reader),
+            writer: Box::new(writer),
         }
     }
 
-    #[tokio::test]
-    async fn processes() {
-        for len in payload_len_iter() {
-            let (c, s) = mock::connection_pair(len);
+    fn new_split(rw: impl AsyncRead + AsyncWrite + Unpin + 'static) -> Self {
+        let (r, w) = tokio::io::split(rw);
+        Self::new(r, w)
+    }
 
-            let (c_result, s_result) =
-                tokio::join!(mock::run_application(c, len), mock::run_application(s, len),);
+    fn new_pair() -> (Self, Self) {
+        let (io_rw_1, io_rw_2) = duplex(READ_CAPACITY);
+        (Self::new_split(io_rw_1), Self::new_split(io_rw_2))
+    }
+}
 
-            let (c_recv, c_sent) = c_result.unwrap();
-            let (s_recv, s_sent) = s_result.unwrap();
+struct MockApplication {
+    payload: Bytes,
+    io: MockIo,
+}
 
-            assert_payload_result(c_sent, s_recv, len);
-            assert_payload_result(s_sent, c_recv, len);
+impl MockApplication {
+    fn new(payload_len: usize, io: MockIo) -> Self {
+        let payload = payload(payload_len);
+        Self { payload, io }
+    }
+}
+
+pub struct MockProxy {
+    app: MockIo,
+    net: MockIo,
+}
+
+impl MockProxy {
+    fn new(app: MockIo, net: MockIo) -> Self {
+        Self { app, net }
+    }
+}
+
+/// A mock proxy network that represents the following:
+/// c_app <--> c_proxy <--> s_proxy <--> s_app
+pub struct MockProxyNetwork {
+    c_app: MockApplication,
+    c_proxy: MockProxy,
+    s_proxy: MockProxy,
+    s_app: MockApplication,
+}
+
+impl MockProxyNetwork {
+    fn new(payload_len: usize) -> Self {
+        let (c_app, c_proxy_to_app) = MockIo::new_pair();
+        let (c_proxy_to_net, s_proxy_to_net) = MockIo::new_pair();
+        let (s_app, s_proxy_to_app) = MockIo::new_pair();
+        Self {
+            c_app: MockApplication::new(payload_len, c_app),
+            c_proxy: MockProxy::new(c_proxy_to_app, c_proxy_to_net),
+            s_proxy: MockProxy::new(s_proxy_to_app, s_proxy_to_net),
+            s_app: MockApplication::new(payload_len, s_app),
         }
     }
 
-    pub fn assert_mock_result(result: mock::Result, len: usize) {
-        let (c_recv, c_sent) = result.client_app.unwrap();
-        let (s_recv, s_sent) = result.server_app.unwrap();
-
-        assert_payload_result(c_sent, s_recv, len);
-        assert_payload_result(s_sent, c_recv, len);
+    async fn run_direct_io(self) -> self::Result {
+        self.run_with_forwarder(None::<u8>, &io_copy_direct, None::<u8>, &io_copy_direct)
+            .await
     }
 
-    pub async fn test_protocol_interpretability<T>(client: T, server: T)
+    async fn run_with_forwarder<C, FC, S, FS, Fut>(
+        self,
+        client: C,
+        client_fwd: FC,
+        server: S,
+        server_fwd: FS,
+    ) -> self::Result
     where
-        T: TaskProvider + Clone + Send,
+        FC: Fn(C, MockProxy) -> Fut,
+        FS: Fn(S, MockProxy) -> Fut,
+        Fut: Future<Output = (anyhow::Result<()>, anyhow::Result<()>)>,
     {
-        for len in payload_len_iter() {
-            let result =
-                mock::check_protocol_interpretability(client.clone(), server.clone(), len).await;
-            assert_mock_result(result, len)
+        let results = tokio::join!(
+            // Run the client-side app tasks.
+            stream_then_shutdown(self.c_app.io.writer, self.c_app.payload),
+            sink_until_eof(self.c_app.io.reader),
+            // Run the client-side proxy tasks.
+            client_fwd(client, self.c_proxy),
+            // Run the server-side proxy tasks.
+            server_fwd(server, self.s_proxy),
+            // Run the server-side app tasks.
+            stream_then_shutdown(self.s_app.io.writer, self.s_app.payload),
+            sink_until_eof(self.s_app.io.reader),
+        );
+
+        self::Result {
+            c_app_src: results.0,
+            c_app_dst: results.1,
+            c_app_to_net: results.2.0,
+            c_net_to_app: results.2.1,
+            s_app_to_net: results.3.0,
+            s_net_to_app: results.3.1,
+            s_app_src: results.4,
+            s_app_dst: results.5,
         }
     }
+}
 
-    // We use a null spec below because `run_io_copier` doesn't need it to test
-    // the mock facilities.
-    pub struct NullSpec {}
+async fn stream_then_shutdown<W>(mut writer: W, payload: Bytes) -> io::Result<Bytes>
+where
+    W: AsyncWrite + Unpin,
+{
+    writer.write_all(&payload[..]).await?;
+    writer.shutdown().await?; // Signal EOF to the connected read side
+    Ok(payload)
+}
 
-    impl TaskProvider for NullSpec {
-        fn get_init_task(&self) -> Task {
-            unimplemented!()
-        }
+async fn sink_until_eof<R>(mut reader: R) -> io::Result<Bytes>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut buf = Vec::new();
+    let _n_bytes = reader.read_to_end(&mut buf).await?;
+    Ok(Bytes::from(buf))
+}
 
-        fn get_next_tasks(&self, _: &TaskID) -> TaskSet {
-            unimplemented!()
+/// Like `tokio::io::copy()` but takes ownership of the reader and writer,
+/// shuts down the writer when the reader gets an EOF to make sure it
+/// propagates backward, and drops the reader and writer on return.
+async fn copy_then_shutdown<R, W>(mut src: R, mut dst: W) -> io::Result<usize>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let n_bytes = tokio::io::copy(&mut src, &mut dst).await?;
+    dst.shutdown().await?; // Signal EOF to the connected read side
+    Ok(n_bytes as usize)
+}
+
+async fn io_copy_direct(
+    _: Option<u8>,
+    proxy: MockProxy,
+) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    // Note: we MUST moved the streams so they are dropped when the copy completes.
+    // Use the `mock::copy()` function. This ensures that when the copy completes,
+    // the underlying streams are dropped, and the EOF correctly propagates backwards.
+    let (app_to_net, net_to_app) = tokio::join!(
+        copy_then_shutdown(proxy.app.reader, proxy.net.writer),
+        copy_then_shutdown(proxy.net.reader, proxy.app.writer),
+    );
+    // Discard the count of bytes copied on Ok.
+    (
+        app_to_net.map(|_| ()).map_err(|e| anyhow!(e)),
+        net_to_app.map(|_| ()).map_err(|e| anyhow!(e)),
+    )
+}
+
+async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
+    protospec: T,
+    proxy: MockProxy,
+) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    Interpreter::run(
+        proxy.net.reader,
+        proxy.net.writer,
+        proxy.app.reader,
+        proxy.app.writer,
+        protospec,
+    )
+    .await
+}
+
+pub async fn check_protocol_interpretability<T: TaskProvider + Clone + Send>(
+    client: T,
+    server: T,
+    payload_len: usize,
+) -> self::Result {
+    MockProxyNetwork::new(payload_len)
+        .run_with_forwarder(client, &io_copy_interpreter, server, &io_copy_interpreter)
+        .await
+}
+
+pub async fn test_protocol_interpretability<T>(client: T, server: T)
+where
+    T: TaskProvider + Clone + Send,
+{
+    for len in payload_len_iter() {
+        check_protocol_interpretability(client.clone(), server.clone(), len)
+            .await
+            .assert(len);
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use crate::common::mock;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn duplex_split() {
+        for len in payload_len_iter() {
+            let (client, server) = MockIo::new_pair();
+            let client = MockApplication::new(len, client);
+            let server = MockApplication::new(len, server);
+
+            let results = tokio::join!(
+                // Run the client-side app tasks.
+                stream_then_shutdown(client.io.writer, client.payload),
+                sink_until_eof(client.io.reader),
+                stream_then_shutdown(server.io.writer, server.payload),
+                sink_until_eof(server.io.reader),
+            );
+
+            mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+            mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
         }
     }
 
     #[tokio::test]
-    async fn proxy_network() {
+    async fn duplex_split_copy() {
         for len in payload_len_iter() {
-            let result =
-                mock::run_proxy_network(NullSpec {}, NullSpec {}, &run_io_copier, len).await;
-            assert_mock_result(result, len)
+            let (client, proxy_to_client) = MockIo::new_pair();
+            let (server, proxy_to_server) = MockIo::new_pair();
+
+            let client = MockApplication::new(len, client);
+            let server = MockApplication::new(len, server);
+            let proxy = MockProxy::new(proxy_to_client, proxy_to_server);
+
+            let results = tokio::join!(
+                // Run the client-side app tasks.
+                stream_then_shutdown(client.io.writer, client.payload),
+                sink_until_eof(client.io.reader),
+                stream_then_shutdown(server.io.writer, server.payload),
+                sink_until_eof(server.io.reader),
+                copy_then_shutdown(proxy.app.reader, proxy.net.writer),
+                copy_then_shutdown(proxy.net.reader, proxy.app.writer),
+            );
+
+            mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+            mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+        }
+    }
+
+    #[tokio::test]
+    async fn duplex_split_copy_copy() {
+        // let _ = env_logger::try_init();
+        for len in payload_len_iter() {
+            let (c_app, c_proxy_to_app) = MockIo::new_pair();
+            let (c_proxy_to_net, s_proxy_to_net) = MockIo::new_pair();
+            let (s_app, s_proxy_to_app) = MockIo::new_pair();
+
+            let c_app = MockApplication::new(len, c_app);
+            let c_proxy = MockProxy::new(c_proxy_to_app, c_proxy_to_net);
+            let s_proxy = MockProxy::new(s_proxy_to_app, s_proxy_to_net);
+            let s_app = MockApplication::new(len, s_app);
+
+            let results = tokio::join!(
+                // Run the client-side app tasks.
+                stream_then_shutdown(c_app.io.writer, c_app.payload),
+                sink_until_eof(c_app.io.reader),
+                stream_then_shutdown(s_app.io.writer, s_app.payload),
+                sink_until_eof(s_app.io.reader),
+                copy_then_shutdown(c_proxy.app.reader, c_proxy.net.writer),
+                copy_then_shutdown(c_proxy.net.reader, c_proxy.app.writer),
+                copy_then_shutdown(s_proxy.app.reader, s_proxy.net.writer),
+                copy_then_shutdown(s_proxy.net.reader, s_proxy.app.writer),
+            );
+
+            mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+            mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_network_direct_io() {
+        for len in payload_len_iter() {
+            MockProxyNetwork::new(len).run_direct_io().await.assert(len);
         }
     }
 }

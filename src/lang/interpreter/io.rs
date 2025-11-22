@@ -458,7 +458,7 @@ pub mod tests {
     #[tokio::test]
     async fn large_reads() {
         // If source has full payload available, we expect to receive it all.
-        for len in mock::tests::payload_len_iter() {
+        for len in mock::payload_len_iter() {
             let (mut io, payload) = new_readable_io(len).await;
 
             let bytes = io.recv(1..len + 1).await.unwrap();

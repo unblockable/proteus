@@ -22,13 +22,13 @@ pub struct Interpreter {}
 impl Interpreter {
     /// Run the configured proteus protocol instance to completion. This returns
     /// when the proteus protocol terminates and all connections can be closed.
-    pub async fn run_split<R1, R2, W1, W2, T>(
+    pub async fn run<R1, R2, W1, W2, T>(
         net_src: R1,
         net_dst: W1,
         app_src: R2,
         app_dst: W2,
         protospec: T,
-    ) -> anyhow::Result<()>
+    ) -> (anyhow::Result<()>, anyhow::Result<()>)
     where
         R1: AsyncRead + Unpin,
         R2: AsyncRead + Unpin,
@@ -56,7 +56,7 @@ impl Interpreter {
             Interpreter::execute(loader.clone(), app_to_net, ForwardingDirection::AppToNet),
             Interpreter::execute(loader, net_to_app, ForwardingDirection::NetToApp),
         );
-        Ok(())
+        (Ok(()), Ok(()))
     }
 
     async fn execute<R, W, T>(
@@ -95,7 +95,7 @@ mod tests {
 
     #[tokio::test]
     async fn length_payload_unencrypted() {
-        mock::tests::test_protocol_interpretability(
+        mock::test_protocol_interpretability(
             LengthPayloadSpec::new(Role::Client),
             LengthPayloadSpec::new(Role::Server),
         )
@@ -104,7 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn length_payload_encrypted() {
-        mock::tests::test_protocol_interpretability(
+        mock::test_protocol_interpretability(
             EncryptedLengthPayloadSpec::new(Role::Client),
             EncryptedLengthPayloadSpec::new(Role::Server),
         )

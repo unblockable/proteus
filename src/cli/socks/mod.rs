@@ -168,7 +168,7 @@ async fn run_interpreter(
     tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
-    match Interpreter::run_split(
+    match Interpreter::run(
         channel.clone(),
         channel,
         tunnel.clone(),
@@ -177,7 +177,11 @@ async fn run_interpreter(
     )
     .await
     {
-        Ok(_) => log::debug!("Tunnel protocol succeeded",),
-        Err(e) => log::debug!("Tunnel protocol failed: {e}",),
+        (Ok(_), Ok(_)) => log::debug!("Tunnel protocol succeeded",),
+        (Ok(_), Err(e)) => log::debug!("Tunnel protocol failed: app-to-net: {e}",),
+        (Err(e), Ok(_)) => log::debug!("Tunnel protocol failed: net-to-app: {e}",),
+        (Err(e1), Err(e2)) => {
+            log::debug!("Tunnel protocol failed: app-to-net: {e1}, net-to-app: {e2}",)
+        }
     }
 }

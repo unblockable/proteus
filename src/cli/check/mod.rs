@@ -41,10 +41,18 @@ pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
 
     log::info!("Protocol check complete, inspecting results...");
 
-    let (c_recv, c_sent) = res.client_app.context("inspecting client app result")?;
-    res.client_proxy.context("inspecting client proxy result")?;
-    res.server_proxy.context("inspecting server proxy result")?;
-    let (s_recv, s_sent) = res.server_app.context("inspecting server app result")?;
+    let c_recv = res.c_app_dst.context("inspecting client app recv result")?;
+    let c_sent = res.c_app_src.context("inspecting client app send result")?;
+    res.c_app_to_net
+        .context("inspecting client proxy app-to-net result")?;
+    res.c_net_to_app
+        .context("inspecting client proxy net-to-app result")?;
+    res.s_app_to_net
+        .context("inspecting server proxy app-to-net result")?;
+    res.s_net_to_app
+        .context("inspecting server proxy net-to-app result")?;
+    let s_recv = res.s_app_dst.context("inspecting server app recv result")?;
+    let s_sent = res.s_app_src.context("inspecting server app send result")?;
 
     log::info!("All processes returned OK, checking payloads now...");
 
