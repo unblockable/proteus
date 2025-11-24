@@ -67,8 +67,10 @@ impl TaskProvider for LengthPayloadSpec {
         // Outgoing data forwarding direction.
         let out_task = Task {
             ins: vec![
-                ReadAppArgs {
-                    from_len: 1..u16::MAX as usize,
+                ReadArgs {
+                    which: ReadWhich::App,
+                    how: ReadHow::Read,
+                    from_len: ReadLength::Fixed(u16::MAX as usize),
                     to_heap_id: "payload".id(),
                 }
                 .into(),
@@ -113,8 +115,10 @@ impl TaskProvider for LengthPayloadSpec {
         // Incoming data forwarding direction.
         let in_task = Task {
             ins: vec![
-                ReadNetArgs {
-                    from_len: ReadNetLength::Range(2..3_usize),
+                ReadArgs {
+                    which: ReadWhich::Net,
+                    how: ReadHow::ReadExact,
+                    from_len: ReadLength::Fixed(2_usize),
                     to_heap_id: "length".id(),
                 }
                 .into(),
@@ -142,8 +146,10 @@ impl TaskProvider for LengthPayloadSpec {
                     to_heap_id: "payload_len_value".id(),
                 }
                 .into(),
-                ReadNetArgs {
-                    from_len: ReadNetLength::Identifier("payload_len_value".id()),
+                ReadArgs {
+                    which: ReadWhich::Net,
+                    how: ReadHow::ReadExact,
+                    from_len: ReadLength::Identifier("payload_len_value".id()),
                     to_heap_id: "payload".id(),
                 }
                 .into(),

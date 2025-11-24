@@ -1,19 +1,5 @@
-use std::ops::Range;
-
 use crate::lang::Role;
 use crate::lang::types::{AbstractFormat, Identifier, PubkeyEncoding};
-
-#[derive(Debug)]
-pub enum ReadNetLength {
-    /// Amount to read specified in this heap variable.
-    Identifier(Identifier),
-    /// Amount to read specified in this heap variable minus the given value.
-    IdentifierMinus((Identifier, usize)),
-    /// Subtract the id and the usize from the read amount.
-    IdentifierMinusMinus((Identifier, Identifier, usize)),
-    /// Amount to read specified by this range.
-    Range(Range<usize>),
-}
 
 // Auto-generates `From` implementations like
 //   `impl From<WriteAppArgs> for Instruction`
@@ -29,8 +15,7 @@ pub enum InstructionV1 {
     GetArrayBytes(GetArrayBytesArgs),
     GetNumericValue(GetNumericValueArgs),
     InitFixedSharedKey(InitFixedSharedKeyArgs),
-    ReadApp(ReadAppArgs),
-    ReadNet(ReadNetArgs),
+    Read(ReadArgs),
     SetArrayBytes(SetArrayBytesArgs),
     SetNumericValue(SetNumericValueArgs),
     WriteApp(WriteAppArgs),
@@ -113,19 +98,13 @@ pub struct InitFixedSharedKeyArgs {
     pub role: Role,
 }
 
-/// Read a number of bytes given by the `from_len` range from the application
-/// and store the result on the heap in `to_heap_id`.
+/// Read a number of bytes given by the `from_len` range and store the result on
+/// the heap in `to_heap_id`.
 #[derive(Debug)]
-pub struct ReadAppArgs {
-    pub from_len: Range<usize>,
-    pub to_heap_id: Identifier,
-}
-
-/// Read a number of bytes given by `from_len` from the network and store the
-/// result on the heap in `to_heap_id`.
-#[derive(Debug)]
-pub struct ReadNetArgs {
-    pub from_len: ReadNetLength,
+pub struct ReadArgs {
+    pub which: ReadWhich,
+    pub how: ReadHow,
+    pub from_len: ReadLength,
     pub to_heap_id: Identifier,
 }
 
@@ -176,4 +155,38 @@ pub struct SaveKeyArgs {
     pub from_msg_heap_id: Identifier,
     pub from_field_id: Identifier, // usually payload field
     pub pubkey_encoding: PubkeyEncoding,
+}
+
+#[derive(Debug)]
+pub enum ReadLength {
+    /// Amount to read specified in this heap variable.
+    Identifier(Identifier),
+    /// Amount to read specified in this heap variable minus the usize value.
+    IdentifierMinus((Identifier, usize)),
+    /// Amount to read specified in this heap variable minus the second heap
+    /// variable minus the usize value.
+    IdentifierMinusMinus((Identifier, Identifier, usize)),
+    /// Amount to read specified by this fixed usize value.
+    Fixed(usize),
+}
+
+/// The read operation to perform.
+#[derive(Debug)]
+pub enum ReadHow {
+    /// Async read will return between 1 and the specified len bytes, depending
+    /// on how much is available in the underlying stream.
+    Read,
+    /// Like `Read`, but will immediately return if no bytes are available
+    /// instead of blocking awaiting for bytes to arrive.
+    TryRead,
+    /// Read that will block awaiting for exactly the specified len bytes
+    /// to be available in the underlying stream.
+    ReadExact,
+}
+
+/// The buffer on which to execute the read.
+#[derive(Debug)]
+pub enum ReadWhich {
+    App,
+    Net,
 }

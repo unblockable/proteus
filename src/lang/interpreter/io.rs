@@ -1,8 +1,7 @@
-use std::ops::Range;
+use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
-use anyhow::{anyhow, bail};
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
@@ -14,7 +13,7 @@ where
     W: AsyncWrite + Unpin,
 {
     src: R,
-    src_err_msg: Option<String>,
+    src_err: Option<io::Error>,
     n_recv_src: usize,
     dst: W,
     n_sent_dst: usize,
@@ -28,98 +27,41 @@ where
     pub fn new(src: R, dst: W) -> Self {
         Self {
             src,
-            src_err_msg: None,
+            src_err: None,
             n_recv_src: 0,
             dst,
             n_sent_dst: 0,
         }
     }
 
-    pub async fn send(&mut self, mut bytes: Bytes) -> anyhow::Result<usize> {
-        log::trace!("trying to send {} bytes to dst", bytes.len());
+    pub async fn send(&mut self, mut bytes: Bytes) -> io::Result<usize> {
+        log::trace!("Io send({})", bytes.len());
 
         let num_written = bytes.len();
-        if let Err(e) = self.dst.write_all_buf(&mut bytes).await {
-            bail!("Error sending to dst: {e}")
-        }
+        self.dst.write_all_buf(&mut bytes).await?;
 
         self.n_sent_dst += num_written;
-        log::trace!("sent {num_written} bytes to dst");
+        log::trace!("Io sent {num_written} bytes to dst");
 
         Ok(num_written)
     }
 
-    pub async fn flush(&mut self) -> anyhow::Result<()> {
-        self.dst
-            .flush()
-            .await
-            .map_err(|e| anyhow!("Error flushing dst: {e}"))
+    pub async fn flush(&mut self) -> io::Result<()> {
+        self.dst.flush().await
     }
 
-    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        self.dst
-            .shutdown()
-            .await
-            .map_err(|e| anyhow!("Error shutting down dst: {e}"))
-    }
-
-    pub async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
-        log::trace!("Trying to receive {len:?} bytes from src");
-
-        match self.recv_inner(len.clone()).await {
-            Ok(bytes) => {
-                self.n_recv_src += bytes.len();
-                log::trace!(
-                    "recv() requested {len:?} received {} bytes from src",
-                    bytes.len()
-                );
-                Ok(bytes)
-            }
-            Err(e) => {
-                // If our source of data had an error, we won't be forwarding
-                // any more to the dst either.
-                log::debug!("Shutting down dst after recv error: {e}");
-                let _ = self.shutdown().await;
-                Err(e)
-            }
-        }
-    }
-
-    async fn recv_inner(&mut self, len: Range<usize>) -> anyhow::Result<Bytes> {
-        // Propagate any previous eof we received from src.
-        if let Some(msg) = &self.src_err_msg {
-            bail!(msg.clone());
-        }
-
-        // TODO: it would be simpler if the compiler gave us the desired read operation
-        // rather than an ambiguous length range here.
-        if len.end <= len.start {
-            Ok(Bytes::new())
-        } else if len.end.saturating_sub(len.start) == 1 {
-            if len.start == 0 {
-                Ok(Bytes::new())
-            } else {
-                self.read_exact(len.start).await
-            }
-        } else if len.start == 0 {
-            self.try_read(len.end.saturating_sub(1))
-        } else if len.start == 1 {
-            self.read(len.end.saturating_sub(1)).await
-        } else {
-            let required = self.read_exact(len.start).await?;
-            match self.try_read(len.end.saturating_sub(len.start).saturating_sub(1)) {
-                Ok(more) => {
-                    let mut all = BytesMut::from(required);
-                    all.extend_from_slice(&more);
-                    Ok(all.freeze())
-                }
-                Err(_) => Ok(required),
-            }
-        }
+    pub async fn shutdown(&mut self) -> io::Result<()> {
+        self.dst.shutdown().await
     }
 
     /// Reads up to len bytes. May read less than len if fewer bytes are available.
-    async fn read(&mut self, len: usize) -> anyhow::Result<Bytes> {
+    pub async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+        log::trace!("Entering io::read({len})");
+
+        if let Some(e) = self.src_err() {
+            return Err(e);
+        }
+
         // To avoid large pre-allocation, we
         // 1. use read_buf() to async-read the first chunk
         // 2. if we get a full chunk, use try_read() to sync-read remaining available chunks
@@ -127,34 +69,33 @@ where
         let mut limited_buf = BytesMut::with_capacity(limit).limit(limit);
 
         match self.src.read_buf(&mut limited_buf).await {
-            Ok(0) => {
-                let msg = format!("read got EOF on source");
-                self.src_err_msg = Some(msg.clone());
-                bail!(msg)
-            }
+            Ok(0) => Err(self.read_err(io::ErrorKind::UnexpectedEof.into())),
             Ok(n_bytes) => {
                 let mut buf = limited_buf.into_inner();
                 if n_bytes == limit && n_bytes < len {
                     // Any err msg from try_read will be set internally.
-                    if let Ok(more) = self.try_read(len - buf.len()) {
+                    if let Ok(Some(more)) = self.try_read(len - buf.len()) {
                         buf.extend_from_slice(&more);
                     }
                 }
-                Ok(buf.freeze())
+                Ok(self.read_ok(buf))
             }
-            Err(e) => {
-                let msg = format!("read got error on source: {e}");
-                self.src_err_msg = Some(msg.clone());
-                bail!(msg)
-            }
+            Err(e) => Err(self.read_err(e)),
         }
     }
 
     /// Like read, but returns immediately even if no bytes are available.
-    fn try_read(&mut self, len: usize) -> anyhow::Result<Bytes> {
+    pub fn try_read(&mut self, len: usize) -> io::Result<Option<Bytes>> {
+        log::trace!("Entering io::try_read({len})");
+
+        if let Some(e) = self.src_err() {
+            return Err(e);
+        }
+
         // We sync-read in chunks to avoid large allocations.
         let mut buf = BytesMut::new();
-        let mut noop_context = Context::from_waker(Waker::noop());
+        let mut ctx = Context::from_waker(Waker::noop());
+        let mut maybe_err = None;
 
         while buf.len() < len {
             let limit = READ_CAPACITY.min(len - buf.len());
@@ -163,41 +104,67 @@ where
 
             let mut read_buf = ReadBuf::new(&mut chunk);
 
-            match Pin::new(&mut self.src).poll_read(&mut noop_context, &mut read_buf) {
+            match Pin::new(&mut self.src).poll_read(&mut ctx, &mut read_buf) {
                 Poll::Ready(Ok(_)) => {
                     let n_bytes = read_buf.filled().len();
                     if n_bytes > 0 {
                         chunk.truncate(n_bytes);
                         buf.extend_from_slice(&chunk);
-                    } else {
-                        self.src_err_msg = Some(format!("try_read got EOF on source"));
-                        break;
+                        continue;
                     }
+                    maybe_err = Some(io::ErrorKind::UnexpectedEof.into())
                 }
-                Poll::Ready(Err(e)) => {
-                    self.src_err_msg = Some(format!("read got error on source: {e}"));
-                    break;
-                }
-                Poll::Pending => break,
-            }
+                Poll::Ready(Err(e)) => maybe_err = Some(e),
+                Poll::Pending => {}
+            };
+            break;
         }
 
-        if buf.len() > 0 || self.src_err_msg.is_none() {
-            Ok(buf.freeze())
+        if let Some(e) = maybe_err {
+            maybe_err = Some(self.read_err(e));
+        }
+
+        if !buf.is_empty() {
+            Ok(Some(self.read_ok(buf)))
+        } else if let Some(e) = maybe_err {
+            Err(e)
         } else {
-            bail!(self.src_err_msg.clone().unwrap())
+            Ok(None)
         }
     }
 
     /// Reads exactly len bytes, waiting until len bytes are available.
-    async fn read_exact(&mut self, len: usize) -> anyhow::Result<Bytes> {
+    pub async fn read_exact(&mut self, len: usize) -> io::Result<Bytes> {
+        log::trace!("Entering io::read_exact({len})");
+
+        if let Some(e) = self.src_err() {
+            return Err(e);
+        }
+
         // Here we need to pre-allocate with the exactly requested len.
         let mut buf = BytesMut::with_capacity(len);
         buf.resize(len, 0);
         match self.src.read_exact(&mut buf).await {
-            Ok(_) => Ok(buf.freeze()),
-            Err(e) => bail!("read_exact error: {e}"),
+            Ok(_) => Ok(self.read_ok(buf)),
+            Err(e) => Err(self.read_err(e)),
         }
+    }
+
+    fn read_ok(&mut self, buf: BytesMut) -> Bytes {
+        log::trace!("io read {} bytes", buf.len());
+        self.n_recv_src += buf.len();
+        buf.freeze()
+    }
+
+    fn read_err(&mut self, error: io::Error) -> io::Error {
+        if self.src_err.is_none() {
+            self.src_err = Some(io::Error::from(error.kind()));
+        }
+        error
+    }
+
+    fn src_err(&self) -> Option<io::Error> {
+        self.src_err.as_ref().map(|e| io::Error::from(e.kind()))
     }
 }
 
@@ -291,12 +258,12 @@ pub mod tests {
         bytes_mut_read_buf_limit(1_000_000, 2_000_000).await;
     }
 
-    #[test]
-    fn try_read_empty() {
+    #[tokio::test]
+    async fn try_read_empty() {
         let (reader, writer) = mock::simplex(64);
         let mut io = IoStream::new(reader, writer);
-        let bytes = io.try_read(16).unwrap();
-        assert_eq!(bytes.len(), 0);
+        let result = io.try_read(16).unwrap();
+        assert_eq!(result, None);
     }
 
     async fn new_readable_io(
@@ -317,7 +284,7 @@ pub mod tests {
         let (mut io, payload) = new_readable_io(64).await;
 
         for i in 0..3 {
-            let bytes = io.try_read(16).unwrap();
+            let bytes = io.try_read(16).unwrap().unwrap();
             assert_eq!(bytes.len(), 16);
             let (start, end) = (i * 16, (i + 1) * 16);
             assert_eq!(&bytes, &payload[start..end])
@@ -328,7 +295,7 @@ pub mod tests {
     async fn try_read_same() {
         let (mut io, payload) = new_readable_io(64).await;
 
-        let bytes = io.try_read(64).unwrap();
+        let bytes = io.try_read(64).unwrap().unwrap();
 
         assert_eq!(bytes.len(), 64);
         assert_eq!(&bytes, &payload);
@@ -338,13 +305,13 @@ pub mod tests {
     async fn try_read_high() {
         let (mut io, payload) = new_readable_io(64).await;
 
-        let bytes = io.try_read(128).unwrap();
+        let bytes = io.try_read(128).unwrap().unwrap();
         assert_eq!(bytes.len(), 64);
         assert_eq!(&bytes, &payload);
     }
 
-    #[test]
-    fn try_read_eof() {
+    #[tokio::test]
+    async fn try_read_eof() {
         // Mock readers return EOF when empty.
         let mut io = IoStream::new(Builder::new().build(), Builder::new().build());
         assert!(io.try_read(64).is_err());
@@ -461,30 +428,27 @@ pub mod tests {
         for len in mock::payload_len_iter() {
             let (mut io, payload) = new_readable_io(len).await;
 
-            let bytes = io.recv(1..len + 1).await.unwrap();
+            let bytes = io.read(len).await.unwrap();
             assert_eq!(bytes.len(), len);
             assert_eq!(&bytes, &payload);
         }
     }
 
     #[tokio::test]
-    async fn ranges() {
+    async fn read_all_available() {
         // If source has full payload available, we expect to receive it all.
         let (mut io, _payload) = new_readable_io(64).await;
 
-        let bytes = io.recv(0..1).await.unwrap();
-        assert_eq!(bytes.len(), 0);
-
-        let bytes = io.recv(0..10).await.unwrap();
+        let bytes = io.read(9).await.unwrap();
         assert_eq!(bytes.len(), 9);
 
-        let bytes = io.recv(1..10).await.unwrap();
+        let bytes = io.read(9).await.unwrap();
         assert_eq!(bytes.len(), 9);
 
-        let bytes = io.recv(5..6).await.unwrap();
+        let bytes = io.read_exact(5).await.unwrap();
         assert_eq!(bytes.len(), 5);
 
-        let bytes = io.recv(1..100).await.unwrap();
+        let bytes = io.read(100).await.unwrap();
         assert_eq!(bytes.len(), 64 - 9 - 9 - 5);
     }
 }

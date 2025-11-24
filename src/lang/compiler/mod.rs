@@ -60,8 +60,8 @@ impl TaskGraphImpl {
                 // This adjusts read app instructions during the handshake phase to not necessarily
                 // require bytes
                 for i in &mut ins {
-                    if let InstructionV1::ReadApp(ReadAppArgs { from_len: x, .. }) = i {
-                        *x = 0..x.end;
+                    if let InstructionV1::Read(ReadArgs { which: ReadWhich::App, how: x, .. }) = i {
+                        *x = ReadHow::TryRead;
                     }
                 }
 
@@ -357,8 +357,10 @@ fn compile_plaintext_commands_sender(format_id: &Identifier, psf: &Psf) -> Vec<I
 
     if let Some(ref hints_dynamic_payload) = maybe_hints_dynamic_payload {
         instrs.push(
-            ReadAppArgs {
-                from_len: 1..hints_dynamic_payload.length_field_max,
+            ReadArgs {
+                which: ReadWhich::App,
+                how: ReadHow::Read,
+                from_len: ReadLength::Fixed(hints_dynamic_payload.length_field_max),
                 to_heap_id: hints_dynamic_payload.payload_field_name.clone(),
             }
             .into(),
@@ -657,8 +659,10 @@ fn compile_message_to_instrs(
                 let field_nbytes = field.maybe_size_of().unwrap();
 
                 instrs.push(
-                    ReadNetArgs {
-                        from_len: ReadNetLength::Range(field_nbytes..field_nbytes + 1),
+                    ReadArgs {
+                        which: ReadWhich::Net,
+                        how: ReadHow::ReadExact,
+                        from_len: ReadLength::Fixed(field_nbytes),
                         to_heap_id: field.name.clone(),
                     }
                     .into(),
@@ -796,8 +800,10 @@ fn compile_message_to_instrs(
                     );
 
                     instrs.push(
-                        ReadNetArgs {
-                            from_len: ReadNetLength::IdentifierMinusMinus((
+                        ReadArgs {
+                            which: ReadWhich::Net,
+                            how: ReadHow::ReadExact,
+                            from_len: ReadLength::IdentifierMinusMinus((
                                 LENGTH_ON_HEAP_NAME.id(),
                                 "__padding_len_on_heap".id(),
                                 fixed_tail_size,
@@ -808,16 +814,20 @@ fn compile_message_to_instrs(
                     );
 
                     instrs.push(
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Identifier("__padding_len_on_heap".id()),
+                        ReadArgs {
+                            which: ReadWhich::Net,
+                            how: ReadHow::ReadExact,
+                            from_len: ReadLength::Identifier("__padding_len_on_heap".id()),
                             to_heap_id: hints_padding.field_id.clone(),
                         }
                         .into(),
                     );
                 } else {
                     instrs.push(
-                        ReadNetArgs {
-                            from_len: ReadNetLength::IdentifierMinus((
+                        ReadArgs {
+                            which: ReadWhich::Net,
+                            how: ReadHow::ReadExact,
+                            from_len: ReadLength::IdentifierMinus((
                                 LENGTH_ON_HEAP_NAME.id(),
                                 fixed_tail_size,
                             )),
@@ -831,8 +841,10 @@ fn compile_message_to_instrs(
                     let field_len = field.maybe_size_of().unwrap();
 
                     instrs.push(
-                        ReadNetArgs {
-                            from_len: ReadNetLength::Range(field_len..field_len + 1),
+                        ReadArgs {
+                            which: ReadWhich::Net,
+                            how: ReadHow::ReadExact,
+                            from_len: ReadLength::Fixed(field_len),
                             to_heap_id: field.name.clone(),
                         }
                         .into(),

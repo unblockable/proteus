@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::io;
 
 use bytes::Bytes;
 use types::Identifier;
@@ -29,13 +29,22 @@ trait Runtime {
     fn encrypt_unauth(&mut self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
     fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> anyhow::Result<Vec<u8>>;
     fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
-    async fn recv(&mut self, len: Range<usize>) -> anyhow::Result<Bytes>;
-    async fn send(&mut self, bytes: Bytes) -> anyhow::Result<usize>;
-    async fn flush(&mut self) -> anyhow::Result<()>;
+    async fn read(&mut self, len: usize) -> io::Result<Bytes>;
+    fn try_read(&mut self, len: usize) -> io::Result<Option<Bytes>>;
+    async fn read_exact(&mut self, len: usize) -> io::Result<Bytes>;
+    async fn send(&mut self, bytes: Bytes) -> io::Result<usize>;
+    async fn flush(&mut self) -> io::Result<()>;
+    async fn shutdown(&mut self) -> io::Result<()>;
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ExecuteOk {
+    ReadEof,
+    Ok,
 }
 
 trait Execute {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<()>;
+    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk>;
 }
 
 // TODO: remove when the compiler implements this trait.

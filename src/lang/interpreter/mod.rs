@@ -2,6 +2,7 @@ use loader::Loader;
 use tokio::io::{AsyncRead, AsyncWrite};
 use vm::VirtualMachine;
 
+use crate::lang::ExecuteOk;
 use crate::lang::ir::bridge::TaskProvider;
 
 mod crypto;
@@ -52,11 +53,10 @@ impl Interpreter {
         let loader = Loader::new(protospec);
 
         // Execute both forwarding directions concurrently.
-        let (_, _) = tokio::join!(
+        tokio::join!(
             Interpreter::execute(loader.clone(), app_to_net, ForwardingDirection::AppToNet),
             Interpreter::execute(loader, net_to_app, ForwardingDirection::NetToApp),
-        );
-        (Ok(()), Ok(()))
+        )
     }
 
     async fn execute<R, W, T>(
@@ -77,10 +77,12 @@ impl Interpreter {
             // The loader needs to know that this program finished, even on error.
             let unload_result = loader.unload(program);
 
-            if exe_result.is_err() {
-                return exe_result;
-            } else if unload_result.is_err() {
-                return unload_result;
+            if let Ok(ExecuteOk::ReadEof) = exe_result {
+                return Ok(());
+            } else if let Err(e) = exe_result {
+                return Err(e);
+            } else if let Err(e) = unload_result {
+                return Err(e);
             }
         }
     }
@@ -95,6 +97,7 @@ mod tests {
 
     #[tokio::test]
     async fn length_payload_unencrypted() {
+        // let _ = env_logger::try_init();
         mock::test_protocol_interpretability(
             LengthPayloadSpec::new(Role::Client),
             LengthPayloadSpec::new(Role::Server),
@@ -104,6 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn length_payload_encrypted() {
+        // let _ = env_logger::try_init();
         mock::test_protocol_interpretability(
             EncryptedLengthPayloadSpec::new(Role::Client),
             EncryptedLengthPayloadSpec::new(Role::Server),

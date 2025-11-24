@@ -95,8 +95,10 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
         // Outgoing data forwarding direction.
         let out_task = Task {
             ins: vec![
-                ReadAppArgs {
-                    from_len: 1..(u16::MAX - 32) as usize,
+                ReadArgs {
+                    which: ReadWhich::App,
+                    how: ReadHow::Read,
+                    from_len: ReadLength::Fixed((u16::MAX - 32) as usize),
                     to_heap_id: "payload".id(),
                 }
                 .into(),
@@ -179,13 +181,17 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
         // Incoming data forwarding direction.
         let in_task = Task {
             ins: vec![
-                ReadNetArgs {
-                    from_len: ReadNetLength::Range(2..3_usize),
+                ReadArgs {
+                    which: ReadWhich::Net,
+                    how: ReadHow::ReadExact,
+                    from_len: ReadLength::Fixed(2usize),
                     to_heap_id: "length".id(),
                 }
                 .into(),
-                ReadNetArgs {
-                    from_len: ReadNetLength::Range(16..17_usize),
+                ReadArgs {
+                    which: ReadWhich::Net,
+                    how: ReadHow::ReadExact,
+                    from_len: ReadLength::Fixed(16usize),
                     to_heap_id: "length_mac".id(),
                 }
                 .into(),
@@ -232,13 +238,17 @@ impl TaskProvider for EncryptedLengthPayloadSpec {
                     to_heap_id: "payload_len_value_heap".id(),
                 }
                 .into(),
-                ReadNetArgs {
-                    from_len: ReadNetLength::IdentifierMinus(("payload_len_value_heap".id(), 16)),
+                ReadArgs {
+                    which: ReadWhich::Net,
+                    how: ReadHow::ReadExact,
+                    from_len: ReadLength::IdentifierMinus(("payload_len_value_heap".id(), 16)),
                     to_heap_id: "payload".id(),
                 }
                 .into(),
-                ReadNetArgs {
-                    from_len: ReadNetLength::Range(16..17_usize),
+                ReadArgs {
+                    which: ReadWhich::Net,
+                    how: ReadHow::ReadExact,
+                    from_len: ReadLength::Fixed(16usize),
                     to_heap_id: "payload_mac".id(),
                 }
                 .into(),

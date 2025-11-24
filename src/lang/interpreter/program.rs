@@ -1,8 +1,8 @@
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::vm::VirtualMachine;
-use crate::lang::Execute;
 use crate::lang::ir::bridge::{Task, TaskID};
+use crate::lang::{Execute, ExecuteOk};
 
 pub struct Program {
     task: Task,
@@ -24,12 +24,23 @@ impl Program {
     pub async fn execute<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
         vm: &mut VirtualMachine<R, W>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ExecuteOk> {
         while self.next_ins_index < self.task.ins.len() {
-            self.task.ins[self.next_ins_index].execute(vm).await?;
-            self.next_ins_index += 1;
+            match self.task.ins[self.next_ins_index].execute(vm).await {
+                Ok(ExecuteOk::Ok) => {
+                    self.next_ins_index += 1;
+                }
+                Ok(ExecuteOk::ReadEof) => {
+                    vm.clear_heap();
+                    return Ok(ExecuteOk::ReadEof);
+                }
+                Err(e) => {
+                    vm.clear_heap();
+                    return Err(e);
+                }
+            }
         }
         vm.clear_heap();
-        Ok(())
+        Ok(ExecuteOk::Ok)
     }
 }
