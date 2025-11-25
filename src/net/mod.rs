@@ -37,7 +37,7 @@ pub trait AsyncConnect {
 }
 
 /// An extension trait for `AsyncConnect` that provides an `async` method.
-pub trait AsyncConnectExt: AsyncConnect + Unpin + AsMut<Self> + Send {
+pub trait AsyncConnectExt: AsyncConnect + AsMut<Self> + Send + Unpin {
     fn connect(
         &mut self,
         target: Socks5Target,
@@ -47,7 +47,7 @@ pub trait AsyncConnectExt: AsyncConnect + Unpin + AsMut<Self> + Send {
 }
 
 /// Blanket implementation for all types that satisfy the bounds.
-impl<T: AsyncConnect + Unpin + AsMut<Self> + Send> AsyncConnectExt for T {}
+impl<T: AsyncConnect + AsMut<Self> + Send + Unpin> AsyncConnectExt for T {}
 
 /// A connector for TCP sockets.
 #[derive(Default)]
@@ -86,7 +86,7 @@ impl AsyncConnect for TcpConnector {
                 Socks5Address::Unknown => {
                     return Poll::Ready(Err(std::io::Error::new(
                         io::ErrorKind::AddrNotAvailable,
-                        "Unable to connect: connector has unknown address",
+                        "Unable to connect to unknown address",
                     )));
                 }
             };

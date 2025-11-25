@@ -65,7 +65,7 @@ async fn run_client(client_args: ClientArgs, psf_path: String) -> anyhow::Result
 
     // We use a channel to manage the connection to the proxy server, and a tunnel to
     // manage the incoming virtual application stream sessions.
-    let channel = Channel::disconnected::<TcpConnector>(Socks5Target::from(server_addr));
+    let channel = Channel::disconnected(Socks5Target::from(server_addr), TcpConnector::default());
     let tunnel = TurboTunnel::new_socks_client();
 
     // Run a proteus protocol interpreter in the background. We only run one because we

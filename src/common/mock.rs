@@ -1,14 +1,19 @@
 use std::future::Future;
 use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use anyhow::anyhow;
 use bytes::Bytes;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::time::{Sleep, sleep};
 
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::READ_CAPACITY;
+use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
+use crate::net::{AsyncConnect, READ_CAPACITY};
 
 pub fn simplex(max_buf_size: usize) -> (impl AsyncRead, impl AsyncWrite) {
     tokio::io::simplex(max_buf_size)
@@ -31,6 +36,122 @@ pub fn payload(len: usize) -> Bytes {
     Bytes::from(s)
 }
 
+pub struct MockIo {
+    pub reader: Box<dyn AsyncRead + Send + Unpin>,
+    pub writer: Box<dyn AsyncWrite + Send + Unpin>,
+}
+
+impl MockIo {
+    pub fn new(
+        reader: impl AsyncRead + Send + Unpin + 'static,
+        writer: impl AsyncWrite + Send + Unpin + 'static,
+    ) -> Self {
+        Self {
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+        }
+    }
+
+    fn new_split(rw: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
+        let (r, w) = tokio::io::split(rw);
+        Self::new(r, w)
+    }
+
+    fn new_pair() -> (Self, Self) {
+        let (io_rw_1, io_rw_2) = duplex(READ_CAPACITY);
+        (Self::new_split(io_rw_1), Self::new_split(io_rw_2))
+    }
+}
+
+struct MockApplication {
+    payload: Bytes,
+    io: MockIo,
+}
+
+impl MockApplication {
+    fn new(payload_len: usize, io: MockIo) -> Self {
+        let payload = payload(payload_len);
+        Self { payload, io }
+    }
+}
+
+pub struct MockProxy {
+    pub app: MockIo,
+    pub net: MockIo,
+}
+
+impl MockProxy {
+    pub fn new(app: MockIo, net: MockIo) -> Self {
+        Self { app, net }
+    }
+}
+
+/// A mock proxy network that represents the following:
+/// c_app <--> c_proxy <--> s_proxy <--> s_app
+pub struct MockProxyNetwork {
+    c_app: MockApplication,
+    c_proxy: MockProxy,
+    s_proxy: MockProxy,
+    s_app: MockApplication,
+}
+
+impl MockProxyNetwork {
+    pub fn new(payload_len: usize) -> Self {
+        let (c_app, c_proxy_to_app) = MockIo::new_pair();
+        let (c_proxy_to_net, s_proxy_to_net) = MockIo::new_pair();
+        let (s_app, s_proxy_to_app) = MockIo::new_pair();
+        Self {
+            c_app: MockApplication::new(payload_len, c_app),
+            c_proxy: MockProxy::new(c_proxy_to_app, c_proxy_to_net),
+            s_proxy: MockProxy::new(s_proxy_to_app, s_proxy_to_net),
+            s_app: MockApplication::new(payload_len, s_app),
+        }
+    }
+
+    async fn run_direct_io(self) -> self::Result {
+        self.run_with_forwarder(None::<u8>, &io_copy_direct, None::<u8>, &io_copy_direct)
+            .await
+    }
+
+    pub async fn run_with_forwarder<C, FC, S, FS, FutC, FutS>(
+        self,
+        client: C,
+        client_fwd: FC,
+        server: S,
+        server_fwd: FS,
+    ) -> self::Result
+    where
+        FC: Fn(C, MockProxy) -> FutC,
+        FS: Fn(S, MockProxy) -> FutS,
+        FutC: Future<Output = (anyhow::Result<()>, anyhow::Result<()>)>,
+        FutS: Future<Output = (anyhow::Result<()>, anyhow::Result<()>)>,
+    {
+        let results = tokio::join!(
+            // Run the client-side app tasks.
+            stream_then_shutdown(self.c_app.io.writer, self.c_app.payload),
+            sink_until_eof(self.c_app.io.reader),
+            // Run the client-side proxy tasks.
+            client_fwd(client, self.c_proxy),
+            // Run the server-side proxy tasks.
+            server_fwd(server, self.s_proxy),
+            // Run the server-side app tasks.
+            stream_then_shutdown(self.s_app.io.writer, self.s_app.payload),
+            sink_until_eof(self.s_app.io.reader),
+        );
+
+        self::Result {
+            c_app_src: results.0,
+            c_app_dst: results.1,
+            c_app_to_net: results.2.0,
+            c_net_to_app: results.2.1,
+            s_app_to_net: results.3.0,
+            s_net_to_app: results.3.1,
+            s_app_src: results.4,
+            s_app_dst: results.5,
+        }
+    }
+}
+
 pub struct Result {
     pub c_app_src: io::Result<Bytes>,
     pub c_app_dst: io::Result<Bytes>,
@@ -43,7 +164,7 @@ pub struct Result {
 }
 
 impl Result {
-    fn assert(&self, len: usize) {
+    pub fn assert(&self, len: usize) {
         self.assert_success();
 
         let c_src = self.c_app_src.as_ref().unwrap();
@@ -74,121 +195,6 @@ impl Result {
         assert_eq!(a.len(), len);
         assert_eq!(b.len(), len);
         assert_eq!(&a[..], &b[..]);
-    }
-}
-
-pub struct MockIo {
-    reader: Box<dyn AsyncRead + Unpin>,
-    writer: Box<dyn AsyncWrite + Unpin>,
-}
-
-impl MockIo {
-    fn new(
-        reader: impl AsyncRead + Unpin + 'static,
-        writer: impl AsyncWrite + Unpin + 'static,
-    ) -> Self {
-        Self {
-            reader: Box::new(reader),
-            writer: Box::new(writer),
-        }
-    }
-
-    fn new_split(rw: impl AsyncRead + AsyncWrite + Unpin + 'static) -> Self {
-        let (r, w) = tokio::io::split(rw);
-        Self::new(r, w)
-    }
-
-    fn new_pair() -> (Self, Self) {
-        let (io_rw_1, io_rw_2) = duplex(READ_CAPACITY);
-        (Self::new_split(io_rw_1), Self::new_split(io_rw_2))
-    }
-}
-
-struct MockApplication {
-    payload: Bytes,
-    io: MockIo,
-}
-
-impl MockApplication {
-    fn new(payload_len: usize, io: MockIo) -> Self {
-        let payload = payload(payload_len);
-        Self { payload, io }
-    }
-}
-
-pub struct MockProxy {
-    app: MockIo,
-    net: MockIo,
-}
-
-impl MockProxy {
-    fn new(app: MockIo, net: MockIo) -> Self {
-        Self { app, net }
-    }
-}
-
-/// A mock proxy network that represents the following:
-/// c_app <--> c_proxy <--> s_proxy <--> s_app
-pub struct MockProxyNetwork {
-    c_app: MockApplication,
-    c_proxy: MockProxy,
-    s_proxy: MockProxy,
-    s_app: MockApplication,
-}
-
-impl MockProxyNetwork {
-    fn new(payload_len: usize) -> Self {
-        let (c_app, c_proxy_to_app) = MockIo::new_pair();
-        let (c_proxy_to_net, s_proxy_to_net) = MockIo::new_pair();
-        let (s_app, s_proxy_to_app) = MockIo::new_pair();
-        Self {
-            c_app: MockApplication::new(payload_len, c_app),
-            c_proxy: MockProxy::new(c_proxy_to_app, c_proxy_to_net),
-            s_proxy: MockProxy::new(s_proxy_to_app, s_proxy_to_net),
-            s_app: MockApplication::new(payload_len, s_app),
-        }
-    }
-
-    async fn run_direct_io(self) -> self::Result {
-        self.run_with_forwarder(None::<u8>, &io_copy_direct, None::<u8>, &io_copy_direct)
-            .await
-    }
-
-    async fn run_with_forwarder<C, FC, S, FS, Fut>(
-        self,
-        client: C,
-        client_fwd: FC,
-        server: S,
-        server_fwd: FS,
-    ) -> self::Result
-    where
-        FC: Fn(C, MockProxy) -> Fut,
-        FS: Fn(S, MockProxy) -> Fut,
-        Fut: Future<Output = (anyhow::Result<()>, anyhow::Result<()>)>,
-    {
-        let results = tokio::join!(
-            // Run the client-side app tasks.
-            stream_then_shutdown(self.c_app.io.writer, self.c_app.payload),
-            sink_until_eof(self.c_app.io.reader),
-            // Run the client-side proxy tasks.
-            client_fwd(client, self.c_proxy),
-            // Run the server-side proxy tasks.
-            server_fwd(server, self.s_proxy),
-            // Run the server-side app tasks.
-            stream_then_shutdown(self.s_app.io.writer, self.s_app.payload),
-            sink_until_eof(self.s_app.io.reader),
-        );
-
-        self::Result {
-            c_app_src: results.0,
-            c_app_dst: results.1,
-            c_app_to_net: results.2.0,
-            c_net_to_app: results.2.1,
-            s_app_to_net: results.3.0,
-            s_net_to_app: results.3.1,
-            s_app_src: results.4,
-            s_app_dst: results.5,
-        }
     }
 }
 
@@ -223,7 +229,7 @@ where
     Ok(n_bytes as usize)
 }
 
-async fn io_copy_direct(
+pub async fn io_copy_direct(
     _: Option<u8>,
     proxy: MockProxy,
 ) -> (anyhow::Result<()>, anyhow::Result<()>) {
@@ -241,7 +247,7 @@ async fn io_copy_direct(
     )
 }
 
-async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
+pub async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
     protospec: T,
     proxy: MockProxy,
 ) -> (anyhow::Result<()>, anyhow::Result<()>) {
@@ -276,29 +282,110 @@ where
     }
 }
 
+#[derive(Default)]
+pub struct MockConnector {
+    /// The io returned during the connect operation.
+    local_socket: Option<MockIo>,
+    /// The socket of the peer that would accept our connection on the remote end.
+    pub remote_socket: Option<MockIo>,
+    state: MockConnectorState,
+}
+
+enum MockConnectorState {
+    Initial(Option<Duration>),
+    Sleeping(Pin<Box<Sleep>>),
+    Connecting,
+    Done,
+}
+
+impl Default for MockConnectorState {
+    fn default() -> Self {
+        MockConnectorState::Initial(None)
+    }
+}
+
+impl MockConnector {
+    pub fn new(connect_delay: Option<Duration>) -> Self {
+        let (local, remote) = MockIo::new_pair();
+        Self {
+            local_socket: Some(local),
+            remote_socket: Some(remote),
+            state: MockConnectorState::Initial(connect_delay),
+        }
+    }
+
+    pub fn default_target() -> Socks5Target {
+        Socks5Target::new(Socks5Address::Unknown, 443)
+    }
+}
+
+impl AsMut<MockConnector> for MockConnector {
+    fn as_mut(&mut self) -> &mut MockConnector {
+        self
+    }
+}
+
+impl AsyncConnect for MockConnector {
+    type ReadHalf = Box<dyn AsyncRead + Send + Unpin>;
+    type WriteHalf = Box<dyn AsyncWrite + Send + Unpin>;
+
+    fn poll_connect(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        _target: Socks5Target,
+    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>> {
+        loop {
+            match &mut self.state {
+                MockConnectorState::Initial(delay) => match delay {
+                    Some(dur) => self.state = MockConnectorState::Sleeping(Box::pin(sleep(*dur))),
+                    None => self.state = MockConnectorState::Connecting,
+                },
+                MockConnectorState::Sleeping(fut) => match fut.as_mut().poll(cx) {
+                    Poll::Ready(_) => self.state = MockConnectorState::Connecting,
+                    Poll::Pending => return Poll::Pending,
+                },
+                MockConnectorState::Connecting => {
+                    self.state = MockConnectorState::Done;
+                    if let Some(io) = self.local_socket.take() {
+                        return Poll::Ready(Ok((io.reader, io.writer)));
+                    }
+                }
+                MockConnectorState::Done => {
+                    return Poll::Ready(Err(io::ErrorKind::NetworkDown.into()));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use crate::common::mock;
+    use crate::net::AsyncConnectExt;
 
     use super::*;
+
+    async fn test_simple_pair(client: MockIo, server: MockIo, len: usize) {
+        let client = MockApplication::new(len, client);
+        let server = MockApplication::new(len, server);
+
+        let results = tokio::join!(
+            // Run the client-side app tasks.
+            stream_then_shutdown(client.io.writer, client.payload),
+            sink_until_eof(client.io.reader),
+            stream_then_shutdown(server.io.writer, server.payload),
+            sink_until_eof(server.io.reader),
+        );
+
+        mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+        mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+    }
 
     #[tokio::test]
     async fn duplex_split() {
         for len in payload_len_iter() {
             let (client, server) = MockIo::new_pair();
-            let client = MockApplication::new(len, client);
-            let server = MockApplication::new(len, server);
-
-            let results = tokio::join!(
-                // Run the client-side app tasks.
-                stream_then_shutdown(client.io.writer, client.payload),
-                sink_until_eof(client.io.reader),
-                stream_then_shutdown(server.io.writer, server.payload),
-                sink_until_eof(server.io.reader),
-            );
-
-            mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
-            mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+            test_simple_pair(client, server, len).await;
         }
     }
 
@@ -362,5 +449,34 @@ pub mod tests {
         for len in payload_len_iter() {
             MockProxyNetwork::new(len).run_direct_io().await.assert(len);
         }
+    }
+
+    async fn test_connector(delay: Option<Duration>) {
+        for len in payload_len_iter() {
+            let mut connector = MockConnector::new(delay);
+
+            let result = connector.connect(MockConnector::default_target()).await;
+            let (r, w) = result.unwrap();
+
+            let client = MockIo::new(r, w);
+            let server = connector.remote_socket.take().unwrap();
+
+            test_simple_pair(client, server, len).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn connector_no_delay() {
+        test_connector(None).await;
+    }
+
+    #[tokio::test]
+    async fn connector_short_delay() {
+        test_connector(Some(Duration::from_millis(1))).await;
+    }
+
+    #[tokio::test]
+    async fn connector_long_delay() {
+        test_connector(Some(Duration::from_millis(100))).await;
     }
 }

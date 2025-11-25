@@ -155,7 +155,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 info.target
             );
 
-            let channel = Channel::disconnected::<TcpConnector>(info.target);
+            let channel = Channel::disconnected(info.target, TcpConnector::default());
             let mut tunnel = TurboTunnel::new_pt_client();
 
             if info.remaining_read_buf.is_empty() {

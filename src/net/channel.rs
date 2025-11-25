@@ -54,9 +54,9 @@ where
 
     /// Create a disconnected channel that will connect to the given `peer` in the background,
     /// and then all reads and writes on this channel will be forwarded to the peer connection.
-    pub fn disconnected<C>(peer: Socks5Target) -> Self
+    pub fn disconnected<C>(peer: Socks5Target, mut connector: C) -> Self
     where
-        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + 'static,
     {
         let (read_tx, read_rx) = oneshot::channel();
         let (write_tx, write_rx) = oneshot::channel();
@@ -69,7 +69,6 @@ where
         tokio::spawn(async move {
             ready_to_connect.notified().await;
 
-            let mut connector = C::default();
             let result = connector.connect(connect_target).await;
 
             match result {
@@ -318,5 +317,157 @@ fn broken_pipe_error(e: RecvError) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    // TODO
+    use std::time::Duration;
+
+    use tokio::io::{AsyncRead, AsyncWrite};
+
+    use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
+    use crate::lang::Role;
+    use crate::lang::ir::bridge::TaskProvider;
+    use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
+    use crate::net::Channel;
+
+    fn wrapped_proxy<R, W>(app_io: MockIo, net_io: Channel<R, W>) -> MockProxy
+    where
+        R: AsyncRead + Send + Unpin + 'static,
+        W: AsyncWrite + Send + Unpin + 'static,
+    {
+        let (chan_r, chan_w) = (net_io.clone(), net_io);
+        let wrapped_net = MockIo::new(chan_r, chan_w);
+        MockProxy::new(app_io, wrapped_net)
+    }
+
+    /// Use direct io without an interpreter.
+    async fn connected_channel_direct_io(
+        _: Option<u8>,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        // Channel is already connected.
+        let channel = Channel::connected(proxy.net.reader, proxy.net.writer);
+        mock::io_copy_direct(None::<u8>, wrapped_proxy(proxy.app, channel)).await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_connected_channel_direct_io() {
+        for len in mock::payload_len_iter() {
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    None::<u8>,
+                    &connected_channel_direct_io,
+                    None::<u8>,
+                    &connected_channel_direct_io,
+                )
+                .await
+                .assert(len);
+        }
+    }
+
+    async fn disconnected_channel_direct_io_client(
+        connector: MockConnector,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        // Client starts in a disconnected state.
+        let channel = Channel::disconnected(MockConnector::default_target(), connector);
+        // The channel should handle the connection transparently, so we can start io already.
+        mock::io_copy_direct(None::<u8>, wrapped_proxy(proxy.app, channel)).await
+    }
+
+    async fn disconnected_channel_direct_io_server(
+        replaced_net: MockIo,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        // The server is already connected using the remote socket from the client connection.
+        let channel = Channel::connected(replaced_net.reader, replaced_net.writer);
+        mock::io_copy_direct(None::<u8>, wrapped_proxy(proxy.app, channel)).await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_disconnected_channel_direct_io() {
+        for len in mock::payload_len_iter() {
+            // Channel is not connected yet, we need to simulate a connection.
+            let mut connector = MockConnector::new(Some(Duration::from_millis(10)));
+            let new_net_server = connector.remote_socket.take().unwrap();
+
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    connector,
+                    &disconnected_channel_direct_io_client,
+                    new_net_server,
+                    &disconnected_channel_direct_io_server,
+                )
+                .await
+                .assert(len);
+        }
+    }
+
+    /// Use io via an interpreter.
+    async fn connected_channel_interpreter_io<T: TaskProvider + Clone + Send>(
+        protospec: T,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        // Channel is already connected.
+        let channel = Channel::connected(proxy.net.reader, proxy.net.writer);
+        mock::io_copy_interpreter(protospec, wrapped_proxy(proxy.app, channel)).await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_connected_channel_interpreter_io() {
+        for len in mock::payload_len_iter() {
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    EncryptedLengthPayloadSpec::new(Role::Client),
+                    &connected_channel_interpreter_io,
+                    EncryptedLengthPayloadSpec::new(Role::Server),
+                    &connected_channel_interpreter_io,
+                )
+                .await
+                .assert(len);
+        }
+    }
+
+    async fn disconnected_channel_interpreter_io_client(
+        connector: MockConnector,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        // Client starts in a disconnected state.
+        let channel = Channel::disconnected(MockConnector::default_target(), connector);
+        // The channel should handle the connection transparently, so we can start io already.
+        mock::io_copy_interpreter(
+            EncryptedLengthPayloadSpec::new(Role::Client),
+            wrapped_proxy(proxy.app, channel),
+        )
+        .await
+    }
+
+    async fn disconnected_channel_interpreter_io_server(
+        replaced_net: MockIo,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        // The server is already connected using the remote socket from the client connection.
+        let channel = Channel::connected(replaced_net.reader, replaced_net.writer);
+        mock::io_copy_interpreter(
+            EncryptedLengthPayloadSpec::new(Role::Server),
+            wrapped_proxy(proxy.app, channel),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_disconnected_channel_interpreter_io() {
+        for len in mock::payload_len_iter() {
+            // Channel is not connected yet, we need to simulate a connection.
+            let mut connector = MockConnector::new(Some(Duration::from_millis(10)));
+            let new_net_server = connector.remote_socket.take().unwrap();
+
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    connector,
+                    &disconnected_channel_interpreter_io_client,
+                    new_net_server,
+                    &disconnected_channel_interpreter_io_server,
+                )
+                .await
+                .assert(len);
+        }
+    }
 }
