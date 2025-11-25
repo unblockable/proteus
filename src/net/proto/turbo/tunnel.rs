@@ -24,7 +24,7 @@ pub struct TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
 {
     shared_read_state: Arc<Mutex<ReadState<R>>>,
     shared_write_state: Arc<Mutex<WriteState<W>>>,
@@ -58,7 +58,7 @@ impl<R, W, C> TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
 {
     fn new(pinned_target: Option<Socks5Target>, eof_on_empty: bool) -> Self {
         let (stream_sender, stream_receiver) = mpsc::channel(1_000);
@@ -124,8 +124,8 @@ where
 
     pub async fn add_session_pt_client(&mut self, src: R, dst: W) {
         // The server will already be configured with the connect target.
-        self.add_session_client(src, dst, Socks5Target::new(Socks5Address::Unknown, 0))
-            .await;
+        let target = Socks5Target::new(Socks5Address::Unknown, 0);
+        self.add_session_client(src, dst, target).await;
     }
 
     async fn add_session_client(&mut self, src: R, dst: W, target: Socks5Target) {
@@ -139,18 +139,13 @@ where
         self.store_session(session).await;
     }
 
-    #[cfg(test)]
-    pub async fn add_session_client_test(&mut self, src: R, dst: W, id: u64, target: Socks5Target) {
-        self.add_session_client_inner(src, dst, id, target).await;
-    }
-
     fn add_session_server(&self, id: u64, target: &Socks5Target) {
         let target = match &self.pinned_target {
             Some(pinned) => pinned.clone(),
             None => target.clone(),
         };
 
-        let session = TurboSession::<R, W>::disconnected::<C>(id, target);
+        let session = TurboSession::<R, W>::disconnected(id, target, C::default());
 
         let (stream, sink) = session.into_split();
 
@@ -164,9 +159,15 @@ where
     }
 
     #[cfg(test)]
+    pub async fn add_session_client_test(&mut self, src: R, dst: W, id: u64) {
+        let target = Socks5Target::new(Socks5Address::Unknown, 0);
+        self.add_session_client_inner(src, dst, id, target).await;
+    }
+
+    #[cfg(test)]
     pub async fn add_session_server_test(&mut self, src: R, dst: W, id: u64) {
-        // self.add_session_server(src, dst, id).await;
-        unimplemented!()
+        let session = TurboSession::connected(id, src, dst);
+        self.store_session(session).await;
     }
 
     fn poll_helper(&mut self, cx: &mut Context, op: PollHelperOp) -> Poll<Result<(), io::Error>> {
@@ -238,7 +239,7 @@ impl<R, W, C> Clone for TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
 {
     fn clone(&self) -> Self {
         Self {
@@ -256,7 +257,7 @@ impl<R, W, C> AsyncRead for TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -318,11 +319,11 @@ where
             Poll::Ready(Ok(()))
         } else if state.pending.is_empty() && state.streams.is_empty() && state.eof_on_empty {
             // This is an EOF since we did not add to the ReadBuf.
-            log::trace!("poll_read(): EOF: no streams remaining");
+            log::trace!("poll_read(): EOF: empty read buf and no streams remaining");
             Poll::Ready(Ok(()))
         } else {
             // New streams, or new message on existing streams, may arrive in the future.
-            log::trace!("poll_read(): Pending new streams and messages");
+            log::trace!("poll_read(): pending new streams and messages");
             Poll::Pending
         }
     }
@@ -332,7 +333,7 @@ impl<R, W, C> AsyncWrite for TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -417,6 +418,11 @@ where
 mod tests {
     use futures::StreamExt;
     use futures::stream::{self, SelectAll};
+    use tokio::io::{AsyncRead, AsyncWrite};
+
+    use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
+    use crate::net::AsyncConnectExt;
+    use crate::net::proto::turbo::TurboTunnel;
 
     #[tokio::test]
     async fn select_all_is_reusable() {
@@ -447,5 +453,55 @@ mod tests {
         assert_eq!(all_streams.len(), 1);
         assert!(matches!(all_streams.next().await, None));
         assert_eq!(all_streams.len(), 0);
+    }
+
+    fn wrapped_proxy<R, W, C>(app_io: TurboTunnel<R, W, C>, net_io: MockIo) -> MockProxy
+    where
+        R: AsyncRead + Send + Unpin + 'static,
+        W: AsyncWrite + Send + Unpin + 'static,
+        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+    {
+        let (tunnel_r, tunnel_w) = (app_io.clone(), app_io);
+        let wrapped_app = MockIo::new(tunnel_r, tunnel_w);
+        MockProxy::new(wrapped_app, net_io)
+    }
+
+    /// Use direct io without an interpreter.
+    async fn connected_tunnel_direct_io(
+        is_client: bool,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        let mut tunnel = TurboTunnel::<
+            Box<dyn AsyncRead + Send + Unpin>,
+            Box<dyn AsyncWrite + Send + Unpin>,
+            MockConnector,
+        >::new(None, true);
+        let id = 1234567890;
+        if is_client {
+            tunnel
+                .add_session_client_test(proxy.app.reader, proxy.app.writer, id)
+                .await;
+        } else {
+            tunnel
+                .add_session_server_test(proxy.app.reader, proxy.app.writer, id)
+                .await;
+        }
+        mock::io_copy_direct(None::<u8>, wrapped_proxy(tunnel, proxy.net)).await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_connected_tunnel_direct_io() {
+        let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    true,
+                    &connected_tunnel_direct_io,
+                    false,
+                    &connected_tunnel_direct_io,
+                )
+                .await
+                .assert(len);
+        }
     }
 }

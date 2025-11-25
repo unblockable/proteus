@@ -315,7 +315,7 @@ impl MockConnector {
     }
 
     pub fn default_target() -> Socks5Target {
-        Socks5Target::new(Socks5Address::Unknown, 443)
+        Socks5Target::new(Socks5Address::Unknown, 0)
     }
 }
 

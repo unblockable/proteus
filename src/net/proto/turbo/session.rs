@@ -56,16 +56,15 @@ where
         }
     }
 
-    pub fn disconnected<C>(id: u64, target: Socks5Target) -> Self
+    pub fn disconnected<C>(id: u64, target: Socks5Target, mut connector: C) -> Self
     where
-        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default,
+        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + 'static,
     {
         let (read_tx, read_rx) = oneshot::channel();
         let (write_tx, write_rx) = oneshot::channel();
 
         // Spawn a background task to establish the connection and split the stream.
         tokio::spawn(async move {
-            let mut connector = C::default();
             let result = connector.connect(target).await;
 
             match result {
