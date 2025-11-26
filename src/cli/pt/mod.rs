@@ -15,7 +15,7 @@ use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks;
 use crate::net::proto::turbo::TurboTunnel;
-use crate::net::{Channel, TcpConnector};
+use crate::net::{AsyncConnectExt, Channel, FixedTargetTcpConnector, TcpConnector};
 
 pub mod config;
 pub mod control;
@@ -156,7 +156,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
             );
 
             let channel = Channel::disconnected(info.target, TcpConnector::default());
-            let mut tunnel = TurboTunnel::new_pt_client();
+            let mut tunnel = TurboTunnel::new(true, TcpConnector::default());
 
             if info.remaining_read_buf.is_empty() {
                 tunnel.add_session_pt_client(app_src, app_dst).await;
@@ -247,16 +247,19 @@ where
 
     let channel = Channel::connected(net_src, net_dst);
     // In PT mode, we pin the already configured forward addr for all app connections.
-    let tunnel = TurboTunnel::new_pt_server(conf.forward_addr.into());
+    let connector = FixedTargetTcpConnector::new(conf.forward_addr.into());
+    let tunnel = TurboTunnel::new(true, connector);
 
     run_interpreter(channel, tunnel, server_spec).await;
 }
 
-async fn run_interpreter(
+async fn run_interpreter<C>(
     channel: Channel<OwnedReadHalf, OwnedWriteHalf>,
-    tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, C>,
     protocol_spec: impl TaskProvider + Send + Clone,
-) {
+) where
+    C: AsyncConnectExt<ReadHalf = OwnedReadHalf, WriteHalf = OwnedWriteHalf> + Clone + 'static,
+{
     match Interpreter::run(
         channel.clone(),
         channel,

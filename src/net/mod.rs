@@ -9,8 +9,8 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 
-pub mod proto;
 mod channel;
+pub mod proto;
 
 // Re-export to make these available in the net namespace.
 pub use channel::Channel;
@@ -53,12 +53,6 @@ impl<T: AsyncConnect + AsMut<Self> + Send + Unpin> AsyncConnectExt for T {}
 #[derive(Default)]
 pub struct TcpConnector {
     future: Option<Pin<Box<dyn Future<Output = io::Result<TcpStream>> + Send + Sync>>>,
-}
-
-impl AsMut<TcpConnector> for TcpConnector {
-    fn as_mut(&mut self) -> &mut TcpConnector {
-        self
-    }
 }
 
 impl AsyncConnect for TcpConnector {
@@ -111,8 +105,54 @@ impl AsyncConnect for TcpConnector {
     }
 }
 
+impl AsMut<TcpConnector> for TcpConnector {
+    fn as_mut(&mut self) -> &mut Self {
+        self
+    }
+}
+
 impl Clone for TcpConnector {
     fn clone(&self) -> Self {
         Self { future: None }
+    }
+}
+
+pub struct FixedTargetTcpConnector {
+    fixed_target: Socks5Target,
+    connector: TcpConnector,
+}
+
+impl FixedTargetTcpConnector {
+    pub fn new(fixed_target: Socks5Target) -> Self {
+        Self {
+            fixed_target,
+            connector: TcpConnector::default(),
+        }
+    }
+}
+
+impl AsyncConnect for FixedTargetTcpConnector {
+    type ReadHalf = <TcpConnector as AsyncConnect>::ReadHalf;
+    type WriteHalf = <TcpConnector as AsyncConnect>::WriteHalf;
+
+    fn poll_connect(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        _: Socks5Target,
+    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>> {
+        let target = self.fixed_target.clone();
+        Pin::new(self.connector.as_mut()).poll_connect(cx, target)
+    }
+}
+
+impl AsMut<FixedTargetTcpConnector> for FixedTargetTcpConnector {
+    fn as_mut(&mut self) -> &mut Self {
+        self
+    }
+}
+
+impl Clone for FixedTargetTcpConnector {
+    fn clone(&self) -> Self {
+        Self::new(self.fixed_target.clone())
     }
 }

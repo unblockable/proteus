@@ -386,7 +386,7 @@ mod tests {
         for len in mock::payload_len_iter() {
             // Channel is not connected yet, we need to simulate a connection.
             let mut connector = MockConnector::new(Some(Duration::from_millis(10)));
-            let new_net_server = connector.remote_socket.take().unwrap();
+            let new_net_server = connector.remote_socket().unwrap();
 
             MockProxyNetwork::new(len)
                 .run_with_forwarder(
@@ -457,7 +457,7 @@ mod tests {
         for len in mock::payload_len_iter() {
             // Channel is not connected yet, we need to simulate a connection.
             let mut connector = MockConnector::new(Some(Duration::from_millis(10)));
-            let new_net_server = connector.remote_socket.take().unwrap();
+            let new_net_server = connector.remote_socket().unwrap();
 
             MockProxyNetwork::new(len)
                 .run_with_forwarder(

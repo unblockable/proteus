@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::io;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -24,14 +23,13 @@ pub struct TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
     shared_read_state: Arc<Mutex<ReadState<R>>>,
     shared_write_state: Arc<Mutex<WriteState<W>>>,
     stream_sender: Sender<TurboStream<R>>,
     sink_sender: Sender<TurboSink<W>>,
-    pinned_target: Option<Socks5Target>,
-    _phantom: PhantomData<C>,
+    connector: C,
 }
 
 struct ReadState<R: AsyncRead + Send + Unpin> {
@@ -58,9 +56,9 @@ impl<R, W, C> TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
-    fn new(pinned_target: Option<Socks5Target>, eof_on_empty: bool) -> Self {
+    pub fn new(eof_on_empty: bool, connector: C) -> Self {
         let (stream_sender, stream_receiver) = mpsc::channel(1_000);
         let (sink_sender, sink_receiver) = mpsc::channel(1_000);
 
@@ -78,25 +76,8 @@ where
             })),
             stream_sender,
             sink_sender,
-            pinned_target,
-            _phantom: PhantomData,
+            connector,
         }
-    }
-
-    pub fn new_pt_client() -> Self {
-        Self::new(None, true)
-    }
-
-    pub fn new_socks_client() -> Self {
-        Self::new(None, false)
-    }
-
-    pub fn new_pt_server(pinned_target: Socks5Target) -> Self {
-        Self::new(Some(pinned_target), true)
-    }
-
-    pub fn new_socks_server() -> Self {
-        Self::new(None, false)
     }
 
     async fn generate_session_id(&self) -> u64 {
@@ -140,13 +121,8 @@ where
     }
 
     fn add_session_server(&self, id: u64, target: &Socks5Target) {
-        let target = match &self.pinned_target {
-            Some(pinned) => pinned.clone(),
-            None => target.clone(),
-        };
-
-        let session = TurboSession::<R, W>::disconnected(id, target, C::default());
-
+        let (target, connector) = (target.clone(), self.connector.clone());
+        let session = TurboSession::<R, W>::disconnected(id, target, connector);
         let (stream, sink) = session.into_split();
 
         // Send the stream/sink through the channels to issue wakeups as needed.
@@ -239,7 +215,7 @@ impl<R, W, C> Clone for TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
     fn clone(&self) -> Self {
         Self {
@@ -247,8 +223,7 @@ where
             shared_write_state: self.shared_write_state.clone(),
             stream_sender: self.stream_sender.clone(),
             sink_sender: self.sink_sender.clone(),
-            pinned_target: self.pinned_target.clone(),
-            _phantom: PhantomData,
+            connector: self.connector.clone(),
         }
     }
 }
@@ -257,7 +232,7 @@ impl<R, W, C> AsyncRead for TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -333,7 +308,7 @@ impl<R, W, C> AsyncWrite for TurboTunnel<R, W, C>
 where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
-    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+    C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -421,6 +396,9 @@ mod tests {
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
+    use crate::lang::Role;
+    use crate::lang::ir::bridge::TaskProvider;
+    use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
     use crate::net::AsyncConnectExt;
     use crate::net::proto::turbo::TurboTunnel;
 
@@ -459,23 +437,25 @@ mod tests {
     where
         R: AsyncRead + Send + Unpin + 'static,
         W: AsyncWrite + Send + Unpin + 'static,
-        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Default + 'static,
+        C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
     {
         let (tunnel_r, tunnel_w) = (app_io.clone(), app_io);
         let wrapped_app = MockIo::new(tunnel_r, tunnel_w);
         MockProxy::new(wrapped_app, net_io)
     }
 
-    /// Use direct io without an interpreter.
-    async fn connected_tunnel_direct_io(
+    async fn create_tunnel(
         is_client: bool,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
-        let mut tunnel = TurboTunnel::<
+    ) -> (
+        TurboTunnel<
             Box<dyn AsyncRead + Send + Unpin>,
             Box<dyn AsyncWrite + Send + Unpin>,
             MockConnector,
-        >::new(None, true);
+        >,
+        MockIo,
+    ) {
+        let mut tunnel = TurboTunnel::new(true, MockConnector::default());
         let id = 1234567890;
         if is_client {
             tunnel
@@ -486,7 +466,16 @@ mod tests {
                 .add_session_server_test(proxy.app.reader, proxy.app.writer, id)
                 .await;
         }
-        mock::io_copy_direct(None::<u8>, wrapped_proxy(tunnel, proxy.net)).await
+        (tunnel, proxy.net)
+    }
+
+    /// Use direct io without an interpreter.
+    async fn connected_tunnel_direct_io(
+        is_client: bool,
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        let (tunnel, proxy_net) = create_tunnel(is_client, proxy).await;
+        mock::io_copy_direct(None::<u8>, wrapped_proxy(tunnel, proxy_net)).await
     }
 
     #[tokio::test]
@@ -499,6 +488,31 @@ mod tests {
                     &connected_tunnel_direct_io,
                     false,
                     &connected_tunnel_direct_io,
+                )
+                .await
+                .assert(len);
+        }
+    }
+
+    /// Use io via an interpreter.
+    async fn connected_tunnel_interpreter_io<T: TaskProvider + Clone + Send>(
+        args: (T, bool),
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        let (protospec, is_client) = args;
+        let (tunnel, proxy_net) = create_tunnel(is_client, proxy).await;
+        mock::io_copy_interpreter(protospec, wrapped_proxy(tunnel, proxy_net)).await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_connected_tunnel_interpreter_io() {
+        for len in mock::payload_len_iter() {
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    (EncryptedLengthPayloadSpec::new(Role::Client), true),
+                    &connected_tunnel_interpreter_io,
+                    (EncryptedLengthPayloadSpec::new(Role::Server), false),
+                    &connected_tunnel_interpreter_io,
                 )
                 .await
                 .assert(len);

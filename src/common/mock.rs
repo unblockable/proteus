@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -285,9 +286,9 @@ where
 #[derive(Default)]
 pub struct MockConnector {
     /// The io returned during the connect operation.
-    local_socket: Option<MockIo>,
+    local_socket: Arc<Mutex<Option<MockIo>>>,
     /// The socket of the peer that would accept our connection on the remote end.
-    pub remote_socket: Option<MockIo>,
+    remote_socket: Arc<Mutex<Option<MockIo>>>,
     state: MockConnectorState,
 }
 
@@ -308,10 +309,18 @@ impl MockConnector {
     pub fn new(connect_delay: Option<Duration>) -> Self {
         let (local, remote) = MockIo::new_pair();
         Self {
-            local_socket: Some(local),
-            remote_socket: Some(remote),
+            local_socket: Arc::new(Mutex::new(Some(local))),
+            remote_socket: Arc::new(Mutex::new(Some(remote))),
             state: MockConnectorState::Initial(connect_delay),
         }
+    }
+
+    fn local_socket(&mut self) -> Option<MockIo> {
+        self.local_socket.lock().unwrap().take()
+    }
+
+    pub fn remote_socket(&mut self) -> Option<MockIo> {
+        self.remote_socket.lock().unwrap().take()
     }
 
     pub fn default_target() -> Socks5Target {
@@ -320,8 +329,18 @@ impl MockConnector {
 }
 
 impl AsMut<MockConnector> for MockConnector {
-    fn as_mut(&mut self) -> &mut MockConnector {
+    fn as_mut(&mut self) -> &mut Self {
         self
+    }
+}
+
+impl Clone for MockConnector {
+    fn clone(&self) -> Self {
+        Self {
+            local_socket: self.local_socket.clone(),
+            remote_socket: self.remote_socket.clone(),
+            state: MockConnectorState::default(),
+        }
     }
 }
 
@@ -346,7 +365,7 @@ impl AsyncConnect for MockConnector {
                 },
                 MockConnectorState::Connecting => {
                     self.state = MockConnectorState::Done;
-                    if let Some(io) = self.local_socket.take() {
+                    if let Some(io) = self.local_socket() {
                         return Poll::Ready(Ok((io.reader, io.writer)));
                     }
                 }
@@ -459,7 +478,7 @@ pub mod tests {
             let (r, w) = result.unwrap();
 
             let client = MockIo::new(r, w);
-            let server = connector.remote_socket.take().unwrap();
+            let server = connector.remote_socket().unwrap();
 
             test_simple_pair(client, server, len).await;
         }
