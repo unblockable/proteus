@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 
 use bytes::BytesMut;
 use futures::SinkExt;
@@ -10,7 +10,6 @@ use futures::stream::{SelectAll, StreamExt};
 use rand::RngCore;
 use rand::rngs::ThreadRng;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard};
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -27,21 +26,19 @@ where
 {
     shared_read_state: Arc<Mutex<ReadState<R>>>,
     shared_write_state: Arc<Mutex<WriteState<W>>>,
-    stream_sender: Sender<TurboStream<R>>,
-    sink_sender: Sender<TurboSink<W>>,
     connector: C,
 }
 
 struct ReadState<R: AsyncRead + Send + Unpin> {
     streams: SelectAll<TurboStream<R>>,
-    pending: Receiver<TurboStream<R>>,
+    waker: Option<Waker>,
     buffer: BytesMut,
     eof_on_empty: bool,
 }
 
 struct WriteState<W: AsyncWrite + Send + Unpin> {
     sinks: HashMap<u64, TurboSink<W>>,
-    pending: Receiver<TurboSink<W>>,
+    waker: Option<Waker>,
     buffer: BytesMut,
 }
 
@@ -59,23 +56,18 @@ where
     C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
     pub fn new(eof_on_empty: bool, connector: C) -> Self {
-        let (stream_sender, stream_receiver) = mpsc::channel(1_000);
-        let (sink_sender, sink_receiver) = mpsc::channel(1_000);
-
         Self {
             shared_read_state: Arc::new(Mutex::new(ReadState {
                 streams: SelectAll::new(),
-                pending: stream_receiver,
+                waker: None,
                 buffer: BytesMut::new(),
                 eof_on_empty,
             })),
             shared_write_state: Arc::new(Mutex::new(WriteState {
                 sinks: HashMap::new(),
-                pending: sink_receiver,
+                waker: None,
                 buffer: BytesMut::new(),
             })),
-            stream_sender,
-            sink_sender,
             connector,
         }
     }
@@ -94,9 +86,22 @@ where
 
     async fn store_session(&mut self, session: TurboSession<R, W>) {
         let (stream, sink) = session.into_split();
-        // TODO: handle send errors in the following?
-        let _ = self.stream_sender.send(stream).await;
-        let _ = self.sink_sender.send(sink).await;
+        {
+            let mut state = self.shared_read_state.lock().await;
+            state.streams.push(stream);
+            Self::wake(&state.waker);
+        }
+        {
+            let mut state = self.shared_write_state.lock().await;
+            state.sinks.insert(sink.id(), sink);
+            Self::wake(&state.waker);
+        }
+    }
+
+    fn wake(maybe_waker: &Option<Waker>) {
+        // Not sure if we want to wake it multiple times or not.
+        // maybe_waker.take().map(|w| w.wake());
+        maybe_waker.as_ref().and_then(|w| Some(w.clone().wake()));
     }
 
     pub async fn add_session_socks_client(&mut self, src: R, dst: W, target: Socks5Target) {
@@ -120,17 +125,25 @@ where
         self.store_session(session).await;
     }
 
-    fn add_session_server(&self, id: u64, target: &Socks5Target) {
+    fn add_session_server(
+        &self,
+        state: &mut MutexGuard<WriteState<W>>,
+        id: u64,
+        target: &Socks5Target,
+    ) {
         let (target, connector) = (target.clone(), self.connector.clone());
         let session = TurboSession::<R, W>::disconnected(id, target, connector);
         let (stream, sink) = session.into_split();
 
-        // Send the stream/sink through the channels to issue wakeups as needed.
-        let sink_sender = self.sink_sender.clone();
-        let stream_sender = self.stream_sender.clone();
+        state.sinks.insert(sink.id(), sink);
+        Self::wake(&state.waker);
+
+        // Asynchronously store the stream and issue a wakeup if needed.
+        let cloned = self.clone();
         tokio::spawn(async move {
-            let _ = sink_sender.send(sink).await;
-            let _ = stream_sender.send(stream).await;
+            let mut state = cloned.shared_read_state.lock().await;
+            state.streams.push(stream);
+            Self::wake(&state.waker);
         });
     }
 
@@ -205,7 +218,7 @@ where
         } else {
             // We don't have a sink for this id, we might need to create one.
             if let Command::Request(Request::Open(target)) = &msg.command {
-                self.add_session_server(id, target);
+                self.add_session_server(state, id, target);
             }
         }
     }
@@ -221,8 +234,6 @@ where
         Self {
             shared_read_state: self.shared_read_state.clone(),
             shared_write_state: self.shared_write_state.clone(),
-            stream_sender: self.stream_sender.clone(),
-            sink_sender: self.sink_sender.clone(),
             connector: self.connector.clone(),
         }
     }
@@ -230,8 +241,8 @@ where
 
 impl<R, W, C> AsyncRead for TurboTunnel<R, W, C>
 where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
     C: AsyncConnectExt<ReadHalf = R, WriteHalf = W> + Clone + 'static,
 {
     fn poll_read(
@@ -260,13 +271,10 @@ where
             return Poll::Ready(Ok(()));
         }
 
-        // Start tracking pending streams from new sessions. The loop ends on a `Poll::Pending`,
-        // which ensures that a wakeup will always occur when new streams arrive.
-        while let Poll::Ready(maybe_stream) = state.pending.poll_recv(cx) {
-            match maybe_stream {
-                Some(stream) => state.streams.push(stream),
-                None => todo!(),
-            }
+        // Store the waker in case a new stream arrives while we are in a Pending state.
+        match state.waker.as_mut() {
+            Some(w) => w.clone_from(cx.waker()),
+            None => state.waker = Some(cx.waker().clone()),
         }
 
         // Read as many messages as needed to fill the ReadBuf if we can.
@@ -292,7 +300,7 @@ where
             buf.put_slice(&bytes);
             log::trace!("poll_read(): provided {at} bytes");
             Poll::Ready(Ok(()))
-        } else if state.pending.is_empty() && state.streams.is_empty() && state.eof_on_empty {
+        } else if state.streams.is_empty() && state.eof_on_empty {
             // This is an EOF since we did not add to the ReadBuf.
             log::trace!("poll_read(): EOF: empty read buf and no streams remaining");
             Poll::Ready(Ok(()))
@@ -322,15 +330,10 @@ where
         let mut future = Box::pin(this.shared_write_state.lock());
         let mut state = futures::ready!(future.as_mut().poll(cx));
 
-        // Start tracking pending sinks from new sessions. The loop ends on a `Poll::Pending`,
-        // which ensures that a wakeup will occur when new sinks arrive.
-        while let Poll::Ready(maybe_sink) = state.pending.poll_recv(cx) {
-            match maybe_sink {
-                Some(sink) => {
-                    state.sinks.insert(sink.id(), sink);
-                }
-                None => todo!(),
-            }
+        // Store the waker in case a new sink arrives while we are in a Pending state.
+        match state.waker.as_mut() {
+            Some(w) => w.clone_from(cx.waker()),
+            None => state.waker = Some(cx.waker().clone()),
         }
 
         // TODO this gets tricky, we cannot take any of the incoming bytes if we return pending,
@@ -431,6 +434,17 @@ mod tests {
         assert_eq!(all_streams.len(), 1);
         assert!(matches!(all_streams.next().await, None));
         assert_eq!(all_streams.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn sink_immediately_ready_to_process_messages() {
+        let id = 1234567890;
+        let tunnel = TurboTunnel::new(true, MockConnector::default());
+
+        let mut state = tunnel.shared_write_state.lock().await;
+        tunnel.add_session_server(&mut state, id, &MockConnector::default_target());
+
+        assert!(state.sinks.get_mut(&id).is_some());
     }
 
     fn wrapped_proxy<R, W, C>(app_io: TurboTunnel<R, W, C>, net_io: MockIo) -> MockProxy
