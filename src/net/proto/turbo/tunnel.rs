@@ -84,7 +84,7 @@ where
         }
     }
 
-    async fn store_session(&mut self, session: TurboSession<R, W>) {
+    async fn store_session(&mut self, id: u64, session: TurboSession<R, W>) {
         let (stream, sink) = session.into_split();
         {
             let mut state = self.shared_read_state.lock().await;
@@ -93,70 +93,84 @@ where
         }
         {
             let mut state = self.shared_write_state.lock().await;
-            state.sinks.insert(sink.id(), sink);
+            state.sinks.insert(id, sink);
             Self::wake(&state.waker);
         }
     }
 
     fn wake(maybe_waker: &Option<Waker>) {
-        // Not sure if we want to wake it multiple times or not.
-        // maybe_waker.take().map(|w| w.wake());
+        // Wake the waker it one exists, without dropping our handle.
         maybe_waker.as_ref().and_then(|w| Some(w.clone().wake()));
+        // Instead, we could wake the waker and drop the handle to prevent multiple wake-ups.
+        // maybe_waker.take().map(|w| w.wake());
     }
 
     pub async fn add_session_socks_client(&mut self, src: R, dst: W, target: Socks5Target) {
-        self.add_session_client(src, dst, target).await;
+        let id = self.generate_session_id().await;
+        self.add_session_connected_client(id, src, dst, target)
+            .await;
     }
 
     pub async fn add_session_pt_client(&mut self, src: R, dst: W) {
-        // The server will already be configured with the connect target.
+        // The server will already be configured with a connect target, so we use a dummy one.
         let target = Socks5Target::new(Socks5Address::Unknown, 0);
-        self.add_session_client(src, dst, target).await;
-    }
-
-    async fn add_session_client(&mut self, src: R, dst: W, target: Socks5Target) {
         let id = self.generate_session_id().await;
-        self.add_session_client_inner(src, dst, id, target).await;
+        self.add_session_connected_client(id, src, dst, target)
+            .await;
     }
 
-    async fn add_session_client_inner(&mut self, src: R, dst: W, id: u64, target: Socks5Target) {
-        let mut session = TurboSession::connected(id, src, dst);
-        session.open(target);
-        self.store_session(session).await;
-    }
-
-    fn add_session_server(
-        &self,
-        state: &mut MutexGuard<WriteState<W>>,
+    async fn add_session_connected_client(
+        &mut self,
         id: u64,
-        target: &Socks5Target,
+        src: R,
+        dst: W,
+        target: Socks5Target,
     ) {
-        let (target, connector) = (target.clone(), self.connector.clone());
-        let session = TurboSession::<R, W>::disconnected(id, target, connector);
+        // Clients are always connected to their app.
+        let mut session = TurboSession::connected(id, src, dst);
+        // Clients start the turbo protocol session, asking the server to open to a new target.
+        session.open(target);
+        // Track the session bits for future io.
+        self.store_session(id, session).await;
+    }
+
+    #[cfg(test)]
+    async fn add_session_connected_server(&mut self, id: u64, src: R, dst: W) {
+        // A server that is already connected to its app.
+        let session = TurboSession::connected(id, src, dst);
+        // Track the session bits for future io.
+        self.store_session(id, session).await;
+    }
+
+    #[cfg(test)]
+    async fn add_session_disconnected_server(&mut self, id: u64, target: Socks5Target) {
+        // A server that first needs to connect to its app.
+        let session = TurboSession::<R, W>::disconnected(id, target, self.connector.clone());
+        // Track the session bits for future io.
+        self.store_session(id, session).await;
+    }
+
+    fn add_session_disconnected_server_with_write_lock(
+        &self,
+        id: u64,
+        target: Socks5Target,
+        state: &mut MutexGuard<WriteState<W>>,
+    ) {
+        // A server that first needs to connect to its app.
+        let session = TurboSession::<R, W>::disconnected(id, target, self.connector.clone());
         let (stream, sink) = session.into_split();
 
-        state.sinks.insert(sink.id(), sink);
+        // Store the sink using our locked state.
+        state.sinks.insert(id, sink);
         Self::wake(&state.waker);
 
-        // Asynchronously store the stream and issue a wakeup if needed.
-        let cloned = self.clone();
+        // Asynchronously store the stream since we do not have a read lock.
+        let read_state = self.shared_read_state.clone();
         tokio::spawn(async move {
-            let mut state = cloned.shared_read_state.lock().await;
+            let mut state = read_state.lock().await;
             state.streams.push(stream);
             Self::wake(&state.waker);
         });
-    }
-
-    #[cfg(test)]
-    pub async fn add_session_client_test(&mut self, src: R, dst: W, id: u64) {
-        let target = Socks5Target::new(Socks5Address::Unknown, 0);
-        self.add_session_client_inner(src, dst, id, target).await;
-    }
-
-    #[cfg(test)]
-    pub async fn add_session_server_test(&mut self, src: R, dst: W, id: u64) {
-        let session = TurboSession::connected(id, src, dst);
-        self.store_session(session).await;
     }
 
     fn poll_helper(&mut self, cx: &mut Context, op: PollHelperOp) -> Poll<Result<(), io::Error>> {
@@ -218,7 +232,7 @@ where
         } else {
             // We don't have a sink for this id, we might need to create one.
             if let Command::Request(Request::Open(target)) = &msg.command {
-                self.add_session_server(state, id, target);
+                self.add_session_disconnected_server_with_write_lock(id, target.clone(), state);
             }
         }
     }
@@ -250,10 +264,7 @@ where
         cx: &mut Context,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
-        log::trace!(
-            "poll_read({}) is called on TurboSessionBroker",
-            buf.remaining()
-        );
+        log::trace!("TurboTunnel::poll_read({})", buf.remaining());
 
         // Get a mutable reference to self.
         let this = self.get_mut();
@@ -323,7 +334,7 @@ where
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        log::trace!("poll_write({}) is called on TurboSessionBroker", buf.len());
+        log::trace!("TurboTunnel::poll_write({})", buf.len());
 
         // Acquire the mutex lock asynchronously.
         let this = self.get_mut();
@@ -382,28 +393,31 @@ where
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        log::trace!("poll_flush() is called on TurboSessionBroker");
+        log::trace!("TurboTunnel::poll_flush()");
         self.get_mut().poll_helper(cx, PollHelperOp::Flush)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        log::trace!("poll_shutdown() is called on TurboSessionBroker");
+        log::trace!("TurboTunnel::poll_shutdown()");
         self.get_mut().poll_helper(cx, PollHelperOp::Shutdown)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use futures::StreamExt;
     use futures::stream::{self, SelectAll};
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
     use crate::lang::Role;
-    use crate::lang::ir::bridge::TaskProvider;
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
     use crate::net::AsyncConnectExt;
     use crate::net::proto::turbo::TurboTunnel;
+
+    const TEST_ID: u64 = 1234567890;
 
     #[tokio::test]
     async fn select_all_is_reusable() {
@@ -437,14 +451,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sink_immediately_ready_to_process_messages() {
-        let id = 1234567890;
+    async fn new_sink_immediately_available() {
         let tunnel = TurboTunnel::new(true, MockConnector::default());
 
         let mut state = tunnel.shared_write_state.lock().await;
-        tunnel.add_session_server(&mut state, id, &MockConnector::default_target());
+        tunnel.add_session_disconnected_server_with_write_lock(
+            TEST_ID,
+            MockConnector::default_target(),
+            &mut state,
+        );
 
-        assert!(state.sinks.get_mut(&id).is_some());
+        assert!(state.sinks.get_mut(&TEST_ID).is_some());
     }
 
     fn wrapped_proxy<R, W, C>(app_io: TurboTunnel<R, W, C>, net_io: MockIo) -> MockProxy
@@ -458,76 +475,142 @@ mod tests {
         MockProxy::new(wrapped_app, net_io)
     }
 
-    async fn create_tunnel(
-        is_client: bool,
-        proxy: MockProxy,
-    ) -> (
-        TurboTunnel<
-            Box<dyn AsyncRead + Send + Unpin>,
-            Box<dyn AsyncWrite + Send + Unpin>,
-            MockConnector,
-        >,
-        MockIo,
-    ) {
-        let mut tunnel = TurboTunnel::new(true, MockConnector::default());
-        let id = 1234567890;
-        if is_client {
-            tunnel
-                .add_session_client_test(proxy.app.reader, proxy.app.writer, id)
-                .await;
-        } else {
-            tunnel
-                .add_session_server_test(proxy.app.reader, proxy.app.writer, id)
-                .await;
-        }
-        (tunnel, proxy.net)
+    #[derive(Clone, Copy)]
+    enum MockIoKind {
+        Direct,
+        Interpreter,
     }
 
-    /// Use direct io without an interpreter.
-    async fn connected_tunnel_direct_io(
-        is_client: bool,
+    enum MockSocketKind {
+        Connected,
+        Disconnected(MockConnector),
+    }
+
+    async fn connected_client(
+        io_kind: MockIoKind,
         proxy: MockProxy,
     ) -> (anyhow::Result<()>, anyhow::Result<()>) {
-        let (tunnel, proxy_net) = create_tunnel(is_client, proxy).await;
-        mock::io_copy_direct(None::<u8>, wrapped_proxy(tunnel, proxy_net)).await
+        let (src, dst) = (proxy.app.reader, proxy.app.writer);
+
+        let mut tunnel = TurboTunnel::new(true, MockConnector::default());
+        let target = MockConnector::default_target();
+        tunnel
+            .add_session_connected_client(TEST_ID, src, dst, target)
+            .await;
+
+        match io_kind {
+            MockIoKind::Direct => {
+                mock::io_copy_direct(None::<u8>, wrapped_proxy(tunnel, proxy.net)).await
+            }
+            MockIoKind::Interpreter => {
+                let protospec = EncryptedLengthPayloadSpec::new(Role::Client);
+                mock::io_copy_interpreter(protospec, wrapped_proxy(tunnel, proxy.net)).await
+            }
+        }
+    }
+
+    async fn server(
+        args: (MockIoKind, MockSocketKind),
+        proxy: MockProxy,
+    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+        let (io_kind, sock_kind) = args;
+        let (src, dst) = (proxy.app.reader, proxy.app.writer);
+
+        let tunnel = match sock_kind {
+            MockSocketKind::Connected => {
+                let mut tunnel = TurboTunnel::new(true, MockConnector::default());
+                tunnel.add_session_connected_server(TEST_ID, src, dst).await;
+                tunnel
+            }
+            MockSocketKind::Disconnected(connector) => {
+                let mut tunnel = TurboTunnel::new(true, connector);
+                let target = MockConnector::default_target();
+                tunnel
+                    .add_session_disconnected_server(TEST_ID, target)
+                    .await;
+                tunnel
+            }
+        };
+
+        match io_kind {
+            MockIoKind::Direct => {
+                mock::io_copy_direct(None::<u8>, wrapped_proxy(tunnel, proxy.net)).await
+            }
+            MockIoKind::Interpreter => {
+                let protospec = EncryptedLengthPayloadSpec::new(Role::Server);
+                mock::io_copy_interpreter(protospec, wrapped_proxy(tunnel, proxy.net)).await
+            }
+        }
     }
 
     #[tokio::test]
     async fn proxy_network_connected_tunnel_direct_io() {
-        let _ = env_logger::try_init();
+        // let _ = env_logger::try_init();
         for len in mock::payload_len_iter() {
             MockProxyNetwork::new(len)
                 .run_with_forwarder(
-                    true,
-                    &connected_tunnel_direct_io,
-                    false,
-                    &connected_tunnel_direct_io,
+                    MockIoKind::Direct,
+                    &connected_client,
+                    (MockIoKind::Direct, MockSocketKind::Connected),
+                    &server,
                 )
                 .await
                 .assert(len);
         }
     }
 
-    /// Use io via an interpreter.
-    async fn connected_tunnel_interpreter_io<T: TaskProvider + Clone + Send>(
-        args: (T, bool),
-        proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
-        let (protospec, is_client) = args;
-        let (tunnel, proxy_net) = create_tunnel(is_client, proxy).await;
-        mock::io_copy_interpreter(protospec, wrapped_proxy(tunnel, proxy_net)).await
-    }
-
     #[tokio::test]
     async fn proxy_network_connected_tunnel_interpreter_io() {
+        // let _ = env_logger::try_init();
         for len in mock::payload_len_iter() {
             MockProxyNetwork::new(len)
                 .run_with_forwarder(
-                    (EncryptedLengthPayloadSpec::new(Role::Client), true),
-                    &connected_tunnel_interpreter_io,
-                    (EncryptedLengthPayloadSpec::new(Role::Server), false),
-                    &connected_tunnel_interpreter_io,
+                    MockIoKind::Interpreter,
+                    &connected_client,
+                    (MockIoKind::Interpreter, MockSocketKind::Connected),
+                    &server,
                 )
+                .await
+                .assert(len);
+        }
+    }
+
+    async fn proxy_network_disconnected_helper(io_kind: MockIoKind, len: usize) -> mock::Result {
+        let mut mpn = MockProxyNetwork::new(len);
+
+        // The connector will hook up the server side proxy to a new remote socket.
+        let mut conn = MockConnector::new(Some(Duration::from_millis(10)));
+        let new_remote = conn.remote_socket().unwrap();
+
+        // We need to copy io between that new remote socket and the original
+        // socket that the proxy used to connect to its app payload.
+        mpn.replace_server_app_io(new_remote);
+
+        // Now we can run the test.
+        mpn.run_with_forwarder(
+            io_kind,
+            &connected_client,
+            (io_kind, MockSocketKind::Disconnected(conn)),
+            &server,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn proxy_network_disconnected_tunnel_direct_io() {
+        // let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            proxy_network_disconnected_helper(MockIoKind::Direct, len)
+                .await
+                .assert(len);
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_network_disconnected_tunnel_interpreter_io() {
+        // let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            proxy_network_disconnected_helper(MockIoKind::Interpreter, len)
                 .await
                 .assert(len);
         }

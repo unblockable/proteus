@@ -1,21 +1,27 @@
 use std::future::Future;
 use std::io;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
-use std::time::Duration;
 
-use anyhow::anyhow;
 use bytes::Bytes;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::time::{Sleep, sleep};
 
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
-use crate::net::{AsyncConnect, READ_CAPACITY};
+use crate::net::READ_CAPACITY;
 
+#[cfg(test)]
+use {
+    crate::net::AsyncConnect,
+    crate::net::proto::socks::address::{Socks5Address, Socks5Target},
+    anyhow::anyhow,
+    std::pin::Pin,
+    std::sync::{Arc, Mutex},
+    std::task::{Context, Poll},
+    std::time::Duration,
+    tokio::time::{Sleep, sleep},
+};
+
+#[cfg(test)]
 pub fn simplex(max_buf_size: usize) -> (impl AsyncRead, impl AsyncWrite) {
     tokio::io::simplex(max_buf_size)
 }
@@ -24,6 +30,7 @@ pub fn duplex(max_buf_size: usize) -> (impl AsyncRead + AsyncWrite, impl AsyncRe
     tokio::io::duplex(max_buf_size)
 }
 
+#[cfg(test)]
 pub fn payload_len_iter() -> impl Iterator<Item = usize> {
     [
         1, 10, 100, 1000, 1500, 2000, 5000, 10_000, 100_000, 1_000_000,
@@ -109,6 +116,12 @@ impl MockProxyNetwork {
         }
     }
 
+    #[cfg(test)]
+    pub fn replace_server_app_io(&mut self, io: MockIo) {
+        self.s_app.io = io;
+    }
+
+    #[cfg(test)]
     async fn run_direct_io(self) -> self::Result {
         self.run_with_forwarder(None::<u8>, &io_copy_direct, None::<u8>, &io_copy_direct)
             .await
@@ -164,6 +177,7 @@ pub struct Result {
     pub s_app_dst: io::Result<Bytes>,
 }
 
+#[cfg(test)]
 impl Result {
     pub fn assert(&self, len: usize) {
         self.assert_success();
@@ -220,6 +234,7 @@ where
 /// Like `tokio::io::copy()` but takes ownership of the reader and writer,
 /// shuts down the writer when the reader gets an EOF to make sure it
 /// propagates backward, and drops the reader and writer on return.
+#[cfg(test)]
 async fn copy_then_shutdown<R, W>(mut src: R, mut dst: W) -> io::Result<usize>
 where
     R: AsyncRead + Unpin,
@@ -230,6 +245,7 @@ where
     Ok(n_bytes as usize)
 }
 
+#[cfg(test)]
 pub async fn io_copy_direct(
     _: Option<u8>,
     proxy: MockProxy,
@@ -272,6 +288,7 @@ pub async fn check_protocol_interpretability<T: TaskProvider + Clone + Send>(
         .await
 }
 
+#[cfg(test)]
 pub async fn test_protocol_interpretability<T>(client: T, server: T)
 where
     T: TaskProvider + Clone + Send,
@@ -283,6 +300,7 @@ where
     }
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub struct MockConnector {
     /// The io returned during the connect operation.
@@ -292,6 +310,7 @@ pub struct MockConnector {
     state: MockConnectorState,
 }
 
+#[cfg(test)]
 enum MockConnectorState {
     Initial(Option<Duration>),
     Sleeping(Pin<Box<Sleep>>),
@@ -299,12 +318,14 @@ enum MockConnectorState {
     Done,
 }
 
+#[cfg(test)]
 impl Default for MockConnectorState {
     fn default() -> Self {
         MockConnectorState::Initial(None)
     }
 }
 
+#[cfg(test)]
 impl MockConnector {
     pub fn new(connect_delay: Option<Duration>) -> Self {
         let (local, remote) = MockIo::new_pair();
@@ -328,12 +349,14 @@ impl MockConnector {
     }
 }
 
+#[cfg(test)]
 impl AsMut<MockConnector> for MockConnector {
     fn as_mut(&mut self) -> &mut Self {
         self
     }
 }
 
+#[cfg(test)]
 impl Clone for MockConnector {
     fn clone(&self) -> Self {
         Self {
@@ -344,6 +367,7 @@ impl Clone for MockConnector {
     }
 }
 
+#[cfg(test)]
 impl AsyncConnect for MockConnector {
     type ReadHalf = Box<dyn AsyncRead + Send + Unpin>;
     type WriteHalf = Box<dyn AsyncWrite + Send + Unpin>;
