@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::{io, process};
 
 use control::PtLogLevel;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::args::PtArgs;
@@ -13,9 +13,11 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
+use crate::net::proto::BytesSession;
 use crate::net::proto::socks;
-use crate::net::proto::turbo::TurboTunnel;
-use crate::net::{AsyncConnectExt, Channel, FixedTargetTcpConnector, TcpConnector};
+use crate::net::{
+    Channel, FixedTargetTcpConnector, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer,
+};
 
 pub mod config;
 pub mod control;
@@ -156,10 +158,11 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
             );
 
             let channel = Channel::disconnected(info.target, TcpConnector::default());
-            let mut tunnel = TurboTunnel::new(true, TcpConnector::default());
+            let mut tunnel: TunnelClient<BytesSession<_, _>> =
+                TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
 
             if info.remaining_read_buf.is_empty() {
-                tunnel.add_session_pt_client(app_src, app_dst).await;
+                tunnel.add_session(app_src, app_dst, None).await;
             } else {
                 log::error!(
                     "Socks5 buffer has {} bytes remaining",
@@ -248,18 +251,17 @@ where
     let channel = Channel::connected(net_src, net_dst);
     // In PT mode, we pin the already configured forward addr for all app connections.
     let connector = FixedTargetTcpConnector::new(conf.forward_addr.into());
-    let tunnel = TurboTunnel::new(true, connector);
+    let tunnel: TunnelServer<BytesSession<_, _>, _> =
+        TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector);
 
     run_interpreter(channel, tunnel, server_spec).await;
 }
 
-async fn run_interpreter<C>(
-    channel: Channel<OwnedReadHalf, OwnedWriteHalf>,
-    tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, C>,
+async fn run_interpreter(
+    channel: impl AsyncRead + AsyncWrite + Clone + Unpin,
+    tunnel: impl AsyncRead + AsyncWrite + Clone + Unpin,
     protocol_spec: impl TaskProvider + Send + Clone,
-) where
-    C: AsyncConnectExt<ReadHalf = OwnedReadHalf, WriteHalf = OwnedWriteHalf> + Clone + 'static,
-{
+) {
     match Interpreter::run(
         channel.clone(),
         channel,

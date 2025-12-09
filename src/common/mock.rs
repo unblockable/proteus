@@ -319,6 +319,17 @@ enum MockConnectorState {
 }
 
 #[cfg(test)]
+impl Clone for MockConnectorState {
+    fn clone(&self) -> Self {
+        if let MockConnectorState::Initial(duration) = self {
+            MockConnectorState::Initial(duration.clone())
+        } else {
+            MockConnectorState::Initial(None)
+        }
+    }
+}
+
+#[cfg(test)]
 impl Default for MockConnectorState {
     fn default() -> Self {
         MockConnectorState::Initial(None)
@@ -362,7 +373,7 @@ impl Clone for MockConnector {
         Self {
             local_socket: self.local_socket.clone(),
             remote_socket: self.remote_socket.clone(),
-            state: MockConnectorState::default(),
+            state: self.state.clone(),
         }
     }
 }

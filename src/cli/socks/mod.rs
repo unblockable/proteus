@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use anyhow::anyhow;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -10,10 +11,9 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
-use crate::net::proto::socks;
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::turbo::TurboTunnel;
-use crate::net::{Channel, TcpConnector};
+use crate::net::proto::{BytesSession, socks};
+use crate::net::{Channel, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer};
 
 use super::args::SocksArgs;
 
@@ -66,7 +66,7 @@ async fn run_client(client_args: ClientArgs, psf_path: String) -> anyhow::Result
     // We use a channel to manage the connection to the proxy server, and a tunnel to
     // manage the incoming virtual application stream sessions.
     let channel = Channel::disconnected(Socks5Target::from(server_addr), TcpConnector::default());
-    let tunnel = TurboTunnel::new(false, TcpConnector::default());
+    let tunnel = TunnelClient::new(TunnelEofMethod::OnClose);
 
     // Run a proteus protocol interpreter in the background. We only run one because we
     // only have a single connection to the proxy server.
@@ -86,7 +86,7 @@ async fn run_client(client_args: ClientArgs, psf_path: String) -> anyhow::Result
 
 async fn handle_client_connection(
     app_stream: TcpStream,
-    mut tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    mut tunnel: TunnelClient<BytesSession<OwnedReadHalf, OwnedWriteHalf>>,
 ) {
     let peer_name = match app_stream.peer_addr() {
         Ok(addr) => format!("<{addr}>"),
@@ -101,7 +101,7 @@ async fn handle_client_connection(
             log::debug!("Socks5 with peer {peer_name} succeeded");
             if info.remaining_read_buf.is_empty() {
                 tunnel
-                    .add_session_socks_client(app_src, app_dst, info.target)
+                    .add_session(app_src, app_dst, Some(info.target))
                     .await;
             } else {
                 log::error!(
@@ -158,14 +158,15 @@ async fn handle_server_connection(
     // We use a channel to manage the connection to the client, and a tunnel to
     // manage the outgoing virtual stream sessions with the server.
     let channel = Channel::connected(net_src, net_dst);
-    let tunnel = TurboTunnel::new(false, TcpConnector::default());
+    let tunnel: TunnelServer<BytesSession<_, _>, _> =
+        TunnelServer::new(TunnelEofMethod::OnClose, TcpConnector::default());
 
     run_interpreter(channel, tunnel, protocol_spec).await;
 }
 
 async fn run_interpreter(
-    channel: Channel<OwnedReadHalf, OwnedWriteHalf>,
-    tunnel: TurboTunnel<OwnedReadHalf, OwnedWriteHalf, TcpConnector>,
+    channel: impl AsyncRead + AsyncWrite + Clone + Unpin,
+    tunnel: impl AsyncRead + AsyncWrite + Clone + Unpin,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
     match Interpreter::run(

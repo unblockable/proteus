@@ -11,9 +11,12 @@ use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 
 mod channel;
 pub mod proto;
+mod session;
+mod tunnel;
 
 // Re-export to make these available in the net namespace.
 pub use channel::Channel;
+pub use tunnel::{TunnelClient, TunnelServer, TunnelEofMethod};
 
 pub const READ_CAPACITY: usize = 2usize.pow(14u32); // 16 KiB
 
