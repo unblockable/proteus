@@ -387,7 +387,7 @@ impl AsyncConnect for MockConnector {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         _target: Socks5Target,
-    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>> {
+    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf, String)>> {
         loop {
             match &mut self.state {
                 MockConnectorState::Initial(delay) => match delay {
@@ -401,7 +401,7 @@ impl AsyncConnect for MockConnector {
                 MockConnectorState::Connecting => {
                     self.state = MockConnectorState::Done;
                     if let Some(io) = self.local_socket() {
-                        return Poll::Ready(Ok((io.reader, io.writer)));
+                        return Poll::Ready(Ok((io.reader, io.writer, String::from("Mock->Mock"))));
                     }
                 }
                 MockConnectorState::Done => {
@@ -510,7 +510,7 @@ pub mod tests {
             let mut connector = MockConnector::new(delay);
 
             let result = connector.connect(MockConnector::default_target()).await;
-            let (r, w) = result.unwrap();
+            let (r, w, _name) = result.unwrap();
 
             let client = MockIo::new(r, w);
             let server = connector.remote_socket().unwrap();

@@ -13,7 +13,7 @@ use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks::address::Socks5Target;
 use crate::net::proto::{BytesSession, socks};
-use crate::net::{Channel, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer};
+use crate::net::{Channel, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer, fmt_stream_name};
 
 use super::args::SocksArgs;
 
@@ -88,10 +88,7 @@ async fn handle_client_connection(
     app_stream: TcpStream,
     mut tunnel: TunnelClient<BytesSession<OwnedReadHalf, OwnedWriteHalf>>,
 ) {
-    let peer_name = match app_stream.peer_addr() {
-        Ok(addr) => format!("<{addr}>"),
-        Err(_) => format!("<unknown>"),
-    };
+    let peer_name = fmt_stream_name(&app_stream);
 
     log::debug!("Accepted new stream from client {peer_name}");
     let (mut app_src, mut app_dst) = app_stream.into_split();
@@ -146,10 +143,7 @@ async fn handle_server_connection(
     net_stream: TcpStream,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
-    let peer_name = match net_stream.peer_addr() {
-        Ok(addr) => format!("<{addr}>"),
-        Err(_) => format!("<unknown>"),
-    };
+    let peer_name = fmt_stream_name(&net_stream);
 
     log::debug!("Accepted new network stream from Proteus client {peer_name}");
 
@@ -157,7 +151,7 @@ async fn handle_server_connection(
 
     // We use a channel to manage the connection to the client, and a tunnel to
     // manage the outgoing virtual stream sessions with the server.
-    let channel = Channel::connected(net_src, net_dst);
+    let channel = Channel::connected(net_src, net_dst, peer_name);
     let tunnel: TunnelServer<BytesSession<_, _>, _> =
         TunnelServer::new(TunnelEofMethod::OnClose, TcpConnector::default());
 

@@ -71,7 +71,7 @@ impl<T: SessionBuilder> Session<T> {
             let result = connector.connect(target).await;
 
             match result {
-                Ok((src, dst)) => {
+                Ok((src, dst, _name)) => {
                     let (stream, sink) = T::build(id, src, dst);
                     let _ = read_tx.send(Ok(stream));
                     let _ = write_tx.send(Ok(sink));

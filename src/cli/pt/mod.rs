@@ -16,7 +16,7 @@ use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::BytesSession;
 use crate::net::proto::socks;
 use crate::net::{
-    Channel, FixedTargetTcpConnector, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer,
+    Channel, FixedTargetTcpConnector, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer, fmt_stream_name,
 };
 
 pub mod config;
@@ -109,10 +109,7 @@ async fn run_client(_common_conf: CommonConfig, client_conf: ClientConfig) -> io
 }
 
 async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
-    let peer_name = match app_stream.peer_addr() {
-        Ok(addr) => format!("<{addr}>"),
-        Err(_) => format!("<unknown>"),
-    };
+    let peer_name = fmt_stream_name(&app_stream);
 
     log::debug!("Accepted new stream from client {peer_name}");
     let (mut app_src, mut app_dst) = app_stream.into_split();
@@ -221,10 +218,7 @@ async fn handle_server_connection<T>(net_stream: TcpStream, conf: ServerConfig, 
 where
     T: TaskProvider + Clone + Send,
 {
-    let peer_name = match net_stream.peer_addr() {
-        Ok(addr) => format!("<{addr}>"),
-        Err(_) => format!("<unknown>"),
-    };
+    let peer_name = fmt_stream_name(&net_stream);
 
     log::debug!("Accepted new network stream from Proteus client {peer_name}");
 
@@ -248,7 +242,7 @@ where
 
     let (net_src, net_dst) = net_stream.into_split();
 
-    let channel = Channel::connected(net_src, net_dst);
+    let channel = Channel::connected(net_src, net_dst, peer_name);
     // In PT mode, we pin the already configured forward addr for all app connections.
     let connector = FixedTargetTcpConnector::new(conf.forward_addr.into());
     let tunnel: TunnelServer<BytesSession<_, _>, _> =

@@ -14,17 +14,17 @@ use crate::net::AsyncConnectExt;
 use crate::net::proto::socks::address::Socks5Target;
 
 enum ChannelIo<T> {
-    Connected(T),
-    Disconnected((Arc<Notify>, Receiver<io::Result<T>>)),
+    Connected((T, String)),
+    Disconnected((Arc<Notify>, Receiver<io::Result<(T, String)>>)),
     Error(io::Error),
 }
 
 impl<T> Debug for ChannelIo<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ChannelIo::Connected(_) => write!(f, "ChannelIo(State:Connected)"),
-            ChannelIo::Disconnected(_) => write!(f, "ChannelIo(State:Disconnected)"),
-            ChannelIo::Error(_) => write!(f, "ChannelIo(State:Error)"),
+            ChannelIo::Connected((_, name)) => write!(f, "Connected:{name}"),
+            ChannelIo::Disconnected(_) => write!(f, "Disconnected"),
+            ChannelIo::Error(_) => write!(f, "Error"),
         }
     }
 }
@@ -36,7 +36,6 @@ where
 {
     reader: Arc<Mutex<ChannelIo<R>>>,
     writer: Arc<Mutex<ChannelIo<W>>>,
-    peer: Option<Socks5Target>,
 }
 
 impl<R, W> Channel<R, W>
@@ -44,11 +43,10 @@ where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    fn new(reader: ChannelIo<R>, writer: ChannelIo<W>, peer: Option<Socks5Target>) -> Self {
+    fn new(reader: ChannelIo<R>, writer: ChannelIo<W>) -> Self {
         Self {
             reader: Arc::new(Mutex::new(reader)),
             writer: Arc::new(Mutex::new(writer)),
-            peer,
         }
     }
 
@@ -72,9 +70,9 @@ where
             let result = connector.connect(connect_target).await;
 
             match result {
-                Ok((reader, writer)) => {
-                    let _ = read_tx.send(Ok(reader));
-                    let _ = write_tx.send(Ok(writer));
+                Ok((reader, writer, name)) => {
+                    let _ = read_tx.send(Ok((reader, name.clone())));
+                    let _ = write_tx.send(Ok((writer, name)));
                 }
                 Err(e) => {
                     let _ = read_tx.send(Err(io::Error::from(e.kind())));
@@ -86,14 +84,13 @@ where
         let r_io = ChannelIo::Disconnected((ready.clone(), read_rx));
         let w_io = ChannelIo::Disconnected((ready, write_rx));
 
-        Self::new(r_io, w_io, Some(peer))
+        Self::new(r_io, w_io)
     }
 
-    pub fn connected(net_src: R, net_dst: W) -> Self {
+    pub fn connected(net_src: R, net_dst: W, name: String) -> Self {
         Self::new(
-            ChannelIo::Connected(net_src),
-            ChannelIo::Connected(net_dst),
-            None,
+            ChannelIo::Connected((net_src, name.clone())),
+            ChannelIo::Connected((net_dst, name)),
         )
     }
 }
@@ -107,7 +104,6 @@ where
         Self {
             reader: self.reader.clone(),
             writer: self.writer.clone(),
-            peer: self.peer.clone(),
         }
     }
 }
@@ -126,10 +122,10 @@ where
         let mut r_future = Box::pin(self.reader.lock());
         let mut r_state = futures::ready!(r_future.as_mut().poll(cx));
 
-        let buf_len_before = buf.filled().len();
+        let len = buf.remaining();
 
         let result = match &mut *r_state {
-            ChannelIo::Connected(reader) => Pin::new(reader).poll_read(cx, buf),
+            ChannelIo::Connected((reader, _name)) => Pin::new(reader).poll_read(cx, buf),
             ChannelIo::Disconnected((notify, receiver)) => {
                 // Notify the connection task to do the connection now.
                 notify.notify_one();
@@ -137,9 +133,9 @@ where
                 // Wait for the connection result.
                 match receiver.poll_unpin(cx) {
                     Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok(mut reader) => {
+                        Ok((mut reader, name)) => {
                             let result = Pin::new(&mut reader).poll_read(cx, buf);
-                            *r_state = ChannelIo::Connected(reader);
+                            *r_state = ChannelIo::Connected((reader, name));
                             result
                         }
                         Err(e) => Poll::Ready(Err(e)),
@@ -157,13 +153,19 @@ where
             }
         }
 
-        let buf_len_after = buf.filled().len();
+        let amt = len - buf.remaining();
 
-        log::trace!(
-            "poll_read({:?}) state: {:?}, result: {result:?}, buf_len: {buf_len_before}->{buf_len_after}",
-            self.peer,
-            &mut *r_state
-        );
+        if matches!(result, Poll::Ready(Ok(()))) {
+            log::trace!(
+                "Channel({:?})::poll_read({len}) -> Ready(Ok({amt}))",
+                &mut *r_state
+            );
+        } else {
+            log::trace!(
+                "Channel({:?})::poll_read({len}) -> {result:?}",
+                &mut *r_state
+            );
+        }
 
         result
     }
@@ -184,7 +186,7 @@ where
         let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
 
         let result = match &mut *w_state {
-            ChannelIo::Connected(writer) => Pin::new(writer).poll_write(cx, buf),
+            ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_write(cx, buf),
             ChannelIo::Disconnected((notify, receiver)) => {
                 // Notify the connection task to do the connection now.
                 notify.notify_one();
@@ -192,9 +194,9 @@ where
                 // Wait for the connection result.
                 match receiver.poll_unpin(cx) {
                     Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok(mut writer) => {
+                        Ok((mut writer, name)) => {
                             let result = Pin::new(&mut writer).poll_write(cx, buf);
-                            *w_state = ChannelIo::Connected(writer);
+                            *w_state = ChannelIo::Connected((writer, name));
                             result
                         }
                         Err(e) => Poll::Ready(Err(e)),
@@ -213,9 +215,9 @@ where
         }
 
         log::trace!(
-            "poll_write({:?}) state: {:?}, result: {result:?}",
-            self.peer,
-            &mut *w_state
+            "Channel({:?})::poll_write({}) -> {result:?}",
+            &mut *w_state,
+            buf.len()
         );
 
         result
@@ -227,7 +229,7 @@ where
         let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
 
         let result = match &mut *w_state {
-            ChannelIo::Connected(writer) => Pin::new(writer).poll_flush(cx),
+            ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_flush(cx),
             ChannelIo::Disconnected((notify, receiver)) => {
                 // Notify the connection task to do the connection now.
                 notify.notify_one();
@@ -235,9 +237,9 @@ where
                 // Wait for the connection result.
                 match receiver.poll_unpin(cx) {
                     Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok(mut writer) => {
+                        Ok((mut writer, name)) => {
                             let result = Pin::new(&mut writer).poll_flush(cx);
-                            *w_state = ChannelIo::Connected(writer);
+                            *w_state = ChannelIo::Connected((writer, name));
                             result
                         }
                         Err(e) => Poll::Ready(Err(e)),
@@ -255,11 +257,7 @@ where
             }
         }
 
-        log::trace!(
-            "poll_flush({:?}) state: {:?}, result: {result:?}",
-            self.peer,
-            &mut *w_state
-        );
+        log::trace!("Channel({:?})::poll_flush() -> {result:?}", &mut *w_state,);
 
         result
     }
@@ -270,7 +268,7 @@ where
         let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
 
         let result = match &mut *w_state {
-            ChannelIo::Connected(writer) => Pin::new(writer).poll_shutdown(cx),
+            ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_shutdown(cx),
             ChannelIo::Disconnected((notify, receiver)) => {
                 // Notify the connection task to do the connection now.
                 notify.notify_one();
@@ -278,9 +276,9 @@ where
                 // Wait for the connection result.
                 match receiver.poll_unpin(cx) {
                     Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok(mut writer) => {
+                        Ok((mut writer, name)) => {
                             let result = Pin::new(&mut writer).poll_shutdown(cx);
-                            *w_state = ChannelIo::Connected(writer);
+                            *w_state = ChannelIo::Connected((writer, name));
                             result
                         }
                         Err(e) => Poll::Ready(Err(e)),
@@ -299,9 +297,8 @@ where
         }
 
         log::trace!(
-            "poll_shutdown({:?}) state: {:?}, result: {result:?}",
-            self.peer,
-            &mut *w_state
+            "Channel({:?})::poll_shutdown() -> {result:?}",
+            &mut *w_state,
         );
 
         result
@@ -343,7 +340,7 @@ mod tests {
         proxy: MockProxy,
     ) -> (anyhow::Result<()>, anyhow::Result<()>) {
         // Channel is already connected.
-        let channel = Channel::connected(proxy.net.reader, proxy.net.writer);
+        let channel = Channel::connected(proxy.net.reader, proxy.net.writer, String::from("Test"));
         mock::io_copy_direct(None::<u8>, wrapped_proxy(proxy.app, channel)).await
     }
 
@@ -377,7 +374,11 @@ mod tests {
         proxy: MockProxy,
     ) -> (anyhow::Result<()>, anyhow::Result<()>) {
         // The server is already connected using the remote socket from the client connection.
-        let channel = Channel::connected(replaced_net.reader, replaced_net.writer);
+        let channel = Channel::connected(
+            replaced_net.reader,
+            replaced_net.writer,
+            String::from("Test"),
+        );
         mock::io_copy_direct(None::<u8>, wrapped_proxy(proxy.app, channel)).await
     }
 
@@ -406,7 +407,7 @@ mod tests {
         proxy: MockProxy,
     ) -> (anyhow::Result<()>, anyhow::Result<()>) {
         // Channel is already connected.
-        let channel = Channel::connected(proxy.net.reader, proxy.net.writer);
+        let channel = Channel::connected(proxy.net.reader, proxy.net.writer, String::from("Test"));
         mock::io_copy_interpreter(protospec, wrapped_proxy(proxy.app, channel)).await
     }
 
@@ -444,7 +445,11 @@ mod tests {
         proxy: MockProxy,
     ) -> (anyhow::Result<()>, anyhow::Result<()>) {
         // The server is already connected using the remote socket from the client connection.
-        let channel = Channel::connected(replaced_net.reader, replaced_net.writer);
+        let channel = Channel::connected(
+            replaced_net.reader,
+            replaced_net.writer,
+            String::from("Test"),
+        );
         mock::io_copy_interpreter(
             EncryptedLengthPayloadSpec::new(Role::Server),
             wrapped_proxy(proxy.app, channel),

@@ -16,7 +16,7 @@ mod tunnel;
 
 // Re-export to make these available in the net namespace.
 pub use channel::Channel;
-pub use tunnel::{TunnelClient, TunnelServer, TunnelEofMethod};
+pub use tunnel::{TunnelClient, TunnelEofMethod, TunnelServer};
 
 pub const READ_CAPACITY: usize = 2usize.pow(14u32); // 16 KiB
 
@@ -36,7 +36,7 @@ pub trait AsyncConnect {
         self: Pin<&mut Self>,
         cx: &mut Context,
         target: Socks5Target,
-    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>>;
+    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf, String)>>;
 }
 
 /// An extension trait for `AsyncConnect` that provides an `async` method.
@@ -44,13 +44,25 @@ pub trait AsyncConnectExt: AsyncConnect + AsMut<Self> + Send + Unpin {
     fn connect(
         &mut self,
         target: Socks5Target,
-    ) -> impl Future<Output = io::Result<(Self::ReadHalf, Self::WriteHalf)>> + Send {
+    ) -> impl Future<Output = io::Result<(Self::ReadHalf, Self::WriteHalf, String)>> + Send {
         poll_fn(move |cx| Pin::new(self.as_mut()).poll_connect(cx, target.clone()))
     }
 }
 
 /// Blanket implementation for all types that satisfy the bounds.
 impl<T: AsyncConnect + AsMut<Self> + Send + Unpin> AsyncConnectExt for T {}
+
+pub fn fmt_stream_name(stream: &TcpStream) -> String {
+    let peer = match stream.peer_addr() {
+        Ok(addr) => format!("{addr}"),
+        Err(_) => format!("unknown"),
+    };
+    let local = match stream.local_addr() {
+        Ok(addr) => format!("{addr}"),
+        Err(_) => format!("unknown"),
+    };
+    format!("[{local}]->[{peer}]")
+}
 
 /// A connector for TCP sockets.
 #[derive(Default)]
@@ -66,7 +78,7 @@ impl AsyncConnect for TcpConnector {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         target: Socks5Target,
-    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>> {
+    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf, String)>> {
         // Initiate a connection if we don't have one pending.
         if self.future.is_none() {
             log::debug!("Initiating TCP connection to target {target}");
@@ -93,14 +105,12 @@ impl AsyncConnect for TcpConnector {
         let future = self.future.as_mut().unwrap();
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(stream)) => {
-                log::debug!(
-                    "TCP connection succeeded between {:?} and {:?}",
-                    stream.local_addr(),
-                    stream.peer_addr()
-                );
+                let name = fmt_stream_name(&stream);
+                log::debug!("TcpStream connected: {name}",);
                 // Dropping the future allows us to do another connect.
                 self.future = None;
-                Poll::Ready(Ok(stream.into_split()))
+                let (rx, tx) = stream.into_split();
+                Poll::Ready(Ok((rx, tx, name)))
             }
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
             Poll::Pending => Poll::Pending,
@@ -142,7 +152,7 @@ impl AsyncConnect for FixedTargetTcpConnector {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         _: Socks5Target,
-    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf)>> {
+    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf, String)>> {
         let target = self.fixed_target.clone();
         Pin::new(self.connector.as_mut()).poll_connect(cx, target)
     }
