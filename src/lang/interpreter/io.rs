@@ -35,13 +35,13 @@ where
     }
 
     pub async fn send(&mut self, mut bytes: Bytes) -> io::Result<usize> {
-        log::trace!("Io send({})", bytes.len());
+        log::trace!("Entering io::send({})", bytes.len());
 
         let num_written = bytes.len();
         self.dst.write_all_buf(&mut bytes).await?;
 
         self.n_sent_dst += num_written;
-        log::trace!("Io sent {num_written} bytes to dst");
+        log::trace!("Sent {num_written} bytes to dst");
 
         Ok(num_written)
     }

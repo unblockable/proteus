@@ -2,14 +2,15 @@ use std::fmt::Debug;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 
 use futures::FutureExt;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot::Receiver;
 use tokio::sync::oneshot::error::RecvError;
-use tokio::sync::{Mutex, Notify, oneshot};
+use tokio::sync::{Notify, oneshot};
 
+use crate::common::sync::PollMutex;
 use crate::net::AsyncConnectExt;
 use crate::net::proto::socks::address::Socks5Target;
 
@@ -34,8 +35,8 @@ where
     R: AsyncRead + Send + Unpin,
     W: AsyncWrite + Send + Unpin,
 {
-    reader: Arc<Mutex<ChannelIo<R>>>,
-    writer: Arc<Mutex<ChannelIo<W>>>,
+    reader: PollMutex<ChannelIo<R>>,
+    writer: PollMutex<ChannelIo<W>>,
 }
 
 impl<R, W> Channel<R, W>
@@ -45,8 +46,8 @@ where
 {
     fn new(reader: ChannelIo<R>, writer: ChannelIo<W>) -> Self {
         Self {
-            reader: Arc::new(Mutex::new(reader)),
-            writer: Arc::new(Mutex::new(writer)),
+            reader: PollMutex::new(reader),
+            writer: PollMutex::new(writer),
         }
     }
 
@@ -119,8 +120,7 @@ where
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
         // Obtain the read lock before proceeding.
-        let mut r_future = Box::pin(self.reader.lock());
-        let mut r_state = futures::ready!(r_future.as_mut().poll(cx));
+        let mut r_state = ready!(self.get_mut().reader.poll_lock(cx));
 
         let len = buf.remaining();
 
@@ -182,8 +182,7 @@ where
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut w_future = Box::pin(self.writer.lock());
-        let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
+        let mut w_state = ready!(self.get_mut().writer.poll_lock(cx));
 
         let result = match &mut *w_state {
             ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_write(cx, buf),
@@ -225,8 +224,7 @@ where
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut w_future = Box::pin(self.writer.lock());
-        let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
+        let mut w_state = ready!(self.get_mut().writer.poll_lock(cx));
 
         let result = match &mut *w_state {
             ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_flush(cx),
@@ -264,8 +262,7 @@ where
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut w_future = Box::pin(self.writer.lock());
-        let mut w_state = futures::ready!(w_future.as_mut().poll(cx));
+        let mut w_state = ready!(self.get_mut().writer.poll_lock(cx));
 
         let result = match &mut *w_state {
             ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_shutdown(cx),

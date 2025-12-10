@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll, Waker, ready};
 
 use bytes::BytesMut;
 use futures::stream::{SelectAll, StreamExt};
@@ -10,11 +10,12 @@ use futures::{FutureExt, Sink, SinkExt, Stream};
 use rand::RngCore;
 use rand::rngs::ThreadRng;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::Notify;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::{Mutex, Notify};
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::common::sync::PollMutex;
 use crate::net::AsyncConnect;
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 use crate::net::proto::tunnel::codec::TunnelCodec;
@@ -40,8 +41,8 @@ pub struct TunnelClient<S>
 where
     S: SessionBuilder<Message = TunnelMessage>,
 {
-    shared_reader: Arc<Mutex<TunnelReader<S::StreamHalf>>>,
-    shared_writer: Arc<Mutex<TunnelWriter<S::SinkHalf>>>,
+    shared_reader: PollMutex<TunnelReader<S::StreamHalf>>,
+    shared_writer: PollMutex<TunnelWriter<S::SinkHalf>>,
 }
 
 impl<S> TunnelClient<S>
@@ -50,8 +51,8 @@ where
 {
     pub fn new(eof_method: TunnelEofMethod) -> Self {
         Self {
-            shared_reader: Arc::new(Mutex::new(TunnelReader::new(eof_method))),
-            shared_writer: Arc::new(Mutex::new(TunnelWriter::new(None))),
+            shared_reader: PollMutex::new(TunnelReader::new(eof_method)),
+            shared_writer: PollMutex::new(TunnelWriter::new(None)),
         }
     }
 
@@ -129,9 +130,7 @@ where
         cx: &mut Context,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_reader.lock());
-        let mut reader = futures::ready!(future.as_mut().poll(cx));
+        let mut reader = ready!(self.get_mut().shared_reader.poll_lock(cx));
 
         let len = buf.remaining();
         let result = reader.poll_read(cx, buf);
@@ -156,27 +155,21 @@ where
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_writer.lock());
-        let mut writer = futures::ready!(future.as_mut().poll(cx));
+        let mut writer = ready!(self.get_mut().shared_writer.poll_lock(cx));
         let result = writer.poll_write(cx, buf);
         log::trace!("TunnelClient::poll_write({}) -> {result:?}", buf.len());
         result
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_writer.lock());
-        let mut writer = futures::ready!(future.as_mut().poll(cx));
+        let mut writer = ready!(self.get_mut().shared_writer.poll_lock(cx));
         let result = writer.poll_flush(cx);
         log::trace!("TunnelClient::poll_flush() -> {result:?}");
         result
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_writer.lock());
-        let mut writer = futures::ready!(future.as_mut().poll(cx));
+        let mut writer = ready!(self.get_mut().shared_writer.poll_lock(cx));
         let result = writer.poll_shutdown(cx);
         log::trace!("TunnelClient::poll_shutdown() -> {result:?}");
         result
@@ -189,8 +182,8 @@ where
     C: AsyncConnect<ReadHalf = S::ReadHalf, WriteHalf = S::WriteHalf>,
     C: AsMut<C> + Clone + Send + Unpin,
 {
-    shared_reader: Arc<Mutex<TunnelReader<S::StreamHalf>>>,
-    shared_writer: Arc<Mutex<TunnelWriter<S::SinkHalf>>>,
+    shared_reader: PollMutex<TunnelReader<S::StreamHalf>>,
+    shared_writer: PollMutex<TunnelWriter<S::SinkHalf>>,
     connector: C,
 }
 
@@ -204,8 +197,8 @@ where
         let (task_tx, task_rx) = mpsc::channel(1_000);
 
         let server = Self {
-            shared_reader: Arc::new(Mutex::new(TunnelReader::new(eof_method))),
-            shared_writer: Arc::new(Mutex::new(TunnelWriter::new(Some(task_tx)))),
+            shared_reader: PollMutex::new(TunnelReader::new(eof_method)),
+            shared_writer: PollMutex::new(TunnelWriter::new(Some(task_tx))),
             connector,
         };
 
@@ -279,9 +272,7 @@ where
         cx: &mut Context,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_reader.lock());
-        let mut reader = futures::ready!(future.as_mut().poll(cx));
+        let mut reader = ready!(self.get_mut().shared_reader.poll_lock(cx));
 
         let len = buf.remaining();
         let result = reader.poll_read(cx, buf);
@@ -308,27 +299,21 @@ where
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_writer.lock());
-        let mut writer = futures::ready!(future.as_mut().poll(cx));
+        let mut writer = ready!(self.get_mut().shared_writer.poll_lock(cx));
         let result = writer.poll_write(cx, buf);
         log::trace!("TunnelServer::poll_write({}) -> {result:?}", buf.len());
         result
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_writer.lock());
-        let mut writer = futures::ready!(future.as_mut().poll(cx));
+        let mut writer = ready!(self.get_mut().shared_writer.poll_lock(cx));
         let result = writer.poll_flush(cx);
         log::trace!("TunnelServer::poll_flush() -> {result:?}");
         result
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        // Acquire the mutex lock asynchronously.
-        let mut future = Box::pin(self.get_mut().shared_writer.lock());
-        let mut writer = futures::ready!(future.as_mut().poll(cx));
+        let mut writer = ready!(self.get_mut().shared_writer.poll_lock(cx));
         let result = writer.poll_shutdown(cx);
         log::trace!("TunnelServer::poll_shutdown() -> {result:?}");
         result

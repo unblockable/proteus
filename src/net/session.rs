@@ -194,10 +194,7 @@ where
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         match &mut self.get_mut().io {
             SessionIo::Connected(sink) => sink.poll_flush_unpin(cx),
-            SessionIo::Disconnected(chan_rx) => {
-                chan_rx.close();
-                Poll::Ready(Ok(()))
-            }
+            SessionIo::Disconnected(_) => Poll::Ready(Ok(())),
         }
     }
 
