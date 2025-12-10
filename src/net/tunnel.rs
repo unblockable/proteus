@@ -99,6 +99,7 @@ where
             let mut reader = self.shared_reader.lock().await;
             reader.add(stream);
             reader.put_buf(TunnelMessage::open(id, target));
+            reader.wake();
         }
     }
 
@@ -106,6 +107,7 @@ where
         let mut reader = self.shared_reader.lock().await;
         reader.put_buf(TunnelMessage::close());
         reader.set_eof();
+        reader.wake();
     }
 }
 
@@ -243,6 +245,7 @@ where
         let mut reader = self.shared_reader.lock().await;
         reader.put_buf(TunnelMessage::close());
         reader.set_eof();
+        reader.wake();
     }
 }
 
@@ -359,12 +362,10 @@ where
     /// codec, which can be considered a programming error.
     fn put_buf(&mut self, msg: TunnelMessage) {
         TunnelCodec.encode(msg, &mut self.buffer).unwrap();
-        self.wake();
     }
 
     fn set_eof(&mut self) {
         self.eof_method = TunnelEofMethod::OnStreamCount(0);
-        self.wake();
     }
 
     fn wake(&self) {
