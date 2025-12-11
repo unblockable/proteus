@@ -104,3 +104,35 @@ impl<T> DerefMut for PollMutexGuard<T> {
         unsafe { &mut *self.data.get() }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::common::sync::PollMutex;
+
+    async fn push_one(mut mutex: PollMutex<Vec<usize>>) {
+        mutex.lock().await.push(1);
+    }
+
+    #[tokio::test]
+    async fn poll_mutex_parallel_lock() {
+        let n = 1000;
+        let mut mutex = PollMutex::new(vec![]);
+
+        let mut handles = vec![];
+
+        for _ in 0..n {
+            handles.push(tokio::spawn(push_one(mutex.clone())));
+        }
+
+        assert_eq!(handles.len(), n);
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        let inner = mutex.lock().await;
+        assert_eq!(inner.len(), n);
+        let sum: usize = inner.iter().sum();
+        assert_eq!(sum, n);
+    }
+}
