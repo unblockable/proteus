@@ -175,6 +175,9 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 match TcpConnector::default().connect(target.clone()).await {
                     Ok((net_src, net_dst, name)) => {
                         log::debug!("Successfully connected to proxy: {name}");
+                        // To isolate testing the channel without a tunnel, uncomment this:
+                        // let c = Channel::connected(net_src, net_dst, name);
+                        // let (net_src, net_dst) = (c.clone(), c);
                         run_interpreter(net_src, net_dst, app_src, app_dst, client_spec).await;
                     }
                     Err(e) => {
