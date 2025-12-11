@@ -13,10 +13,11 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
-use crate::net::proto::BytesSession;
-use crate::net::proto::socks;
+use crate::net::proto::socks::address::Socks5Target;
+use crate::net::proto::{BytesSession, socks};
 use crate::net::{
-    Channel, FixedTargetTcpConnector, TcpConnector, TunnelClient, TunnelEofMethod, TunnelServer, fmt_stream_name,
+    AsyncConnectExt, Channel, FixedTargetTcpConnector, TcpConnector, TunnelClient, TunnelEofMethod,
+    TunnelServer, fmt_stream_name,
 };
 
 pub mod config;
@@ -118,6 +119,18 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
         Ok(info) => {
             log::debug!("Socks5 with peer {peer_name} succeeded");
 
+            if !info.remaining_read_buf.is_empty() {
+                log::error!(
+                    "Socks5 buffer has {} bytes remaining",
+                    info.remaining_read_buf.len()
+                );
+                // TODO: can we maybe do something like this?
+                // app_src = Cursor::new(info.remaining_read_buf).chain(app_src);
+                return;
+            }
+
+            let target = info.target.clone();
+
             let options = match info.creds {
                 Some(creds) => {
                     log::debug!("Obtained Socks5 username: {}", creds.username);
@@ -142,35 +155,33 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
             let client_spec = Compiler::parse_path(filepath, Role::Client).unwrap();
 
             log::debug!(
-                "Running Proteus client protocol to forward data from {peer_name} to proxy server at {}",
-                info.target
+                "Running Proteus client protocol to forward data from {peer_name} to proxy server at {target}",
             );
 
             // Normally this connection would have been done during the SOCKS handshake,
             // so that we could return a SOCKS error if the connection fails.
             // We currently removed that from our SOCKS impl to handle other modes.
-            log::debug!(
-                "Will need to connect network tunnel to proxy server {}",
-                info.target
-            );
+            log::debug!("Will need to connect network tunnel to proxy server {target}",);
 
-            let channel = Channel::disconnected(info.target, TcpConnector::default());
-            let mut tunnel: TunnelClient<BytesSession<_, _>> =
-                TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
-
-            if info.remaining_read_buf.is_empty() {
-                tunnel.add_session(app_src, app_dst, None).await;
+            if false {
+                // TODO run a wrapped tunnel session.
+                let net = Channel::disconnected(target, TcpConnector::default());
+                let mut app: TunnelClient<BytesSession<_, _>> =
+                    TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
+                app.add_session(app_src, app_dst, None).await;
+                run_interpreter(net.clone(), net, app.clone(), app, client_spec).await;
             } else {
-                log::error!(
-                    "Socks5 buffer has {} bytes remaining",
-                    info.remaining_read_buf.len()
-                );
-                // TODO
-                // let chained_reader = Cursor::new(info.remaining_read_buf).chain(app_src);
-                // tunnel.add_session_pt_client(chained_reader, app_dst).await;
+                // Use the TcpStream io directly without wrappers.
+                match TcpConnector::default().connect(target.clone()).await {
+                    Ok((net_src, net_dst, name)) => {
+                        log::debug!("Successfully connected to proxy: {name}");
+                        run_interpreter(net_src, net_dst, app_src, app_dst, client_spec).await;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to connect to Socks5 proxy target {target}: {e}",);
+                    }
+                }
             }
-
-            run_interpreter(channel, tunnel, client_spec).await;
         }
         Err(e) => {
             log::debug!("Stream from peer {peer_name} failed during Socks5 protocol: {e}");
@@ -242,29 +253,37 @@ where
 
     let (net_src, net_dst) = net_stream.into_split();
 
-    let channel = Channel::connected(net_src, net_dst, peer_name);
-    // In PT mode, we pin the already configured forward addr for all app connections.
-    let connector = FixedTargetTcpConnector::new(conf.forward_addr.into());
-    let tunnel: TunnelServer<BytesSession<_, _>, _> =
-        TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector);
+    let target = Socks5Target::from(conf.forward_addr);
 
-    run_interpreter(channel, tunnel, server_spec).await;
+    if false {
+        // TODO run a wrapped tunnel session.
+        let connector = FixedTargetTcpConnector::new(target);
+        let app: TunnelServer<BytesSession<_, _>, _> =
+            TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector);
+        let net = Channel::connected(net_src, net_dst, peer_name);
+        run_interpreter(net.clone(), net, app.clone(), app, server_spec).await;
+    } else {
+        // Use the TcpStream io directly without wrappers.
+        match TcpConnector::default().connect(target.clone()).await {
+            Ok((app_src, app_dst, name)) => {
+                log::debug!("Successfully connected to forward target: {name}");
+                run_interpreter(net_src, net_dst, app_src, app_dst, server_spec).await;
+            }
+            Err(e) => {
+                log::warn!("Failed to connect to configured forward target {target}: {e}",);
+            }
+        }
+    }
 }
 
 async fn run_interpreter(
-    channel: impl AsyncRead + AsyncWrite + Clone + Unpin,
-    tunnel: impl AsyncRead + AsyncWrite + Clone + Unpin,
+    net_src: impl AsyncRead + Unpin,
+    net_dst: impl AsyncWrite + Unpin,
+    app_src: impl AsyncRead + Unpin,
+    app_dst: impl AsyncWrite + Unpin,
     protocol_spec: impl TaskProvider + Send + Clone,
 ) {
-    match Interpreter::run(
-        channel.clone(),
-        channel,
-        tunnel.clone(),
-        tunnel,
-        protocol_spec,
-    )
-    .await
-    {
+    match Interpreter::run(net_src, net_dst, app_src, app_dst, protocol_spec).await {
         (Ok(_), Ok(_)) => log::debug!("Tunnel protocol succeeded",),
         (Ok(_), Err(e)) => log::debug!("Tunnel protocol failed: app-to-net: {e}",),
         (Err(e), Ok(_)) => log::debug!("Tunnel protocol failed: net-to-app: {e}",),
