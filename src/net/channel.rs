@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::io;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, ready};
@@ -14,10 +15,55 @@ use crate::common::sync::PollMutex;
 use crate::net::AsyncConnectExt;
 use crate::net::proto::socks::address::Socks5Target;
 
+pub struct Channel<R, W>
+where
+    R: AsyncRead + Send + Unpin,
+    W: AsyncWrite + Send + Unpin,
+{
+    reader: PollMutex<ChannelIo<R>>,
+    writer: PollMutex<ChannelIo<W>>,
+}
+
 enum ChannelIo<T> {
     Connected((T, String)),
     Disconnected((Arc<Notify>, Receiver<io::Result<(T, String)>>)),
     Error(io::Error),
+}
+
+impl<T> ChannelIo<T> {
+    fn poll_connected(&mut self, cx: &mut Context) -> Poll<()> {
+        match self {
+            ChannelIo::Connected(_) => Poll::Ready(()),
+            ChannelIo::Disconnected((notify, conn_rx)) => {
+                // Notify the background task to connect if it didn't already.
+                notify.notify_one();
+
+                // Check for a connection result.
+                match conn_rx.poll_unpin(cx) {
+                    Poll::Ready(rx_result) => {
+                        *self = match rx_result {
+                            // Connection was successful.
+                            Ok(Ok((io, name))) => ChannelIo::Connected((io, name)),
+                            // Connection error.
+                            Ok(Err(e)) => ChannelIo::Error(e),
+                            // Error getting result from the receiver channel.
+                            Err(e) => ChannelIo::Error(broken_pipe_error(e)),
+                        };
+                        Poll::Ready(())
+                    }
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+            ChannelIo::Error(_) => Poll::Ready(()),
+        }
+    }
+
+    fn inspect_err<U>(&mut self, result: Poll<Result<U, io::Error>>) -> Poll<Result<U, io::Error>> {
+        if let Poll::Ready(Err(e)) = &result {
+            *self = ChannelIo::Error(io::Error::from(e.kind()));
+        }
+        result
+    }
 }
 
 impl<T> Debug for ChannelIo<T> {
@@ -28,15 +74,6 @@ impl<T> Debug for ChannelIo<T> {
             ChannelIo::Error(_) => write!(f, "Error"),
         }
     }
-}
-
-pub struct Channel<R, W>
-where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
-{
-    reader: PollMutex<ChannelIo<R>>,
-    writer: PollMutex<ChannelIo<W>>,
 }
 
 impl<R, W> Channel<R, W>
@@ -120,51 +157,34 @@ where
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
         // Obtain the read lock before proceeding.
-        let mut r_state = ready!(self.get_mut().reader.poll_lock(cx));
+        let mut io = ready!(self.get_mut().reader.poll_lock(cx));
 
+        // Wait until we finish connecting.
+        ready!(io.poll_connected(cx));
+
+        // Requested read length.
         let len = buf.remaining();
 
-        let result = match &mut *r_state {
-            ChannelIo::Connected((reader, _name)) => Pin::new(reader).poll_read(cx, buf),
-            ChannelIo::Disconnected((notify, receiver)) => {
-                // Notify the connection task to do the connection now.
-                notify.notify_one();
-
-                // Wait for the connection result.
-                match receiver.poll_unpin(cx) {
-                    Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok((mut reader, name)) => {
-                            let result = Pin::new(&mut reader).poll_read(cx, buf);
-                            *r_state = ChannelIo::Connected((reader, name));
-                            result
-                        }
-                        Err(e) => Poll::Ready(Err(e)),
-                    },
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(broken_pipe_error(e))),
-                    Poll::Pending => Poll::Pending,
-                }
+        let result = match io.deref_mut() {
+            ChannelIo::Connected((reader, _name)) => {
+                let result = Pin::new(reader).poll_read(cx, buf);
+                io.inspect_err(result)
             }
+            ChannelIo::Disconnected(_) => Poll::Pending,
             ChannelIo::Error(e) => Poll::Ready(Err(io::Error::from(e.kind()))),
         };
 
-        if let Poll::Ready(Err(e)) = &result {
-            if !matches!(&*r_state, ChannelIo::Error(_)) {
-                *r_state = ChannelIo::Error(io::Error::from(e.kind()));
-            }
-        }
-
+        // Actual amount read.
         let amt = len - buf.remaining();
 
+        // Print nicely for logs.
         if matches!(result, Poll::Ready(Ok(()))) {
             log::trace!(
                 "Channel({:?})::poll_read({len}) -> Ready(Ok({amt}))",
-                &mut *r_state
+                io.deref()
             );
         } else {
-            log::trace!(
-                "Channel({:?})::poll_read({len}) -> {result:?}",
-                &mut *r_state
-            );
+            log::trace!("Channel({:?})::poll_read({len}) -> {result:?}", io.deref());
         }
 
         result
@@ -182,40 +202,23 @@ where
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut w_state = ready!(self.get_mut().writer.poll_lock(cx));
+        let mut io = ready!(self.get_mut().writer.poll_lock(cx));
 
-        let result = match &mut *w_state {
-            ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_write(cx, buf),
-            ChannelIo::Disconnected((notify, receiver)) => {
-                // Notify the connection task to do the connection now.
-                notify.notify_one();
+        // Wait until we finish connecting.
+        ready!(io.poll_connected(cx));
 
-                // Wait for the connection result.
-                match receiver.poll_unpin(cx) {
-                    Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok((mut writer, name)) => {
-                            let result = Pin::new(&mut writer).poll_write(cx, buf);
-                            *w_state = ChannelIo::Connected((writer, name));
-                            result
-                        }
-                        Err(e) => Poll::Ready(Err(e)),
-                    },
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(broken_pipe_error(e))),
-                    Poll::Pending => Poll::Pending,
-                }
+        let result = match io.deref_mut() {
+            ChannelIo::Connected((writer, _name)) => {
+                let result = Pin::new(writer).poll_write(cx, buf);
+                io.inspect_err(result)
             }
+            ChannelIo::Disconnected(_) => Poll::Pending,
             ChannelIo::Error(e) => Poll::Ready(Err(io::Error::from(e.kind()))),
         };
 
-        if let Poll::Ready(Err(e)) = &result {
-            if !matches!(&*w_state, ChannelIo::Error(_)) {
-                *w_state = ChannelIo::Error(io::Error::from(e.kind()));
-            }
-        }
-
         log::trace!(
             "Channel({:?})::poll_write({}) -> {result:?}",
-            &mut *w_state,
+            io.deref(),
             buf.len()
         );
 
@@ -224,79 +227,42 @@ where
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut w_state = ready!(self.get_mut().writer.poll_lock(cx));
+        let mut io = ready!(self.get_mut().writer.poll_lock(cx));
 
-        let result = match &mut *w_state {
-            ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_flush(cx),
-            ChannelIo::Disconnected((notify, receiver)) => {
-                // Notify the connection task to do the connection now.
-                notify.notify_one();
+        // Wait until we finish connecting.
+        ready!(io.poll_connected(cx));
 
-                // Wait for the connection result.
-                match receiver.poll_unpin(cx) {
-                    Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok((mut writer, name)) => {
-                            let result = Pin::new(&mut writer).poll_flush(cx);
-                            *w_state = ChannelIo::Connected((writer, name));
-                            result
-                        }
-                        Err(e) => Poll::Ready(Err(e)),
-                    },
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(broken_pipe_error(e))),
-                    Poll::Pending => Poll::Pending,
-                }
+        let result = match io.deref_mut() {
+            ChannelIo::Connected((writer, _name)) => {
+                let result = Pin::new(writer).poll_flush(cx);
+                io.inspect_err(result)
             }
+            ChannelIo::Disconnected(_) => Poll::Pending,
             ChannelIo::Error(e) => Poll::Ready(Err(io::Error::from(e.kind()))),
         };
 
-        if let Poll::Ready(Err(e)) = &result {
-            if !matches!(&*w_state, ChannelIo::Error(_)) {
-                *w_state = ChannelIo::Error(io::Error::from(e.kind()));
-            }
-        }
-
-        log::trace!("Channel({:?})::poll_flush() -> {result:?}", &mut *w_state,);
+        log::trace!("Channel({:?})::poll_flush() -> {result:?}", io.deref());
 
         result
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut w_state = ready!(self.get_mut().writer.poll_lock(cx));
+        let mut io = ready!(self.get_mut().writer.poll_lock(cx));
 
-        let result = match &mut *w_state {
-            ChannelIo::Connected((writer, _name)) => Pin::new(writer).poll_shutdown(cx),
-            ChannelIo::Disconnected((notify, receiver)) => {
-                // Notify the connection task to do the connection now.
-                notify.notify_one();
+        // Wait until we finish connecting.
+        ready!(io.poll_connected(cx));
 
-                // Wait for the connection result.
-                match receiver.poll_unpin(cx) {
-                    Poll::Ready(Ok(conn_result)) => match conn_result {
-                        Ok((mut writer, name)) => {
-                            let result = Pin::new(&mut writer).poll_shutdown(cx);
-                            *w_state = ChannelIo::Connected((writer, name));
-                            result
-                        }
-                        Err(e) => Poll::Ready(Err(e)),
-                    },
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(broken_pipe_error(e))),
-                    Poll::Pending => Poll::Pending,
-                }
+        let result = match io.deref_mut() {
+            ChannelIo::Connected((writer, _name)) => {
+                let result = Pin::new(writer).poll_shutdown(cx);
+                io.inspect_err(result)
             }
+            ChannelIo::Disconnected(_) => Poll::Pending,
             ChannelIo::Error(e) => Poll::Ready(Err(io::Error::from(e.kind()))),
         };
 
-        if let Poll::Ready(Err(e)) = &result {
-            if !matches!(&*w_state, ChannelIo::Error(_)) {
-                *w_state = ChannelIo::Error(io::Error::from(e.kind()));
-            }
-        }
-
-        log::trace!(
-            "Channel({:?})::poll_shutdown() -> {result:?}",
-            &mut *w_state,
-        );
+        log::trace!("Channel({:?})::poll_shutdown() -> {result:?}", io.deref());
 
         result
     }
