@@ -1,34 +1,29 @@
 use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::task::{Context, Poll, ready};
+use std::task::{Context, Poll};
 
-use futures::FutureExt;
-use tokio::sync::{Mutex, OwnedMutexGuard};
-use tokio_util::sync::ReusableBoxFuture;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::PollSemaphore;
 
 pub struct PollMutex<T> {
-    mutex: Arc<Mutex<Nothing>>,
+    mutex: PollSemaphore,
     data: Arc<UnsafeCell<T>>,
-    future: Option<ReusableBoxFuture<'static, OwnedMutexGuard<Nothing>>>,
 }
 
 pub struct PollMutexGuard<T> {
-    // RAII: as long as we hold this inner guard, we are allowed exclusive
-    // access to the data.
+    // RAII: as long as we hold this permit, we are allowed exclusive access to
+    // the data. On drop, the permit is released back to the semaphore.
     #[allow(unused)]
-    guard: OwnedMutexGuard<Nothing>,
+    permit: OwnedSemaphorePermit,
     data: Arc<UnsafeCell<T>>,
 }
-
-struct Nothing;
 
 impl<T> PollMutex<T> {
     pub fn new(data: T) -> Self {
         Self {
-            mutex: Arc::new(Mutex::new(Nothing)),
+            mutex: PollSemaphore::new(Arc::new(Semaphore::new(1))),
             data: Arc::new(UnsafeCell::new(data)),
-            future: None,
         }
     }
 
@@ -36,53 +31,49 @@ impl<T> PollMutex<T> {
         std::future::poll_fn(move |cx| self.poll_lock(cx))
     }
 
-    /// Acquire the mutex lock asynchronously. If the result is `Poll::Pending`,
-    /// a wakeup will be registered with the context waker.
+    /// Acquire the mutex lock asynchronously.
+    ///
+    /// When this method returns Poll::Pending, the current task is scheduled to
+    /// receive a wakeup when the mutex is released. Note that on multiple calls
+    /// to poll_lock, only the Waker from the Context passed to the most recent
+    /// call is scheduled to receive a wakeup.
     pub fn poll_lock(&mut self, cx: &mut Context<'_>) -> Poll<PollMutexGuard<T>> {
-        let boxed_future = match self.future.as_mut() {
-            Some(boxed_future) => boxed_future,
-            None => {
-                // Avoid allocation if we can get the lock immediately.
-                match self.mutex.clone().try_lock_owned() {
-                    Ok(guard) => {
-                        return Poll::Ready(PollMutexGuard {
-                            guard,
-                            data: self.data.clone(),
-                        });
-                    }
-                    Err(_) => {}
-                }
-
-                // Lock not ready, set up a future we can poll.
-                let lock_fut = self.mutex.clone().lock_owned();
-                &mut self.future.get_or_insert(ReusableBoxFuture::new(lock_fut))
-            }
-        };
-
-        // Poll until its ready.
-        let guard = ready!(boxed_future.poll_unpin(cx));
-
-        // Replace the future so we are ready for the next lock request.
-        boxed_future.set(self.mutex.clone().lock_owned());
-
-        Poll::Ready(PollMutexGuard {
-            guard,
-            data: self.data.clone(),
-        })
+        match self.mutex.poll_acquire(cx) {
+            Poll::Ready(Some(permit)) => Poll::Ready(PollMutexGuard {
+                permit,
+                data: self.data.clone(),
+            }),
+            // We never close the semaphore, and self has a ref to it so it
+            // could not have closed itself on drop yet.
+            Poll::Ready(None) => unreachable!(),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
 // Allow PollMutex to be sent across threads if T is Send
 unsafe impl<T: Send> Send for PollMutex<T> {}
 unsafe impl<T: Send> Sync for PollMutex<T> {}
+unsafe impl<T: Send + Sync> Sync for PollMutexGuard<T> {}
+
+impl<T> From<T> for PollMutex<T> {
+    fn from(data: T) -> Self {
+        Self::new(data)
+    }
+}
 
 impl<T> Clone for PollMutex<T> {
     fn clone(&self) -> Self {
         Self {
             mutex: self.mutex.clone(),
             data: self.data.clone(),
-            future: None,
         }
+    }
+}
+
+impl<T: Default> Default for PollMutex<T> {
+    fn default() -> Self {
+        Self::new(T::default())
     }
 }
 
@@ -113,7 +104,8 @@ mod tests {
         mutex.lock().await.push(1);
     }
 
-    #[tokio::test]
+    // #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1000)]
     async fn poll_mutex_parallel_lock() {
         let n = 1000;
         let mut mutex = PollMutex::new(vec![]);
