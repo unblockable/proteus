@@ -18,7 +18,7 @@ mod tunnel;
 pub use channel::Channel;
 pub use tunnel::{TunnelClient, TunnelEofMethod, TunnelServer};
 
-pub const READ_CAPACITY: usize = 2usize.pow(14u32); // 16 KiB
+pub const CHUNK_SIZE: usize = 2usize.pow(14u32); // 16 KiB
 
 /// A trait for types that can asynchronously establish a connection.
 pub trait AsyncConnect {

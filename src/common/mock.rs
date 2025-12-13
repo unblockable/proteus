@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::READ_CAPACITY;
+use crate::net::CHUNK_SIZE;
 
 #[cfg(test)]
 use {
@@ -66,7 +66,7 @@ impl MockIo {
     }
 
     fn new_pair() -> (Self, Self) {
-        let (io_rw_1, io_rw_2) = duplex(READ_CAPACITY);
+        let (io_rw_1, io_rw_2) = duplex(CHUNK_SIZE);
         (Self::new_split(io_rw_1), Self::new_split(io_rw_2))
     }
 }

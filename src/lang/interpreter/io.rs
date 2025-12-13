@@ -5,7 +5,7 @@ use std::task::{Context, Poll, Waker};
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use crate::net::READ_CAPACITY;
+use crate::net::CHUNK_SIZE;
 
 pub struct IoStream<R, W>
 where
@@ -66,7 +66,7 @@ where
         // To avoid large pre-allocation, we
         // 1. use read_buf() to async-read the first chunk
         // 2. if we get a full chunk, use try_read() to sync-read remaining available chunks
-        let limit = len.min(READ_CAPACITY);
+        let limit = len.min(CHUNK_SIZE);
         let mut limited_buf = BytesMut::with_capacity(limit).limit(limit);
 
         match self.src.read_buf(&mut limited_buf).await {
@@ -99,7 +99,7 @@ where
         let mut maybe_err = None;
 
         while buf.len() < len {
-            let limit = READ_CAPACITY.min(len - buf.len());
+            let limit = CHUNK_SIZE.min(len - buf.len());
             let mut chunk = BytesMut::with_capacity(limit);
             chunk.resize(limit, 0);
 
