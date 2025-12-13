@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::io;
+use std::io::{self, IoSlice};
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -22,6 +22,7 @@ where
 {
     reader: PollMutex<ChannelIo<R>>,
     writer: PollMutex<ChannelIo<W>>,
+    is_write_vectored: Option<bool>,
 }
 
 enum ChannelIo<T> {
@@ -81,10 +82,11 @@ where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    fn new(reader: ChannelIo<R>, writer: ChannelIo<W>) -> Self {
+    fn new(reader: ChannelIo<R>, writer: ChannelIo<W>, is_write_vectored: Option<bool>) -> Self {
         Self {
             reader: PollMutex::new(reader),
             writer: PollMutex::new(writer),
+            is_write_vectored,
         }
     }
 
@@ -122,13 +124,15 @@ where
         let r_io = ChannelIo::Disconnected((ready.clone(), read_rx));
         let w_io = ChannelIo::Disconnected((ready, write_rx));
 
-        Self::new(r_io, w_io)
+        Self::new(r_io, w_io, None)
     }
 
     pub fn connected(net_src: R, net_dst: W, name: String) -> Self {
+        let is_write_vectored = Some(net_dst.is_write_vectored());
         Self::new(
             ChannelIo::Connected((net_src, name.clone())),
             ChannelIo::Connected((net_dst, name)),
+            is_write_vectored,
         )
     }
 }
@@ -142,6 +146,7 @@ where
         Self {
             reader: self.reader.clone(),
             writer: self.writer.clone(),
+            is_write_vectored: self.is_write_vectored,
         }
     }
 }
@@ -202,13 +207,16 @@ where
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut io = ready!(self.get_mut().writer.poll_lock(cx));
+        let this = self.get_mut();
+        let mut io = ready!(this.writer.poll_lock(cx));
 
         // Wait until we finish connecting.
         ready!(io.poll_connected(cx));
 
         let result = match io.deref_mut() {
             ChannelIo::Connected((writer, _name)) => {
+                this.is_write_vectored
+                    .get_or_insert_with(|| writer.is_write_vectored());
                 let result = Pin::new(writer).poll_write(cx, buf);
                 io.inspect_err(result)
             }
@@ -227,13 +235,16 @@ where
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut io = ready!(self.get_mut().writer.poll_lock(cx));
+        let this = self.get_mut();
+        let mut io = ready!(this.writer.poll_lock(cx));
 
         // Wait until we finish connecting.
         ready!(io.poll_connected(cx));
 
         let result = match io.deref_mut() {
             ChannelIo::Connected((writer, _name)) => {
+                this.is_write_vectored
+                    .get_or_insert_with(|| writer.is_write_vectored());
                 let result = Pin::new(writer).poll_flush(cx);
                 io.inspect_err(result)
             }
@@ -248,13 +259,16 @@ where
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         // Obtain the write lock before proceeding.
-        let mut io = ready!(self.get_mut().writer.poll_lock(cx));
+        let this = self.get_mut();
+        let mut io = ready!(this.writer.poll_lock(cx));
 
         // Wait until we finish connecting.
         ready!(io.poll_connected(cx));
 
         let result = match io.deref_mut() {
             ChannelIo::Connected((writer, _name)) => {
+                this.is_write_vectored
+                    .get_or_insert_with(|| writer.is_write_vectored());
                 let result = Pin::new(writer).poll_shutdown(cx);
                 io.inspect_err(result)
             }
@@ -263,6 +277,42 @@ where
         };
 
         log::trace!("Channel({:?})::poll_shutdown() -> {result:?}", io.deref());
+
+        result
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.is_write_vectored.is_some_and(|x| x)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        bufs: &[IoSlice],
+    ) -> Poll<Result<usize, io::Error>> {
+        // Obtain the write lock before proceeding.
+        let this = self.get_mut();
+        let mut io = ready!(this.writer.poll_lock(cx));
+
+        // Wait until we finish connecting.
+        ready!(io.poll_connected(cx));
+
+        let result = match io.deref_mut() {
+            ChannelIo::Connected((writer, _name)) => {
+                this.is_write_vectored
+                    .get_or_insert_with(|| writer.is_write_vectored());
+                let result = Pin::new(writer).poll_write_vectored(cx, bufs);
+                io.inspect_err(result)
+            }
+            ChannelIo::Disconnected(_) => Poll::Pending,
+            ChannelIo::Error(e) => Poll::Ready(Err(io::Error::from(e.kind()))),
+        };
+
+        log::trace!(
+            "Channel({:?})::poll_write_vectored({}) -> {result:?}",
+            io.deref(),
+            bufs.iter().map(|b| b.len()).sum::<usize>()
+        );
 
         result
     }
@@ -436,6 +486,70 @@ mod tests {
                 )
                 .await
                 .assert(len);
+        }
+    }
+}
+
+// Disabled code for reference purposes.
+#[cfg(any())]
+mod iowrap {
+    use std::io::{self, IoSlice};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use pin_project_lite::pin_project;
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    pin_project! {
+        pub struct IoWrap<T> {
+            #[pin]
+            inner: T,
+        }
+    }
+
+    impl<T> IoWrap<T> {
+        pub fn new(inner: T) -> Self {
+            Self { inner }
+        }
+    }
+
+    impl<T: AsyncRead> AsyncRead for IoWrap<T> {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &mut ReadBuf,
+        ) -> Poll<io::Result<()>> {
+            self.project().inner.poll_read(cx, buf)
+        }
+    }
+
+    impl<T: AsyncWrite> AsyncWrite for IoWrap<T> {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize, io::Error>> {
+            self.project().inner.poll_write(cx, buf)
+        }
+
+        fn poll_write_vectored(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            bufs: &[IoSlice],
+        ) -> Poll<Result<usize, io::Error>> {
+            self.project().inner.poll_write_vectored(cx, bufs)
+        }
+
+        fn is_write_vectored(&self) -> bool {
+            self.inner.is_write_vectored()
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+            self.project().inner.poll_flush(cx)
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+            self.project().inner.poll_shutdown(cx)
         }
     }
 }

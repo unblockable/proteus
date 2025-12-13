@@ -39,16 +39,7 @@ where
 
         let num_written = bytes.len();
 
-        // TODO: track down root cause.
-        // We fail to get wakeups when writing in certain ways.
-        // The following doesn't work with our channel and tunnel, but works on TcpStreams.
-        //   self.dst.write_all_buf(&mut bytes).await?;
-        // So we write in chunks instead, as shown below.
-        // But in this case, our channel works without the flush(), but our tunnel does not.
-        for data in bytes.chunks(READ_CAPACITY) {
-            self.dst.write_all(data).await?;
-            self.dst.flush().await?;
-        }
+        self.dst.write_all_buf(&mut bytes).await?;
 
         self.n_sent_dst += num_written;
         log::trace!("Sent {num_written} bytes to dst");

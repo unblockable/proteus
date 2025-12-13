@@ -31,6 +31,17 @@ impl<T> PollMutex<T> {
         std::future::poll_fn(move |cx| self.poll_lock(cx))
     }
 
+    pub fn _try_lock(&self) -> Option<PollMutexGuard<T>> {
+        if let Ok(permit) = self.mutex.clone_inner().try_acquire_owned() {
+            Some(PollMutexGuard {
+                permit,
+                data: self.data.clone(),
+            })
+        } else {
+            None
+        }
+    }
+
     /// Acquire the mutex lock asynchronously.
     ///
     /// When this method returns Poll::Pending, the current task is scheduled to

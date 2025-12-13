@@ -1,7 +1,7 @@
 use std::io::{self, Cursor};
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Sink, Stream};
@@ -66,25 +66,8 @@ pub struct BytesSink<W: AsyncWrite> {
     buf: Option<Cursor<Bytes>>,
 }
 
-impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
-    type Error = io::Error;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.poll_flush(cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: TunnelMessage) -> Result<(), Self::Error> {
-        if let Some(_) = self.buf {
-            Err(io::ErrorKind::WouldBlock.into())
-        } else {
-            if let TunnelMessageKind::Encapsulated(bytes) = item.kind {
-                self.buf = Some(Cursor::new(bytes));
-            }
-            Ok(())
-        }
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+impl<W: AsyncWrite + Send + Unpin> BytesSink<W> {
+    fn poll_write(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         if let Some(mut cursor) = self.buf.take() {
             while cursor.has_remaining() {
                 match poll_write_buf(Pin::new(&mut self.io), cx, &mut cursor) {
@@ -97,7 +80,40 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
                 };
             }
         }
-        Pin::new(&mut self.io).poll_flush(cx)
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
+    type Error = io::Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.get_mut().poll_write(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: TunnelMessage) -> Result<(), Self::Error> {
+        if let Some(_) = self.buf {
+            Err(io::ErrorKind::WouldBlock.into())
+        } else {
+            if let TunnelMessageKind::Encapsulated(bytes) = item.kind {
+                self.buf = Some(Cursor::new(bytes));
+                // This is best-effort, so it's safe to ignore pending signals.
+                let mut cx = Context::from_waker(Waker::noop());
+                if let Poll::Ready(result) = self.get_mut().poll_write(&mut cx) {
+                    return result;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        let this = self.get_mut();
+        match this.poll_write(cx) {
+            Poll::Ready(Ok(_)) => Pin::new(&mut this.io).poll_flush(cx),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
