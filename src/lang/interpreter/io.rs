@@ -40,6 +40,7 @@ where
         let num_written = bytes.len();
 
         self.dst.write_all_buf(&mut bytes).await?;
+        self.dst.flush().await?;
 
         self.n_sent_dst += num_written;
         log::trace!("Sent {num_written} bytes to dst");

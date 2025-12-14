@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -368,6 +368,14 @@ where
         self.eof_method = TunnelEofMethod::OnStreamCount(0);
     }
 
+    /// Store the latest waker so we can wake any pending tasks when async changes occur.
+    fn set_waker(&mut self, cx: &mut Context) {
+        match self.waker.as_mut() {
+            Some(w) => w.clone_from(cx.waker()),
+            None => self.waker = Some(cx.waker().clone()),
+        }
+    }
+
     fn wake(&self) {
         // Wake the waker it one exists, without dropping our handle.
         self.waker.as_ref().and_then(|w| Some(w.clone().wake()));
@@ -386,10 +394,7 @@ where
         }
 
         // Store the waker in case a new stream arrives while we are in a Pending state.
-        match self.waker.as_mut() {
-            Some(w) => w.clone_from(cx.waker()),
-            None => self.waker = Some(cx.waker().clone()),
-        }
+        self.set_waker(cx);
 
         // Read as many messages as needed to fill the ReadBuf if we can.
         while self.buffer.len() < buf.remaining() {
@@ -424,6 +429,7 @@ where
     T: Sink<TunnelMessage> + Send + Unpin,
 {
     sinks: HashMap<u64, SessionHalf<T>>,
+    active: HashSet<u64>,
     waker: Option<Waker>,
     buffer: BytesMut,
     tasks: VecDeque<Task>,
@@ -437,6 +443,7 @@ where
     fn new(task_channel: Option<Sender<AsyncTask>>) -> Self {
         Self {
             sinks: HashMap::new(),
+            active: HashSet::new(),
             waker: None,
             buffer: BytesMut::new(),
             tasks: VecDeque::new(),
@@ -463,6 +470,14 @@ where
         }
     }
 
+    /// Store the latest waker so we can wake any pending tasks when async changes occur.
+    fn set_waker(&mut self, cx: &mut Context) {
+        match self.waker.as_mut() {
+            Some(w) => w.clone_from(cx.waker()),
+            None => self.waker = Some(cx.waker().clone()),
+        }
+    }
+
     fn wake(&self) {
         // Wake the waker it one exists, without dropping our handle.
         self.waker.as_ref().and_then(|w| Some(w.clone().wake()));
@@ -471,24 +486,16 @@ where
     }
 
     fn poll_write(&mut self, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize, io::Error>> {
-        // Store the waker in case a new sink arrives while we are in a Pending state.
-        match self.waker.as_mut() {
-            Some(w) => w.clone_from(cx.waker()),
-            None => self.waker = Some(cx.waker().clone()),
-        }
+        self.set_waker(cx);
 
         // Don't accept new data until our pending task queue is ready.
-        match self.poll_tasks(cx) {
-            Poll::Ready(Ok(_)) => {}
-            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => return Poll::Pending,
-        }
+        ready!(self.poll_tasks(cx));
 
         // 'Write' all of the bytes, do not return Poll::Pending after this.
         self.buffer.extend_from_slice(buf);
 
         // Decode all available messages into our task queue.
-        loop {
+        while !self.buffer.is_empty() {
             let msg = match TunnelCodec.decode(&mut self.buffer) {
                 Ok(Some(msg)) => msg,
                 Ok(None) => break,
@@ -498,15 +505,57 @@ where
         }
 
         // Opportunistically process as many tasks as we can right now. Ignore a
-        // Poll::Pending result, we'll handle it on the next call to poll_write.
-        if let Poll::Ready(Err(e)) = self.poll_tasks(cx) {
-            Poll::Ready(Err(e))
+        // Poll::Pending result, we'll handle it on the next write/flush/shutdown.
+        let _ = self.poll_tasks(cx);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        self.set_waker(cx);
+        ready!(self.poll_tasks(cx));
+
+        for id in self.active.drain().collect::<Vec<u64>>() {
+            if let Some(sink) = self.sinks.get_mut(&id) {
+                match sink.poll_flush_unpin(cx) {
+                    Poll::Ready(Ok(_)) => {}
+                    Poll::Ready(Err(_)) => {
+                        self.sinks.remove(&id);
+                    }
+                    Poll::Pending => {
+                        self.active.insert(id);
+                    }
+                };
+            };
+        }
+
+        if self.active.is_empty() {
+            Poll::Ready(Ok(()))
         } else {
-            Poll::Ready(Ok(buf.len()))
+            Poll::Pending
         }
     }
 
-    fn poll_tasks(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        self.set_waker(cx);
+        ready!(self.poll_tasks(cx));
+
+        for id in self.sinks.keys().map(|k| *k).collect::<Vec<u64>>() {
+            if let Some(sink) = self.sinks.get_mut(&id) {
+                if let Poll::Pending = sink.poll_close_unpin(cx) {
+                    continue;
+                }
+            }
+            self.sinks.remove(&id);
+        }
+
+        if self.sinks.is_empty() {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
+    }
+
+    fn poll_tasks(&mut self, cx: &mut Context) -> Poll<()> {
         // Note: we currently use a simple queue and process tasks one at a
         // time. This guarantees that any open messages are handled before later
         // encapsulated messages. If we change the queue in the future, we need
@@ -514,76 +563,20 @@ where
         // messages as we wait for its connection to complete.
         while let Some(mut task) = self.tasks.pop_front() {
             match task.poll(cx, self.sinks.get_mut(&task.id), self.task_channel.as_mut()) {
-                Poll::Ready(Ok(_)) => {}
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Ready(Ok(_)) => {
+                    self.active.insert(task.id);
+                }
+                Poll::Ready(Err(_)) => {
+                    self.sinks.remove(&task.id);
+                }
                 Poll::Pending => {
                     self.tasks.push_front(task);
                     return Poll::Pending;
                 }
             }
         }
-        Poll::Ready(Ok(()))
+        Poll::Ready(())
     }
-
-    fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        match self.poll_tasks(cx) {
-            Poll::Ready(Ok(_)) => self.poll_all_sinks(cx, PollOperation::Flush),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-
-    fn poll_shutdown(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        match self.poll_tasks(cx) {
-            Poll::Ready(Ok(_)) => self.poll_all_sinks(cx, PollOperation::Shutdown),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-
-    fn poll_all_sinks(
-        &mut self,
-        cx: &mut Context,
-        op: PollOperation,
-    ) -> Poll<Result<(), io::Error>> {
-        // Run op on all of the inner sinks, tracking if any are pending and which have error.
-        let mut error_ids = vec![];
-        let mut has_pending = false;
-
-        for (id, sink) in self.sinks.iter_mut() {
-            let result = match op {
-                PollOperation::Flush => sink.poll_flush_unpin(cx),
-                PollOperation::Shutdown => sink.poll_close_unpin(cx),
-            };
-
-            match result {
-                Poll::Ready(Ok(_)) => {}
-                Poll::Ready(Err(e)) => {
-                    log::debug!("poll_all_sinks({op:?}): sink error: {e}");
-                    error_ids.push(*id);
-                }
-                Poll::Pending => has_pending = true,
-            }
-        }
-
-        // Drop the sinks that are in an error state.
-        for id in error_ids {
-            self.sinks.remove(&id);
-        }
-
-        // We are pending if any sink operations are pending.
-        if has_pending {
-            Poll::Pending
-        } else {
-            Poll::Ready(Ok(()))
-        }
-    }
-}
-
-#[derive(Debug)]
-enum PollOperation {
-    Flush,
-    Shutdown,
 }
 
 struct Task {
@@ -700,6 +693,7 @@ impl AsyncTask {
     }
 }
 
+// TODO: can we replace this with a PollSender?
 struct AsyncTaskSender {
     send_future: Option<Pin<Box<dyn Future<Output = Result<(), SendError<AsyncTask>>> + Send>>>,
     notify_future: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
