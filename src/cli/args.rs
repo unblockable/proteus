@@ -26,13 +26,13 @@ impl From<EnumerableLevelFilter> for LevelFilter {
     }
 }
 
+/// Proteus: establish network communication tunnels using programmable protocols.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
-/// Proteus: establish network communication tunnels using programmable protocols.
 pub struct CliArgs {
     /// Filter log messages more verbose than the given level.
     #[arg(
-        short,
+        short = 'v',
         long,
         global = true,
         value_name = "LEVEL",
@@ -53,43 +53,49 @@ pub struct CliArgs {
     pub command: Command,
 }
 
-#[derive(Subcommand)]
 /// Holds the supported subcommands and their args.
+#[derive(Subcommand)]
 pub enum Command {
-    /// Proxy network traffic through proteus tunnels using a SOCKS API.
-    Socks(SocksArgs),
-    /// Proxy network traffic through proteus tunnels using the pluggable transport v1 API.
+    /// Relay network traffic from applications through Proteus proxy server tunnels.
+    Client(ClientArgs),
+    /// Relay network traffic between Proteus clients and Internet destinations.
+    Server(ServerArgs),
+    /// Relay network traffic through proteus tunnels using the pluggable transport v1 API.
     Pt(PtArgs),
     /// Locally compile and check a protocol specification file for correctness.
     Check(CheckArgs),
 }
 
-#[derive(Args)]
-pub struct SocksArgs {
-    #[arg(required = true)]
-    pub protocol: PathBuf,
-    #[command(subcommand)]
-    pub role: Role,
-}
-
-#[derive(Subcommand)]
-/// Holds the supported subcommands and their args.
-pub enum Role {
-    Client(ClientArgs),
-    Server(ServerArgs),
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum ClientMode {
+    /// Use multiple proteus tunnels to the server (~shadowsocks).
+    Stream,
+    /// Use a single proteus tunnel to the server (~vpn).
+    Tunnel,
 }
 
 #[derive(Args)]
 pub struct ClientArgs {
-    #[arg(long, default_value = "127.0.0.1:0")]
+    /// The proteus protocol specification to use for our tunnels.
+    #[arg(required = true)]
+    pub protocol: PathBuf,
+    /// The address to listen for client application connections (use port 0 to auto-select)
+    #[arg(short, long, value_name = "ADDR:PORT", default_value = "127.0.0.1:0")]
     pub listen: String,
-    #[arg(long, required = true)]
+    /// The address of the proteus proxy server to which we connect our tunnels.
+    #[arg(short, long, value_name = "ADDR:PORT", required = true)]
     pub connect: String,
+    #[arg(short, long, default_value = "tunnel")]
+    pub mode: ClientMode,
 }
 
 #[derive(Args)]
 pub struct ServerArgs {
-    #[arg(long, default_value = "127.0.0.1:0")]
+    /// The proteus protocol specification to use for our tunnels.
+    #[arg(required = true)]
+    pub protocol: PathBuf,
+    /// The address to listen for proteus client connections (use port 0 to auto-select)
+    #[arg(short, long, value_name = "ADDR:PORT", default_value = "127.0.0.1:0")]
     pub listen: String,
 }
 

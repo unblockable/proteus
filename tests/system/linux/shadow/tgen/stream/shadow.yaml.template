@@ -41,7 +41,7 @@ hosts:
     network_node_id: 0
     processes:
     - path: ${PROTEUSBINPATH}
-      args: --log-level trace client --listen 127.0.0.1:1080 --connect 100.0.0.2:443 --mode tunnel ${PSFPATH}
+      args: --log-level trace client --listen 127.0.0.1:1080 --connect 100.0.0.2:443 --mode stream ${PSFPATH}
       start_time: 60
       expected_final_state: running
     - path: tgen

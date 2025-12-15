@@ -12,7 +12,7 @@ test_each_path! {
 }
 
 fn run_test([psf_filepath]: [&Path; 1]) {
-    let in_dir = PathBuf::from("tests/system/linux/shadow/tgen/tunnel");
+    let in_dir = PathBuf::from("tests/system/linux/shadow/tgen/stream");
     let out_dir = super::initialize_test_directory(&in_dir, psf_filepath);
     super::run_shadow_and_assert_result(&out_dir);
 }

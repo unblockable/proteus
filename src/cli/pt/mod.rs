@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::{io, process};
 
 use control::PtLogLevel;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::args::PtArgs;
@@ -11,7 +10,6 @@ use crate::cli::pt::config::{
 };
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
-use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks::address::Socks5Target;
 use crate::net::proto::{BytesSession, socks};
@@ -169,7 +167,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 let mut app: TunnelClient<BytesSession<_, _>> =
                     TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
                 app.add_session(app_src, app_dst, None).await;
-                run_interpreter(net.clone(), net, app.clone(), app, client_spec).await;
+                super::run_interpreter(net.clone(), net, app.clone(), app, client_spec).await;
             } else {
                 // Use the TcpStream io directly without wrappers.
                 match TcpConnector::default().connect(target.clone()).await {
@@ -178,7 +176,8 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                         // To isolate testing the channel without a tunnel, uncomment this:
                         // let c = Channel::connected(net_src, net_dst, name);
                         // let (net_src, net_dst) = (c.clone(), c);
-                        run_interpreter(net_src, net_dst, app_src, app_dst, client_spec).await;
+                        super::run_interpreter(net_src, net_dst, app_src, app_dst, client_spec)
+                            .await;
                     }
                     Err(e) => {
                         log::warn!("Failed to connect to Socks5 proxy target {target}: {e}",);
@@ -264,34 +263,17 @@ where
         let app: TunnelServer<BytesSession<_, _>, _> =
             TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector);
         let net = Channel::connected(net_src, net_dst, peer_name);
-        run_interpreter(net.clone(), net, app.clone(), app, server_spec).await;
+        super::run_interpreter(net.clone(), net, app.clone(), app, server_spec).await;
     } else {
         // Use the TcpStream io directly without wrappers.
         match TcpConnector::default().connect(target.clone()).await {
             Ok((app_src, app_dst, name)) => {
                 log::debug!("Successfully connected to forward target: {name}");
-                run_interpreter(net_src, net_dst, app_src, app_dst, server_spec).await;
+                super::run_interpreter(net_src, net_dst, app_src, app_dst, server_spec).await;
             }
             Err(e) => {
                 log::warn!("Failed to connect to configured forward target {target}: {e}",);
             }
-        }
-    }
-}
-
-async fn run_interpreter(
-    net_src: impl AsyncRead + Unpin,
-    net_dst: impl AsyncWrite + Unpin,
-    app_src: impl AsyncRead + Unpin,
-    app_dst: impl AsyncWrite + Unpin,
-    protocol_spec: impl TaskProvider + Send + Clone,
-) {
-    match Interpreter::run(net_src, net_dst, app_src, app_dst, protocol_spec).await {
-        (Ok(_), Ok(_)) => log::debug!("Tunnel protocol succeeded",),
-        (Ok(_), Err(e)) => log::debug!("Tunnel protocol failed: app-to-net: {e}",),
-        (Err(e), Ok(_)) => log::debug!("Tunnel protocol failed: net-to-app: {e}",),
-        (Err(e1), Err(e2)) => {
-            log::debug!("Tunnel protocol failed: app-to-net: {e1}, net-to-app: {e2}",)
         }
     }
 }
