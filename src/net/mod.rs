@@ -20,6 +20,8 @@ pub use tunnel::{TunnelClient, TunnelEofMethod, TunnelServer};
 
 pub const CHUNK_SIZE: usize = 2usize.pow(14u32); // 16 KiB
 
+type ConnectResult<R, W> = io::Result<(R, W, String)>;
+
 /// A trait for types that can asynchronously establish a connection.
 pub trait AsyncConnect {
     /// The reader associated with the established connection.
@@ -36,7 +38,7 @@ pub trait AsyncConnect {
         self: Pin<&mut Self>,
         cx: &mut Context,
         target: Socks5Target,
-    ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf, String)>>;
+    ) -> Poll<ConnectResult<Self::ReadHalf, Self::WriteHalf>>;
 }
 
 /// An extension trait for `AsyncConnect` that provides an `async` method.
@@ -44,7 +46,8 @@ pub trait AsyncConnectExt: AsyncConnect + AsMut<Self> + Send + Unpin {
     fn connect(
         &mut self,
         target: Socks5Target,
-    ) -> impl Future<Output = io::Result<(Self::ReadHalf, Self::WriteHalf, String)>> + Send {
+    ) -> impl Future<Output = ConnectResult<Self::ReadHalf, Self::WriteHalf>> + Send {
+        #[allow(clippy::useless_asref)]
         poll_fn(move |cx| Pin::new(self.as_mut()).poll_connect(cx, target.clone()))
     }
 }
@@ -55,11 +58,11 @@ impl<T: AsyncConnect + AsMut<Self> + Send + Unpin> AsyncConnectExt for T {}
 pub fn fmt_stream_name(stream: &TcpStream) -> String {
     let peer = match stream.peer_addr() {
         Ok(addr) => format!("{addr}"),
-        Err(_) => format!("unknown"),
+        Err(_) => "unknown".to_string(),
     };
     let local = match stream.local_addr() {
         Ok(addr) => format!("{addr}"),
-        Err(_) => format!("unknown"),
+        Err(_) => "unknown".to_string(),
     };
     format!("[{local}]->[{peer}]")
 }

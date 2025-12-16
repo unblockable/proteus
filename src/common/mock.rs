@@ -321,7 +321,7 @@ enum MockConnectorState {
 impl Clone for MockConnectorState {
     fn clone(&self) -> Self {
         if let MockConnectorState::Initial(duration) = self {
-            MockConnectorState::Initial(duration.clone())
+            MockConnectorState::Initial(*duration)
         } else {
             MockConnectorState::Initial(None)
         }

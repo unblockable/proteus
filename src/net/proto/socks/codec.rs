@@ -67,23 +67,19 @@ impl Decoder for Socks5Codec {
         let mut reader = Cursor::new(src as &BytesMut);
 
         let maybe_msg = match expected_msg_kind {
-            MessageKind::Greeting => {
-                Socks5Codec::decode_greeting(&mut reader)?.map(|x| Message::from(x))
-            }
-            MessageKind::Choice => {
-                Socks5Codec::decode_choice(&mut reader)?.map(|x| Message::from(x))
-            }
+            MessageKind::Greeting => Socks5Codec::decode_greeting(&mut reader)?.map(Message::from),
+            MessageKind::Choice => Socks5Codec::decode_choice(&mut reader)?.map(Message::from),
             MessageKind::UserPassAuthRequest => {
-                Socks5Codec::decode_user_pass_auth_request(&mut reader)?.map(|x| Message::from(x))
+                Socks5Codec::decode_user_pass_auth_request(&mut reader)?.map(Message::from)
             }
             MessageKind::UserPassAuthResponse => {
-                Socks5Codec::decode_user_pass_auth_response(&mut reader)?.map(|x| Message::from(x))
+                Socks5Codec::decode_user_pass_auth_response(&mut reader)?.map(Message::from)
             }
             MessageKind::ConnectRequest => {
-                Socks5Codec::decode_connect_request(&mut reader)?.map(|x| Message::from(x))
+                Socks5Codec::decode_connect_request(&mut reader)?.map(Message::from)
             }
             MessageKind::ConnectResponse => {
-                Socks5Codec::decode_connect_response(&mut reader)?.map(|x| Message::from(x))
+                Socks5Codec::decode_connect_response(&mut reader)?.map(Message::from)
             }
         };
 
@@ -391,8 +387,8 @@ impl Socks5Codec {
                 }
 
                 let mut seg = [0u16; 8];
-                for i in 0..8 {
-                    seg[i] = src.get_u16();
+                for item in &mut seg {
+                    *item = src.get_u16();
                 }
 
                 let addr = Ipv6Addr::new(

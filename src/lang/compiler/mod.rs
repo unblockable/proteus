@@ -127,16 +127,16 @@ impl TaskGraphImpl {
     fn init_task(&self) -> Task {
         let mut ins: Vec<InstructionV1> = vec![];
 
-        if let Some(ref crypto_spec) = self.psf.crypto_spec {
-            if let Some(ref password) = crypto_spec.password {
-                ins.push(
-                    InitFixedSharedKeyArgs {
-                        password: password.0.clone(),
-                        role: self.my_role,
-                    }
-                    .into(),
-                );
-            }
+        if let Some(ref crypto_spec) = self.psf.crypto_spec
+            && let Some(ref password) = crypto_spec.password
+        {
+            ins.push(
+                InitFixedSharedKeyArgs {
+                    password: password.0.clone(),
+                    role: self.my_role,
+                }
+                .into(),
+            );
         }
 
         Task {
@@ -506,11 +506,11 @@ fn compile_message_to_instrs(
         let id = semantic.0;
         let fs = semantic.1;
 
-        if let crate::lang::types::FieldSemantic::Pubkey(enc) = fs {
-            if has_pubkey.is_none() {
-                has_pubkey = Some(id.clone());
-                pubkey_enc = Some(*enc);
-            }
+        if has_pubkey.is_none()
+            && let crate::lang::types::FieldSemantic::Pubkey(enc) = fs
+        {
+            has_pubkey = Some(id.clone());
+            pubkey_enc = Some(*enc);
         }
     }
 

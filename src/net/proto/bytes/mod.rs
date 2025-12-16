@@ -92,7 +92,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: TunnelMessage) -> Result<(), Self::Error> {
-        if let Some(_) = self.buf {
+        if self.buf.is_some() {
             Err(io::ErrorKind::WouldBlock.into())
         } else {
             if let TunnelMessageKind::Encapsulated(bytes) = item.kind {

@@ -493,11 +493,11 @@ impl AbstractFormat {
     pub fn concretize(mut self, sizes: &Vec<(Identifier, usize)>) -> ConcreteFormat {
         for (id, size) in sizes {
             for field in self.format.fields.iter_mut() {
-                if id == &field.name {
-                    if let Array::Dynamic(_) = &field.dtype {
-                        field.dtype =
-                            PrimitiveArray(PrimitiveType::Numeric(NumericType::U8), *size).into()
-                    }
+                if id == &field.name
+                    && let Array::Dynamic(_) = &field.dtype
+                {
+                    field.dtype =
+                        PrimitiveArray(PrimitiveType::Numeric(NumericType::U8), *size).into()
                 }
             }
         }

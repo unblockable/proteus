@@ -10,7 +10,7 @@ fn initialize_test_directory(in_dir: &PathBuf, psf_filepath: &Path) -> PathBuf {
 
     // Set up our test dir.
     let in_dir_parent = in_dir.parent().unwrap().display();
-    let out_dir = PathBuf::from("target").join(&in_dir).join(test_name);
+    let out_dir = PathBuf::from("target").join(in_dir).join(test_name);
 
     // We need to write the proteus bin and PSF paths into the config files.
     let bin_path = PathBuf::from(test_bin::get_test_bin("proteus").get_program());
@@ -48,7 +48,7 @@ fn run_shadow_and_assert_result(run_dir: &Path) {
     // don't want them all to pin to the same set of CPUs.
     assert!(
         super::run_shadow(
-            &run_dir,
+            run_dir,
             ["--parallelism=4", "--use-cpu-pinning=false", "shadow.yaml"]
         )
         .success()

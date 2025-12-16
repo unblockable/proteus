@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::pin::Pin;
@@ -378,7 +379,9 @@ where
 
     fn wake(&self) {
         // Wake the waker it one exists, without dropping our handle.
-        self.waker.as_ref().and_then(|w| Some(w.clone().wake()));
+        if let Some(w) = self.waker.as_ref() {
+            w.wake_by_ref()
+        }
         // Instead, we could wake the waker and drop the handle to prevent multiple wake-ups.
         // self.waker.take().map(|w| w.wake());
     }
@@ -407,7 +410,7 @@ where
             }
         }
 
-        if self.buffer.len() > 0 {
+        if !self.buffer.is_empty() {
             // We may or may not be able to fill the ReadBuf, but we provide what we have.
             let at = self.buffer.len().min(buf.remaining());
             let bytes = self.buffer.split_to(at).freeze();
@@ -462,8 +465,8 @@ where
     }
 
     fn add(&mut self, id: u64, sink: SessionHalf<T>) {
-        if !self.sinks.contains_key(&id) {
-            self.sinks.insert(id, sink);
+        if let Entry::Vacant(e) = self.sinks.entry(id) {
+            e.insert(sink);
             self.wake();
         } else {
             log::warn!("Cannot add sink at existing session id {id}");
@@ -480,7 +483,9 @@ where
 
     fn wake(&self) {
         // Wake the waker it one exists, without dropping our handle.
-        self.waker.as_ref().and_then(|w| Some(w.clone().wake()));
+        if let Some(w) = self.waker.as_ref() {
+            w.wake_by_ref()
+        }
         // Instead, we could wake the waker and drop the handle to prevent multiple wake-ups.
         // maybe_waker.take().map(|w| w.wake());
     }
@@ -539,11 +544,11 @@ where
         self.set_waker(cx);
         ready!(self.poll_tasks(cx));
 
-        for id in self.sinks.keys().map(|k| *k).collect::<Vec<u64>>() {
-            if let Some(sink) = self.sinks.get_mut(&id) {
-                if let Poll::Pending = sink.poll_close_unpin(cx) {
-                    continue;
-                }
+        for id in self.sinks.keys().copied().collect::<Vec<u64>>() {
+            if let Some(sink) = self.sinks.get_mut(&id)
+                && sink.poll_close_unpin(cx).is_pending()
+            {
+                continue;
             }
             self.sinks.remove(&id);
         }
@@ -694,8 +699,9 @@ impl AsyncTask {
 }
 
 // TODO: can we replace this with a PollSender?
+type SendResult = Result<(), SendError<AsyncTask>>;
 struct AsyncTaskSender {
-    send_future: Option<Pin<Box<dyn Future<Output = Result<(), SendError<AsyncTask>>> + Send>>>,
+    send_future: Option<Pin<Box<dyn Future<Output = SendResult> + Send>>>,
     notify_future: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
@@ -773,21 +779,21 @@ mod tests {
         all_streams.push(stream1);
         assert_eq!(all_streams.len(), 1);
 
-        assert!(matches!(all_streams.next().await, Some(_)));
+        assert!(all_streams.next().await.is_some());
         assert_eq!(all_streams.len(), 1);
-        assert!(matches!(all_streams.next().await, None));
+        assert!(all_streams.next().await.is_none());
         assert_eq!(all_streams.len(), 0);
 
-        assert!(matches!(all_streams.next().await, None));
-        assert!(matches!(all_streams.next().await, None));
-        assert!(matches!(all_streams.next().await, None));
+        assert!(all_streams.next().await.is_none());
+        assert!(all_streams.next().await.is_none());
+        assert!(all_streams.next().await.is_none());
 
         all_streams.push(stream2);
         assert_eq!(all_streams.len(), 1);
 
-        assert!(matches!(all_streams.next().await, Some(_)));
+        assert!(all_streams.next().await.is_some());
         assert_eq!(all_streams.len(), 1);
-        assert!(matches!(all_streams.next().await, None));
+        assert!(all_streams.next().await.is_none());
         assert_eq!(all_streams.len(), 0);
     }
 
