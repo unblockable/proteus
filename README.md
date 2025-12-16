@@ -73,7 +73,7 @@ following publication:
 
 Cite our work:
 
-```
+```bibtex
 @inproceedings{proteus-foci2023,
   title = {Proteus: Programmable Protocols for Censorship Circumvention},
   author = {Wails, Ryan and Jansen, Rob and Johnson, Aaron and Sherr, Micah},
