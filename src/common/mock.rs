@@ -4,11 +4,6 @@ use std::io;
 use bytes::Bytes;
 use rand::distributions::{Alphanumeric, DistString};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-use crate::lang::interpreter::Interpreter;
-use crate::lang::ir::bridge::TaskProvider;
-use crate::net::CHUNK_SIZE;
-
 #[cfg(test)]
 use {
     crate::net::AsyncConnect,
@@ -20,6 +15,10 @@ use {
     std::time::Duration,
     tokio::time::{Sleep, sleep},
 };
+
+use crate::lang::interpreter::Interpreter;
+use crate::lang::ir::bridge::TaskProvider;
+use crate::net::CHUNK_SIZE;
 
 #[cfg(test)]
 pub fn simplex(max_buf_size: usize) -> (impl AsyncRead, impl AsyncWrite) {
@@ -414,10 +413,9 @@ impl AsyncConnect for MockConnector {
 
 #[cfg(test)]
 pub mod tests {
+    use super::*;
     use crate::common::mock;
     use crate::net::AsyncConnectExt;
-
-    use super::*;
 
     async fn test_simple_pair(client: MockIo, server: MockIo, len: usize) {
         let client = MockApplication::new(len, client);

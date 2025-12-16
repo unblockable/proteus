@@ -60,7 +60,12 @@ impl TaskGraphImpl {
                 // This adjusts read app instructions during the handshake phase to not necessarily
                 // require bytes
                 for i in &mut ins {
-                    if let InstructionV1::Read(ReadArgs { which: ReadWhich::App, how: x, .. }) = i {
+                    if let InstructionV1::Read(ReadArgs {
+                        which: ReadWhich::App,
+                        how: x,
+                        ..
+                    }) = i
+                    {
                         *x = ReadHow::TryRead;
                     }
                 }

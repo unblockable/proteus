@@ -152,10 +152,9 @@ mod tests {
 
     use bytes::Bytes;
 
+    use super::*;
     use crate::common::mock;
     use crate::net::proto::socks::address::Socks5Address;
-
-    use super::*;
 
     fn assert_encode_decode(msg: TunnelMessage) {
         let mut buf = BytesMut::new();
