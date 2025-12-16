@@ -1,5 +1,3 @@
-use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use test_each_file::test_each_path;
