@@ -1,22 +1,19 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
+use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll, Waker, ready};
 
 use bytes::BytesMut;
 use futures::stream::{SelectAll, StreamExt};
-use futures::{FutureExt, Sink, SinkExt, Stream};
+use futures::{Sink, SinkExt, Stream};
 use rand::RngCore;
 use rand::rngs::ThreadRng;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::Notify;
-use tokio::sync::mpsc::error::SendError;
-use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::common::sync::PollMutex;
+use crate::common::sync::{PollMutex, PollTaskChannel, PollTaskReceiver, PollTaskSender};
 use crate::net::AsyncConnect;
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 use crate::net::proto::tunnel::codec::TunnelCodec;
@@ -197,7 +194,7 @@ where
     C: AsMut<C> + Clone + Send + Unpin + 'static,
 {
     pub fn new(eof_method: TunnelEofMethod, connector: C) -> Self {
-        let (task_tx, task_rx) = mpsc::channel(1_000);
+        let (task_tx, task_rx) = PollTaskChannel::channel::<AsyncTask>(1_000);
 
         let server = Self {
             shared_reader: PollMutex::new(TunnelReader::new(eof_method)),
@@ -211,24 +208,19 @@ where
 
     // Asynchronously handle tasks that require communication across our inner
     // reader and writer, such as open and close tasks from the client side.
-    fn run_background_task_manager(mut self, mut task_chan: Receiver<AsyncTask>) {
+    fn run_background_task_manager(mut self, mut task_chan: PollTaskReceiver<AsyncTask>) {
         tokio::spawn(async move {
             while let Some(task) = task_chan.recv().await {
-                match task {
-                    AsyncTask::Open((notify, id, target)) => {
+                match task.deref() {
+                    AsyncTask::Open((id, target)) => {
                         let connector = self.connector.clone();
-                        let session = Session::<S>::from_connector(id, connector, target);
+                        let session = Session::<S>::from_connector(*id, connector, target.clone());
                         let (stream, sink) = session.into_split();
 
                         self.shared_reader.lock().await.add(stream);
-                        self.shared_writer.lock().await.add(id, sink);
-
-                        notify.notify_one();
+                        self.shared_writer.lock().await.add(*id, sink);
                     }
-                    AsyncTask::Close(notify) => {
-                        self.close().await;
-                        notify.notify_one();
-                    }
+                    AsyncTask::Close => self.close().await,
                 }
             }
         });
@@ -436,14 +428,14 @@ where
     waker: Option<Waker>,
     buffer: BytesMut,
     tasks: VecDeque<Task>,
-    task_channel: Option<Sender<AsyncTask>>,
+    task_channel: Option<PollTaskSender<AsyncTask>>,
 }
 
 impl<T> TunnelWriter<T>
 where
     T: Sink<TunnelMessage, Error = io::Error> + Send + Unpin,
 {
-    fn new(task_channel: Option<Sender<AsyncTask>>) -> Self {
+    fn new(task_channel: Option<PollTaskSender<AsyncTask>>) -> Self {
         Self {
             sinks: HashMap::new(),
             active: HashSet::new(),
@@ -591,8 +583,17 @@ struct Task {
 
 enum TaskState {
     Unprocessed(TunnelMessage),
-    ChannelSend(AsyncTaskSender),
+    ChannelReserve(AsyncTask),
+    ChannelSend(AsyncTask),
+    ChannelWait,
+    SinkReady(TunnelMessage),
     SinkSend(TunnelMessage),
+}
+
+#[derive(Debug)]
+enum AsyncTask {
+    Open((u64, Socks5Target)),
+    Close,
 }
 
 impl Task {
@@ -607,142 +608,83 @@ impl Task {
         &mut self,
         cx: &mut Context,
         mut sink: Option<&mut SessionHalf<T>>,
-        mut channel: Option<&mut Sender<AsyncTask>>,
+        mut channel: Option<&mut PollTaskSender<AsyncTask>>,
     ) -> Poll<Result<(), io::Error>> {
         while let Some(state) = self.state.take() {
             match state {
                 TaskState::Unprocessed(msg) => {
                     match &msg.kind {
                         TunnelMessageKind::Open(target) => {
-                            if let Some(tx) = channel {
-                                let task = AsyncTask::open(msg.session_id, target);
-                                let sender = AsyncTaskSender::new(tx.clone(), task);
-                                self.state = Some(TaskState::ChannelSend(sender));
-                                channel = Some(tx);
-                            } else {
-                                log::debug!("Missing channel for open task, dropping");
-                            }
+                            let atask = AsyncTask::Open((msg.session_id, target.clone()));
+                            self.state = Some(TaskState::ChannelReserve(atask));
                         }
                         TunnelMessageKind::Encapsulated(_) => {
-                            self.state = Some(TaskState::SinkSend(msg));
+                            self.state = Some(TaskState::SinkReady(msg));
                         }
                         TunnelMessageKind::Close => {
-                            if let Some(tx) = channel {
-                                let task = AsyncTask::close();
-                                let sender = AsyncTaskSender::new(tx.clone(), task);
-                                self.state = Some(TaskState::ChannelSend(sender));
-                                channel = Some(tx);
-                            } else {
-                                log::debug!("Missing channel for close task, dropping");
-                            }
+                            let atask = AsyncTask::Close;
+                            self.state = Some(TaskState::ChannelReserve(atask));
                         }
                     };
                 }
-                TaskState::ChannelSend(mut sender) => match sender.poll(cx) {
-                    Poll::Ready(Ok(_)) => {}
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Pending => {
-                        self.state = Some(TaskState::ChannelSend(sender));
-                        return Poll::Pending;
-                    }
-                },
-                TaskState::SinkSend(msg) => {
-                    if let Some(tx) = sink {
-                        match tx.poll_ready_unpin(cx) {
-                            Poll::Ready(Ok(_)) => match tx.start_send_unpin(msg) {
-                                Ok(_) => {}
-                                Err(e) => return Poll::Ready(Err(e)),
-                            },
-                            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                            Poll::Pending => {
-                                self.state = Some(TaskState::SinkSend(msg));
-                                return Poll::Pending;
-                            }
+                TaskState::ChannelReserve(atask) => match channel.as_mut() {
+                    Some(tx) => match tx.poll_reserve(cx) {
+                        Poll::Pending => {
+                            self.state = Some(TaskState::ChannelReserve(atask));
+                            return Poll::Pending;
                         }
-                        sink = Some(tx);
-                    } else {
-                        log::debug!(
-                            "Missing sink for message from session {}, dropping",
-                            msg.session_id
-                        );
-                    }
-                }
+                        Poll::Ready(Ok(_)) => self.state = Some(TaskState::ChannelSend(atask)),
+                        Poll::Ready(Err(_)) => {
+                            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+                        }
+                    },
+                    None => log::debug!("Missing channel for async task, dropping"),
+                },
+                TaskState::ChannelSend(atask) => match channel.as_mut() {
+                    Some(tx) => match tx.send(atask) {
+                        Ok(_) => self.state = Some(TaskState::ChannelWait),
+                        Err(_) => {
+                            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+                        }
+                    },
+                    None => log::debug!("Missing channel for async task, dropping"),
+                },
+                TaskState::ChannelWait => match channel.as_mut() {
+                    Some(tx) => match tx.poll_wait(cx) {
+                        Poll::Pending => {
+                            self.state = Some(TaskState::ChannelWait);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(_) => {}
+                    },
+                    None => log::debug!("Missing channel for async task, dropping"),
+                },
+                TaskState::SinkReady(msg) => match sink.as_mut() {
+                    Some(tx) => match tx.poll_ready_unpin(cx) {
+                        Poll::Pending => {
+                            self.state = Some(TaskState::SinkReady(msg));
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Ok(_)) => self.state = Some(TaskState::SinkSend(msg)),
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    },
+                    None => log::debug!(
+                        "Missing sink for message from session {}, dropping",
+                        msg.session_id
+                    ),
+                },
+                TaskState::SinkSend(msg) => match sink.as_mut() {
+                    Some(tx) => match tx.start_send_unpin(msg) {
+                        Ok(_) => {}
+                        Err(e) => return Poll::Ready(Err(e)),
+                    },
+                    None => log::debug!(
+                        "Missing sink for message from session {}, dropping",
+                        msg.session_id
+                    ),
+                },
             }
         }
-        Poll::Ready(Ok(()))
-    }
-}
-
-#[derive(Debug)]
-enum AsyncTask {
-    Open((Arc<Notify>, u64, Socks5Target)),
-    Close(Arc<Notify>),
-}
-
-impl AsyncTask {
-    fn open(id: u64, target: &Socks5Target) -> Self {
-        let notify = Arc::new(Notify::new());
-        Self::Open((notify, id, target.clone()))
-    }
-
-    fn close() -> Self {
-        let notify = Arc::new(Notify::new());
-        Self::Close(notify)
-    }
-
-    fn clone_notify(&self) -> Arc<Notify> {
-        match self {
-            AsyncTask::Open((notify, _, _)) => notify.clone(),
-            AsyncTask::Close(notify) => notify.clone(),
-        }
-    }
-}
-
-// TODO: can we replace this with a PollSender?
-type SendResult = Result<(), SendError<AsyncTask>>;
-struct AsyncTaskSender {
-    send_future: Option<Pin<Box<dyn Future<Output = SendResult> + Send>>>,
-    notify_future: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
-}
-
-impl AsyncTaskSender {
-    fn new(channel: Sender<AsyncTask>, task: AsyncTask) -> Self {
-        let notify = task.clone_notify();
-        let notify_future = async move { notify.notified().await };
-
-        let send_future = async move { channel.send(task).await };
-
-        Self {
-            send_future: Some(Box::pin(send_future)),
-            notify_future: Some(Box::pin(notify_future)),
-        }
-    }
-
-    fn poll(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        // Check that it successfully finished sending.
-        if let Some(mut future) = self.send_future.take() {
-            match future.poll_unpin(cx) {
-                Poll::Ready(Ok(_)) => {}
-                Poll::Ready(Err(_e)) => return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())),
-                Poll::Pending => {
-                    self.send_future = Some(future);
-                    return Poll::Pending;
-                }
-            }
-        }
-
-        // Check that the task was successfully asynchronously executed.
-        if let Some(mut future) = self.notify_future.take() {
-            match future.poll_unpin(cx) {
-                Poll::Ready(_) => {}
-                Poll::Pending => {
-                    self.notify_future = Some(future);
-                    return Poll::Pending;
-                }
-            }
-        }
-
-        // Ready!
         Poll::Ready(Ok(()))
     }
 }

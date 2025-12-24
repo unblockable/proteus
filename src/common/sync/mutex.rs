@@ -115,7 +115,6 @@ mod tests {
         mutex.lock().await.push(1);
     }
 
-    // #[tokio::test]
     #[tokio::test(flavor = "multi_thread", worker_threads = 1000)]
     async fn poll_mutex_parallel_lock() {
         let n = 1000;
