@@ -1,7 +1,7 @@
 use std::io::{self, Cursor};
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll, Waker, ready};
 
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Sink, Stream};
@@ -87,8 +87,8 @@ impl<W: AsyncWrite + Send + Unpin> BytesSink<W> {
 impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
     type Error = io::Error;
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.get_mut().poll_write(cx)
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.as_mut().poll_write(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: TunnelMessage) -> Result<(), Self::Error> {
@@ -99,7 +99,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
                 self.buf = Some(Cursor::new(bytes));
                 // This is best-effort, so it's safe to ignore pending signals.
                 let mut cx = Context::from_waker(Waker::noop());
-                if let Poll::Ready(result) = self.get_mut().poll_write(&mut cx) {
+                if let Poll::Ready(result) = self.as_mut().poll_ready(&mut cx) {
                     return result;
                 }
             }
@@ -107,21 +107,13 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        let this = self.get_mut();
-        match this.poll_write(cx) {
-            Poll::Ready(Ok(_)) => Pin::new(&mut this.io).poll_flush(cx),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
-        }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        ready!(self.as_mut().poll_ready(cx))?;
+        Pin::new(&mut self.io).poll_flush(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        let result = self.as_mut().poll_flush(cx);
-        if let Poll::Ready(Ok(_)) = result {
-            Pin::new(&mut self.io).poll_shutdown(cx)
-        } else {
-            result
-        }
+        ready!(self.as_mut().poll_flush(cx))?;
+        Pin::new(&mut self.io).poll_shutdown(cx)
     }
 }

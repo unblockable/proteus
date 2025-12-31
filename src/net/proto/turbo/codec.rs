@@ -3,10 +3,8 @@ use std::io::{self, Cursor};
 use bytes::{Buf, BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::net::proto::socks;
-use crate::net::proto::socks::address::Socks5Target;
 use crate::net::proto::turbo::message::{
-    self, Command, DataCursor, TurboMessage, Payload, Request, Response,
+    self, Command, DataCursor, Payload, Request, Response, TurboMessage,
 };
 
 pub struct TurboCodec;
@@ -18,7 +16,6 @@ impl Encoder<TurboMessage> for TurboCodec {
         let mut buf = BytesMut::new();
 
         // If we return early, the dst buffer is unmodified.
-        self.encode_id(msg.session_id, &mut buf)?;
         self.encode_cursor(msg.write, &mut buf)?;
         self.encode_cursor(msg.read, &mut buf)?;
         self.encode_command(msg.command, &mut buf)?;
@@ -41,9 +38,6 @@ impl Decoder for TurboCodec {
         let mut reader = Cursor::new(src as &BytesMut);
 
         // If we return early, the src buffer is unmodified.
-        let Some(session_id) = self.decode_id(&mut reader)? else {
-            return Ok(None);
-        };
         let Some(write) = self.decode_cursor(&mut reader)? else {
             return Ok(None);
         };
@@ -59,7 +53,6 @@ impl Decoder for TurboCodec {
         src.advance(num_consumed);
 
         Ok(Some(TurboMessage {
-            session_id,
             write,
             read,
             command,
@@ -68,20 +61,6 @@ impl Decoder for TurboCodec {
 }
 
 impl TurboCodec {
-    fn encode_id(&mut self, id: u64, dst: &mut BytesMut) -> io::Result<()> {
-        dst.reserve(8);
-        dst.put_u64(id);
-        Ok(())
-    }
-
-    fn decode_id(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<u64>> {
-        if src.remaining() >= 8 {
-            Ok(Some(src.get_u64()))
-        } else {
-            Ok(None)
-        }
-    }
-
     fn encode_cursor(&mut self, cursor: DataCursor, dst: &mut BytesMut) -> io::Result<()> {
         dst.reserve(8);
         dst.put_u64(cursor);
@@ -100,6 +79,7 @@ impl TurboCodec {
         let command_type = match command {
             Command::Request(_) => 0,
             Command::Response(_) => 1,
+            Command::Reset => 2,
         };
         dst.reserve(1);
         dst.put_u8(command_type);
@@ -107,6 +87,7 @@ impl TurboCodec {
         match command {
             Command::Request(request) => self.encode_request(request, dst),
             Command::Response(response) => self.encode_response(response, dst),
+            Command::Reset => Ok(())
         }
     }
 
@@ -126,6 +107,7 @@ impl TurboCodec {
                     };
                     Command::Response(response)
                 }
+                2 => Command::Reset,
                 _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
             };
             Ok(Some(command))
@@ -136,16 +118,14 @@ impl TurboCodec {
 
     fn encode_request(&mut self, request: Request, dst: &mut BytesMut) -> io::Result<()> {
         let request_type = match request {
-            Request::Open(_) => 0,
-            Request::Forward(_) => 1,
-            Request::Rewind => 2,
-            Request::Shut => 3,
+            Request::Forward(_) => 0,
+            Request::Rewind => 1,
+            Request::Shut => 2,
         };
         dst.reserve(1);
         dst.put_u8(request_type);
 
         match request {
-            Request::Open(target) => self.encode_target(target, dst),
             Request::Forward(payload) => self.encode_payload(payload, dst),
             _ => Ok(()),
         }
@@ -156,19 +136,13 @@ impl TurboCodec {
             let request_type = src.get_u8();
             let request = match request_type {
                 0 => {
-                    let Some(target) = self.decode_target(src)? else {
-                        return Ok(None);
-                    };
-                    Request::Open(target)
-                }
-                1 => {
                     let Some(payload) = self.decode_payload(src)? else {
                         return Ok(None);
                     };
                     Request::Forward(payload)
                 }
-                2 => Request::Rewind,
-                3 => Request::Shut,
+                1 => Request::Rewind,
+                2 => Request::Shut,
                 _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
             };
             Ok(Some(request))
@@ -179,10 +153,9 @@ impl TurboCodec {
 
     fn encode_response(&mut self, response: Response, dst: &mut BytesMut) -> io::Result<()> {
         let (response_type, result) = match response {
-            Response::Open(result) => (0, result),
-            Response::Forward(result) => (1, result),
-            Response::Rewind(result) => (2, result),
-            Response::Shut(result) => (3, result),
+            Response::Forward(result) => (0, result),
+            Response::Rewind(result) => (1, result),
+            Response::Shut(result) => (2, result),
         };
         dst.reserve(1);
         dst.put_u8(response_type);
@@ -198,24 +171,15 @@ impl TurboCodec {
             };
 
             let response = match response_type {
-                0 => Response::Open(result),
-                1 => Response::Forward(result),
-                2 => Response::Rewind(result),
-                3 => Response::Shut(result),
+                0 => Response::Forward(result),
+                1 => Response::Rewind(result),
+                2 => Response::Shut(result),
                 _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
             };
             Ok(Some(response))
         } else {
             Ok(None)
         }
-    }
-
-    fn encode_target(&mut self, target: Socks5Target, dst: &mut BytesMut) -> io::Result<()> {
-        socks::codec::encode_target(target, dst)
-    }
-
-    fn decode_target(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Socks5Target>> {
-        socks::codec::decode_target(src)
     }
 
     fn encode_payload(&mut self, payload: Payload, dst: &mut BytesMut) -> io::Result<()> {
@@ -273,12 +237,9 @@ impl TurboCodec {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
     use bytes::Bytes;
 
     use crate::common::mock;
-    use crate::net::proto::socks::address::Socks5Address;
 
     use super::*;
 
@@ -297,7 +258,6 @@ mod tests {
 
     fn message(command: Command) -> TurboMessage {
         TurboMessage {
-            session_id: 123456789,
             write: 123,
             read: 321,
             command,
@@ -306,22 +266,6 @@ mod tests {
 
     fn test_valid_command(command: Command) {
         assert_encode_decode(message(command));
-    }
-
-    #[test]
-    fn request_open() {
-        let addresses = vec![
-            Socks5Address::from_name(String::from("test.com")),
-            Socks5Address::from_addr(IpAddr::V4(Ipv4Addr::new(4, 3, 2, 1))),
-            Socks5Address::from_addr(IpAddr::V6(Ipv6Addr::new(8, 7, 6, 5, 4, 3, 2, 1))),
-            Socks5Address::Unknown,
-        ];
-
-        for addr in addresses {
-            test_valid_command(Command::Request(Request::Open(Socks5Target::new(
-                addr, 12345,
-            ))));
-        }
     }
 
     #[test]
@@ -339,13 +283,6 @@ mod tests {
     #[test]
     fn request_shut() {
         test_valid_command(Command::Request(Request::Shut));
-    }
-
-    #[test]
-    fn response_open() {
-        for result in [message::Result::Ok, message::Result::Error] {
-            test_valid_command(Command::Response(Response::Open(result)));
-        }
     }
 
     #[test]
@@ -367,6 +304,11 @@ mod tests {
         for result in [message::Result::Ok, message::Result::Error] {
             test_valid_command(Command::Response(Response::Shut(result)));
         }
+    }
+
+    #[test]
+    fn reset() {
+        test_valid_command(Command::Reset);
     }
 
     #[test]
@@ -398,25 +340,25 @@ mod tests {
 
     #[test]
     fn invalid_command() {
-        // The command type is the 25th byte (index 24).
-        test_invalid(Command::Request(Request::Shut), 24);
+        // The command type is the 17th byte (index 16).
+        test_invalid(Command::Request(Request::Shut), 16);
     }
 
     #[test]
     fn invalid_request() {
-        // The request type is the 26th byte (index 25).
-        test_invalid(Command::Request(Request::Shut), 25);
+        // The request type is the 18th byte (index 17).
+        test_invalid(Command::Request(Request::Shut), 17);
     }
 
     #[test]
     fn invalid_response() {
-        // The response type is the 26th byte (index 25).
-        test_invalid(Command::Response(Response::Shut(message::Result::Ok)), 25);
+        // The response type is the 18th byte (index 17).
+        test_invalid(Command::Response(Response::Shut(message::Result::Ok)), 17);
     }
 
     #[test]
     fn invalid_response_result() {
-        // The response result type is the 27th byte (index 26).
-        test_invalid(Command::Response(Response::Shut(message::Result::Ok)), 26);
+        // The response result type is the 19th byte (index 18).
+        test_invalid(Command::Response(Response::Shut(message::Result::Ok)), 18);
     }
 }
