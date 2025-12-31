@@ -690,7 +690,7 @@ impl Task {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::time::Duration;
 
     use futures::StreamExt;
@@ -700,11 +700,10 @@ mod tests {
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
     use crate::lang::Role;
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
-    use crate::net::proto::BytesSession;
     use crate::net::proto::tunnel::message::TunnelMessage;
     use crate::net::session::SessionBuilder;
     use crate::net::tunnel::TunnelEofMethod;
-    use crate::net::{AsyncConnectExt, TunnelClient, TunnelServer};
+    use crate::net::{AsyncConnect, AsyncConnectExt, TunnelClient, TunnelServer};
 
     const TEST_ID: u64 = 1234567890;
 
@@ -763,7 +762,7 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    enum MockIoKind {
+    pub enum MockIoKind {
         Direct,
         Interpreter,
     }
@@ -773,14 +772,20 @@ mod tests {
         Disconnected(MockConnector),
     }
 
-    async fn connected_client(
+    async fn connected_client<S>(
         io_kind: MockIoKind,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (anyhow::Result<()>, anyhow::Result<()>)
+    where
+        S: SessionBuilder<
+                Message = TunnelMessage,
+                ReadHalf = <MockConnector as AsyncConnect>::ReadHalf,
+                WriteHalf = <MockConnector as AsyncConnect>::WriteHalf,
+            > + 'static,
+    {
         let (src, dst) = (proxy.app.reader, proxy.app.writer);
 
-        let mut tunnel: TunnelClient<BytesSession<_, _>> =
-            TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
+        let mut tunnel: TunnelClient<S> = TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
 
         let target = MockConnector::default_target();
         tunnel
@@ -798,14 +803,21 @@ mod tests {
         }
     }
 
-    async fn server(
+    async fn server<S>(
         args: (MockIoKind, MockSocketKind),
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (anyhow::Result<()>, anyhow::Result<()>)
+    where
+        S: SessionBuilder<
+                Message = TunnelMessage,
+                ReadHalf = <MockConnector as AsyncConnect>::ReadHalf,
+                WriteHalf = <MockConnector as AsyncConnect>::WriteHalf,
+            > + 'static,
+    {
         let (io_kind, sock_kind) = args;
         let (src, dst) = (proxy.app.reader, proxy.app.writer);
 
-        let tunnel: TunnelServer<BytesSession<_, _>, _> = match sock_kind {
+        let tunnel: TunnelServer<S, MockConnector> = match sock_kind {
             MockSocketKind::Connected => {
                 // We are connected and want to end when this connection is done.
                 let mut tunnel =
@@ -831,39 +843,32 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn proxy_network_connected_tunnel_direct_io() {
-        // let _ = env_logger::try_init();
-        for len in mock::payload_len_iter() {
-            MockProxyNetwork::new(len)
-                .run_with_forwarder(
-                    MockIoKind::Direct,
-                    &connected_client,
-                    (MockIoKind::Direct, MockSocketKind::Connected),
-                    &server,
-                )
-                .await
-                .assert(len);
-        }
+    pub async fn proxy_network_connected_helper<S>(io_kind: MockIoKind, len: usize) -> mock::Result
+    where
+        S: SessionBuilder<
+                Message = TunnelMessage,
+                ReadHalf = <MockConnector as AsyncConnect>::ReadHalf,
+                WriteHalf = <MockConnector as AsyncConnect>::WriteHalf,
+            > + 'static,
+    {
+        MockProxyNetwork::new(len)
+            .run_with_forwarder(
+                io_kind,
+                &connected_client::<S>,
+                (io_kind, MockSocketKind::Connected),
+                &server::<S>,
+            )
+            .await
     }
 
-    #[tokio::test]
-    async fn proxy_network_connected_tunnel_interpreter_io() {
-        // let _ = env_logger::try_init();
-        for len in mock::payload_len_iter() {
-            MockProxyNetwork::new(len)
-                .run_with_forwarder(
-                    MockIoKind::Interpreter,
-                    &connected_client,
-                    (MockIoKind::Interpreter, MockSocketKind::Connected),
-                    &server,
-                )
-                .await
-                .assert(len);
-        }
-    }
-
-    async fn proxy_network_disconnected_helper(io_kind: MockIoKind, len: usize) -> mock::Result {
+    pub async fn proxy_network_disconnected_helper<S>(io_kind: MockIoKind, len: usize) -> mock::Result
+    where
+        S: SessionBuilder<
+                Message = TunnelMessage,
+                ReadHalf = <MockConnector as AsyncConnect>::ReadHalf,
+                WriteHalf = <MockConnector as AsyncConnect>::WriteHalf,
+            > + 'static,
+    {
         let mut mpn = MockProxyNetwork::new(len);
 
         // The connector will hook up the server side proxy to a new remote socket.
@@ -877,30 +882,10 @@ mod tests {
         // Now we can run the test.
         mpn.run_with_forwarder(
             io_kind,
-            &connected_client,
+            &connected_client::<S>,
             (io_kind, MockSocketKind::Disconnected(conn)),
-            &server,
+            &server::<S>,
         )
         .await
-    }
-
-    #[tokio::test]
-    async fn proxy_network_disconnected_tunnel_direct_io() {
-        // let _ = env_logger::try_init();
-        for len in mock::payload_len_iter() {
-            proxy_network_disconnected_helper(MockIoKind::Direct, len)
-                .await
-                .assert(len);
-        }
-    }
-
-    #[tokio::test]
-    async fn proxy_network_disconnected_tunnel_interpreter_io() {
-        // let _ = env_logger::try_init();
-        for len in mock::payload_len_iter() {
-            proxy_network_disconnected_helper(MockIoKind::Interpreter, len)
-                .await
-                .assert(len);
-        }
     }
 }

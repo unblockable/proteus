@@ -117,3 +117,50 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
         Pin::new(&mut self.io).poll_shutdown(cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::common::mock;
+    use crate::net::proto::BytesSession;
+    use crate::net::tunnel::tests::{MockIoKind, proxy_network_connected_helper, proxy_network_disconnected_helper};
+
+    #[tokio::test]
+    async fn proxy_network_connected_tunnel_direct_io() {
+        // let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            proxy_network_connected_helper::<BytesSession<_, _>>(MockIoKind::Direct, len)
+                .await
+                .assert(len);
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_network_connected_tunnel_interpreter_io() {
+        // let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            proxy_network_connected_helper::<BytesSession<_, _>>(MockIoKind::Interpreter, len)
+                .await
+                .assert(len);
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_network_disconnected_tunnel_direct_io() {
+        // let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            proxy_network_disconnected_helper::<BytesSession<_, _>>(MockIoKind::Direct, len)
+                .await
+                .assert(len);
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_network_disconnected_tunnel_interpreter_io() {
+        // let _ = env_logger::try_init();
+        for len in mock::payload_len_iter() {
+            proxy_network_disconnected_helper::<BytesSession<_, _>>(MockIoKind::Interpreter, len)
+                .await
+                .assert(len);
+        }
+    }
+}
