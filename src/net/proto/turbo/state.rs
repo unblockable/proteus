@@ -37,10 +37,7 @@ enum State {
     LocalOpenRemoteOpen,
     LocalShuttingRemoteOpen,
     LocalShutRemoteOpen,
-    LocalOpenRemoteShutting,
     LocalOpenRemoteShut,
-    LocalShuttingRemoteShutting,
-    LocalShutRemoteShutting,
     LocalShuttingRemoteShut,
     LocalShutRemoteShut,
 }
@@ -59,7 +56,6 @@ impl TurboState {
         if self.queue.is_empty() {
             match self.state {
                 State::LocalOpenRemoteOpen => true,
-                State::LocalOpenRemoteShutting => true,
                 State::LocalOpenRemoteShut => true,
                 _ => false,
             }
@@ -107,8 +103,8 @@ impl TurboState {
                 None => {
                     // Reader got Error/EOF, we get no more payloads, start shuting our side.
                     let new_state = match self.state {
+                        // Should match `is_payload_next()`.
                         State::LocalOpenRemoteOpen => State::LocalShuttingRemoteOpen,
-                        State::LocalOpenRemoteShutting => State::LocalShuttingRemoteShutting,
                         State::LocalOpenRemoteShut => State::LocalShuttingRemoteShut,
                         _ => unreachable!(),
                     };
@@ -170,8 +166,6 @@ impl TurboState {
                 Command::Reset => self.process_reset(),
             };
 
-            // We incremented our read cursor, so the remote might be shut now.
-            self.shut_remote_if_done_reading();
             is_valid
         } else {
             false
@@ -234,10 +228,7 @@ impl TurboState {
             State::LocalOpenRemoteOpen => true,
             State::LocalShuttingRemoteOpen => true,
             State::LocalShutRemoteOpen => true,
-            State::LocalOpenRemoteShutting => true,
             State::LocalOpenRemoteShut => false,
-            State::LocalShuttingRemoteShutting => true,
-            State::LocalShutRemoteShutting => true,
             State::LocalShuttingRemoteShut => false,
             State::LocalShutRemoteShut => false,
         };
@@ -268,17 +259,20 @@ impl TurboState {
     fn process_shut_req(&mut self, cursor: DataCursor) -> bool {
         // Valid if the remote side is still open.
         let shut_state = match self.state {
-            State::LocalOpenRemoteOpen => State::LocalOpenRemoteShutting,
-            State::LocalShuttingRemoteOpen => State::LocalShuttingRemoteShutting,
-            State::LocalShutRemoteOpen => State::LocalShutRemoteShutting,
+            State::LocalOpenRemoteOpen => State::LocalOpenRemoteShut,
+            State::LocalShuttingRemoteOpen => State::LocalShuttingRemoteShut,
+            State::LocalShutRemoteOpen => State::LocalShutRemoteShut,
             _ => return false,
         };
 
         // Store the final position of the read cursor.
         self.read_end.get_or_insert(cursor);
 
-        // The remote moves from open to shutting.
-        // Note: we might transition to shut every time we increment our read cursor.
+        // Our sequential protocol means we must have read everything before cursor.
+        assert!(self.read >= cursor);
+
+        // The remote moves from open to shut.
+        self.queue(MessageResponse::ShutOk);
         self.set_state(shut_state);
         true
     }
@@ -287,7 +281,6 @@ impl TurboState {
         // Valid only if the local side is shutting.
         let shut_state = match self.state {
             State::LocalShuttingRemoteOpen => State::LocalShutRemoteOpen,
-            State::LocalShuttingRemoteShutting => State::LocalShutRemoteShutting,
             State::LocalShuttingRemoteShut => State::LocalShutRemoteShut,
             _ => return false,
         };
@@ -321,25 +314,237 @@ impl TurboState {
         self.wake();
         true
     }
-
-    fn shut_remote_if_done_reading(&mut self) {
-        let shut_state = match self.state {
-            State::LocalOpenRemoteShutting => State::LocalOpenRemoteShut,
-            State::LocalShuttingRemoteShutting => State::LocalShuttingRemoteShut,
-            State::LocalShutRemoteShutting => State::LocalShutRemoteShut,
-            _ => return,
-        };
-
-        let done_reading = self.read_end.map(|end| self.read >= end).unwrap_or(false);
-
-        if done_reading {
-            self.queue(MessageResponse::ShutOk);
-            self.set_state(shut_state);
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    // TODO
+    use std::future::PollFn;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll, Waker};
+
+    use bytes::Bytes;
+    use tokio_test::assert_ready_eq;
+    use tokio_test::task::Spawn;
+
+    use crate::net::proto::turbo::message::{DataCursor, TurboMessage};
+    use crate::net::proto::turbo::state::{State, TurboState};
+
+    #[test]
+    fn new_default() {
+        let ts = TurboState::default();
+        assert_eq!(ts.state, State::LocalOpenRemoteOpen);
+    }
+
+    #[test]
+    fn new_wants_payload() {
+        let ts = TurboState::default();
+        assert!(ts.is_payload_next());
+    }
+
+    fn new_pending_task() -> (
+        Arc<Mutex<TurboState>>,
+        Spawn<PollFn<impl FnMut(&mut Context) -> Poll<Option<TurboMessage>>>>,
+    ) {
+        let ts = Arc::new(Mutex::new(TurboState::default()));
+        let shared = ts.clone();
+
+        let mut task = tokio_test::task::spawn(std::future::poll_fn(move |cx| {
+            shared
+                .lock()
+                .unwrap()
+                .poll_recv_with_payload(cx, &mut Poll::Pending)
+        }));
+
+        assert_eq!(task.poll(), Poll::Pending);
+        assert!(!task.is_woken());
+        (ts, task)
+    }
+
+    #[test]
+    fn wakeup_for_ack() {
+        let (ts, task) = new_pending_task();
+        let fwd = TurboMessage::forward(0, 0, Bytes::from("test"));
+        ts.lock().unwrap().send(&fwd);
+        assert!(task.is_woken());
+    }
+
+    #[test]
+    fn wakeup_for_reset() {
+        let (ts, task) = new_pending_task();
+        let rst = TurboMessage::reset(0, 0);
+        ts.lock().unwrap().send(&rst);
+        assert!(task.is_woken());
+    }
+
+    #[test]
+    fn wakeup_on_close() {
+        let (ts, task) = new_pending_task();
+        ts.lock().unwrap().close();
+        assert!(task.is_woken());
+    }
+
+    #[test]
+    fn forward_request() {
+        let mut ts = TurboState::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let payload = Bytes::from("test");
+
+        for w_cursor in 0..10 {
+            let res = ts.poll_recv_with_payload(&mut cx, &mut Poll::Ready(Some(payload.clone())));
+            assert_ready_eq!(
+                res,
+                Some(TurboMessage::forward(w_cursor, 0, payload.clone()))
+            );
+        }
+    }
+
+    fn deliver_n_fwd_msgs(ts: &mut TurboState, payload: &Bytes, n: DataCursor) {
+        for w_cursor in 0..n {
+            let msg = TurboMessage::forward(w_cursor, 0, payload.clone());
+            assert_eq!(ts.send(&msg), Some(payload.clone()));
+        }
+    }
+
+    fn assert_ack(ts: &mut TurboState, w: DataCursor, r: DataCursor) {
+        let mut cx = Context::from_waker(Waker::noop());
+        let res = ts.poll_recv_with_payload(&mut cx, &mut Poll::Pending);
+        assert_ready_eq!(res, Some(TurboMessage::forward_ok(w, r)));
+    }
+
+    fn assert_fwd(ts: &mut TurboState, w: DataCursor, r: DataCursor, payload: &Bytes) {
+        let mut cx = Context::from_waker(Waker::noop());
+        let res = ts.poll_recv_with_payload(&mut cx, &mut Poll::Ready(Some(payload.clone())));
+        assert_ready_eq!(res, Some(TurboMessage::forward(w, r, payload.clone())));
+    }
+
+    #[test]
+    fn forward_response_payload() {
+        let mut ts = TurboState::default();
+        let payload = Bytes::from("test");
+
+        deliver_n_fwd_msgs(&mut ts, &payload, 10);
+
+        // Ack all 10 packets while including payload of our own.
+        assert_fwd(&mut ts, 0, 10, &payload);
+    }
+
+    #[test]
+    fn forward_response_ack() {
+        let mut ts = TurboState::default();
+        let payload = Bytes::from("test");
+
+        deliver_n_fwd_msgs(&mut ts, &payload, 10);
+
+        // Ack all 10 packets even with no payload present.
+        assert_ack(&mut ts, 0, 10);
+    }
+
+    #[test]
+    fn local_shuts_first() {
+        let mut ts = TurboState::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let payload = Bytes::from("test");
+
+        deliver_n_fwd_msgs(&mut ts, &payload, 10);
+        assert_ack(&mut ts, 0, 10);
+        assert_eq!(ts.state, State::LocalOpenRemoteOpen);
+
+        // Signal EOF should produce a shut message.
+        let res = ts.poll_recv_with_payload(&mut cx, &mut Poll::Ready(None));
+        assert_ready_eq!(res, Some(TurboMessage::shut(1, 10)));
+        assert_eq!(ts.state, State::LocalShuttingRemoteOpen);
+        assert!(!ts.is_payload_next());
+
+        // Local is shut after getting the response.
+        let msg = TurboMessage::shut_ok(10, 2);
+        assert_eq!(ts.send(&msg), None);
+        assert_eq!(ts.state, State::LocalShutRemoteOpen);
+
+        // Remote wants to shut.
+        let msg = TurboMessage::shut(11, 2);
+        assert_eq!(ts.send(&msg), None);
+        assert_eq!(ts.state, State::LocalShutRemoteShut);
+
+        // Should return the final shut ack response (last ack).
+        assert!(!ts.is_payload_next());
+        let res = ts.poll_recv(&mut cx);
+        assert_ready_eq!(res, Some(TurboMessage::shut_ok(2, 12)));
+        assert_eq!(ts.state, State::LocalShutRemoteShut);
+
+        // Stream is done.
+        assert_eq!(ts.poll_recv(&mut cx), Poll::Ready(None));
+    }
+
+    #[test]
+    fn remote_shuts_first() {
+        let mut ts = TurboState::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let payload = Bytes::from("test");
+
+        deliver_n_fwd_msgs(&mut ts, &payload, 10);
+        assert_ack(&mut ts, 0, 10);
+        assert_eq!(ts.state, State::LocalOpenRemoteOpen);
+
+        // Remote wants to shut.
+        let msg = TurboMessage::shut(10, 1);
+        assert_eq!(ts.send(&msg), None);
+        assert_eq!(ts.state, State::LocalOpenRemoteShut);
+
+        // Should return a shut ack response next.
+        assert!(!ts.is_payload_next());
+        let res = ts.poll_recv(&mut cx);
+        assert_ready_eq!(res, Some(TurboMessage::shut_ok(1, 11)));
+        assert_eq!(ts.state, State::LocalOpenRemoteShut);
+
+        // Signal EOF should produce a shut message.
+        assert!(ts.is_payload_next());
+        let res = ts.poll_recv_with_payload(&mut cx, &mut Poll::Ready(None));
+        assert_ready_eq!(res, Some(TurboMessage::shut(2, 11)));
+        assert_eq!(ts.state, State::LocalShuttingRemoteShut);
+        assert!(!ts.is_payload_next());
+
+        // Local is shut after getting the response.
+        let msg = TurboMessage::shut_ok(11, 3);
+        assert_eq!(ts.send(&msg), None);
+        assert_eq!(ts.state, State::LocalShutRemoteShut);
+
+        // Stream is done.
+        assert_eq!(ts.poll_recv(&mut cx), Poll::Ready(None));
+    }
+
+    #[test]
+    fn simultaneous_shut() {
+        let mut ts = TurboState::default();
+        let mut cx = Context::from_waker(Waker::noop());
+        let payload = Bytes::from("test");
+
+        deliver_n_fwd_msgs(&mut ts, &payload, 10);
+        assert_ack(&mut ts, 0, 10);
+        assert_eq!(ts.state, State::LocalOpenRemoteOpen);
+
+        // Signal EOF should produce a shut message.
+        let res = ts.poll_recv_with_payload(&mut cx, &mut Poll::Ready(None));
+        assert_ready_eq!(res, Some(TurboMessage::shut(1, 10)));
+        assert_eq!(ts.state, State::LocalShuttingRemoteOpen);
+        assert!(!ts.is_payload_next());
+
+        // Remote wants to shut.
+        let msg = TurboMessage::shut(10, 2);
+        assert_eq!(ts.send(&msg), None);
+        assert_eq!(ts.state, State::LocalShuttingRemoteShut);
+
+        // Should return a shut ack response.
+        assert!(!ts.is_payload_next());
+        let res = ts.poll_recv(&mut cx);
+        assert_ready_eq!(res, Some(TurboMessage::shut_ok(2, 11)));
+        assert_eq!(ts.state, State::LocalShuttingRemoteShut);
+
+        // Local is shut after getting the last ack.
+        let msg = TurboMessage::shut_ok(11, 3);
+        assert_eq!(ts.send(&msg), None);
+        assert_eq!(ts.state, State::LocalShutRemoteShut);
+
+        // Stream is done.
+        assert_eq!(ts.poll_recv(&mut cx), Poll::Ready(None));
+    }
 }
