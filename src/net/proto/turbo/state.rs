@@ -106,12 +106,13 @@ impl TurboState {
                 }
                 None => {
                     // Reader got Error/EOF, we get no more payloads, start shuting our side.
-                    self.state = match self.state {
+                    let new_state = match self.state {
                         State::LocalOpenRemoteOpen => State::LocalShuttingRemoteOpen,
                         State::LocalOpenRemoteShutting => State::LocalShuttingRemoteShutting,
                         State::LocalOpenRemoteShut => State::LocalShuttingRemoteShut,
                         _ => unreachable!(),
                     };
+                    self.set_state(new_state);
 
                     // We are done writing now.
                     self.write_end.get_or_insert(self.write);
@@ -188,7 +189,7 @@ impl TurboState {
             self.write_end.get_or_insert(self.write);
             self.read_end.get_or_insert(self.read);
             self.queue(MessageResponse::Reset);
-            self.state = State::LocalShutRemoteShut;
+            self.set_state(State::LocalShutRemoteShut);
         }
     }
 }
@@ -206,6 +207,14 @@ impl TurboState {
             waker.wake_by_ref()
         }
         // self.waker.take().map(|w| w.wake());
+    }
+
+    fn set_state(&mut self, new_state: State) {
+        self.state = new_state;
+        // Wake stream if we need to return Ready(None).
+        if self.state == State::LocalShutRemoteShut {
+            self.wake();
+        }
     }
 
     fn write_inc(&mut self) -> DataCursor {
@@ -270,7 +279,7 @@ impl TurboState {
 
         // The remote moves from open to shutting.
         // Note: we might transition to shut every time we increment our read cursor.
-        self.state = shut_state;
+        self.set_state(shut_state);
         true
     }
 
@@ -289,7 +298,7 @@ impl TurboState {
             .unwrap_or(false);
 
         if done_acking_writes {
-            self.state = shut_state;
+            self.set_state(shut_state);
         } else {
             log::warn!("Got Shut response with incomplete ack, closing now");
             self.close();
@@ -306,7 +315,7 @@ impl TurboState {
         // Overwrite any previously set end cursors.
         self.write_end = Some(self.write);
         self.read_end = Some(self.read);
-        self.state = State::LocalShutRemoteShut;
+        self.set_state(State::LocalShutRemoteShut);
         self.queue.clear();
         // Wake stream so we can return Ready(None).
         self.wake();
@@ -325,7 +334,7 @@ impl TurboState {
 
         if done_reading {
             self.queue(MessageResponse::ShutOk);
-            self.state = shut_state;
+            self.set_state(shut_state);
         }
     }
 }
