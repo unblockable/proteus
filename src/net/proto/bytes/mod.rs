@@ -67,7 +67,7 @@ pub struct BytesSink<W: AsyncWrite> {
 }
 
 impl<W: AsyncWrite + Send + Unpin> BytesSink<W> {
-    fn poll_write(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+    fn poll_write_inner(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         if let Some(mut cursor) = self.buf.take() {
             while cursor.has_remaining() {
                 match poll_write_buf(Pin::new(&mut self.io), cx, &mut cursor) {
@@ -88,7 +88,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.as_mut().poll_write(cx)
+        self.as_mut().poll_write_inner(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: TunnelMessage) -> Result<(), Self::Error> {
@@ -122,7 +122,9 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
 mod tests {
     use crate::common::mock;
     use crate::net::proto::BytesSession;
-    use crate::net::tunnel::tests::{MockIoKind, proxy_network_connected_helper, proxy_network_disconnected_helper};
+    use crate::net::tunnel::tests::{
+        MockIoKind, proxy_network_connected_helper, proxy_network_disconnected_helper,
+    };
 
     #[tokio::test]
     async fn proxy_network_connected_tunnel_direct_io() {

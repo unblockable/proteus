@@ -47,7 +47,7 @@ impl<W: AsyncWrite + Unpin> TurboSink<W> {
         }
     }
 
-    fn poll_send(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+    fn poll_send_inner(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         loop {
             match &mut self.mode {
                 Mode::Idle => return Poll::Ready(Ok(())),
@@ -74,7 +74,7 @@ impl<W: AsyncWrite + Unpin> TurboSink<W> {
         }
     }
 
-    fn poll_close(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+    fn poll_close_inner(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         loop {
             match &mut self.phase {
                 Phase::Open => self.phase = Phase::Closing,
@@ -119,7 +119,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for TurboSink<W> {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.as_mut().poll_send(cx)
+        self.as_mut().poll_send_inner(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: TunnelMessage) -> Result<(), Self::Error> {
@@ -141,7 +141,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for TurboSink<W> {
                         // the write cannot complete now, we'll poll again in the next
                         // call to `poll_ready()` or `poll_flush()`.
                         let mut cx = Context::from_waker(Waker::noop());
-                        if let Poll::Ready(result) = self.as_mut().poll_send(&mut cx) {
+                        if let Poll::Ready(result) = self.as_mut().poll_send_inner(&mut cx) {
                             return result;
                         }
                     }
@@ -157,15 +157,15 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for TurboSink<W> {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         // Flush our own layer, and then flush the wrapped writer.
-        ready!(self.as_mut().poll_send(cx))?;
+        ready!(self.as_mut().poll_send_inner(cx))?;
         let writer = self.writer.as_mut().ok_or(broken_pipe_error())?;
         Pin::new(writer).poll_flush(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         // Flush our own layer, and then close the inner objects.
-        ready!(self.as_mut().poll_send(cx))?;
-        self.poll_close(cx)
+        ready!(self.as_mut().poll_send_inner(cx))?;
+        self.poll_close_inner(cx)
     }
 }
 

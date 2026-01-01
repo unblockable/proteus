@@ -41,7 +41,7 @@ impl<R: AsyncRead + Send + Unpin> TurboStream<R> {
         }
     }
 
-    fn poll_state(&mut self, cx: &mut Context) -> Poll<Option<TurboMessage>> {
+    fn poll_state_inner(&mut self, cx: &mut Context) -> Poll<Option<TurboMessage>> {
         loop {
             match &mut self.mode {
                 Mode::Idle => {
@@ -53,7 +53,7 @@ impl<R: AsyncRead + Send + Unpin> TurboStream<R> {
                         return state.poll_recv(cx);
                     }
                 }
-                Mode::Read => self.mode = Mode::Receive(self.poll_reader(cx)),
+                Mode::Read => self.mode = Mode::Receive(self.poll_reader_inner(cx)),
                 Mode::Receive(read_result) => {
                     let mut state = ready!(self.state.poll_lock(cx));
                     let result = state.poll_recv_with_payload(cx, read_result);
@@ -65,7 +65,7 @@ impl<R: AsyncRead + Send + Unpin> TurboStream<R> {
         }
     }
 
-    fn poll_reader(&mut self, cx: &mut Context) -> Poll<Option<Bytes>> {
+    fn poll_reader_inner(&mut self, cx: &mut Context) -> Poll<Option<Bytes>> {
         if let Some(mut io) = self.reader.take() {
             match poll_read_buf(Pin::new(&mut io), cx, &mut self.buf) {
                 Poll::Ready(Ok(0)) => {} // Drop reader on read EOF
@@ -95,7 +95,7 @@ impl<R: AsyncRead + Send + Unpin> Stream for TurboStream<R> {
     type Item = TunnelMessage;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        match self.as_mut().poll_state(cx) {
+        match self.as_mut().poll_state_inner(cx) {
             Poll::Ready(Some(msg)) => {
                 let msg = TunnelMessage::encapsulated(self.id, encode(msg));
                 Poll::Ready(Some(msg))
