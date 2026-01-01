@@ -843,7 +843,7 @@ pub mod tests {
         }
     }
 
-    pub async fn proxy_network_connected_helper<S>(io_kind: MockIoKind, len: usize) -> mock::Result
+    pub async fn proxy_network_connected<S>(io_kind: MockIoKind, len: usize) -> mock::Result
     where
         S: SessionBuilder<
                 Message = TunnelMessage,
@@ -861,7 +861,7 @@ pub mod tests {
             .await
     }
 
-    pub async fn proxy_network_disconnected_helper<S>(io_kind: MockIoKind, len: usize) -> mock::Result
+    pub async fn proxy_network_disconnected<S>(io_kind: MockIoKind, len: usize) -> mock::Result
     where
         S: SessionBuilder<
                 Message = TunnelMessage,

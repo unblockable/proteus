@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_network_connected_channel_direct_io() {
+    async fn connected_direct_channel() {
         for len in mock::payload_len_iter() {
             MockProxyNetwork::new(len)
                 .run_with_forwarder(
@@ -396,7 +396,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_network_disconnected_channel_direct_io() {
+    async fn disconnected_direct_channel() {
         for len in mock::payload_len_iter() {
             // Channel is not connected yet, we need to simulate a connection.
             let mut connector = MockConnector::new(Some(Duration::from_millis(10)));
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_network_connected_channel_interpreter_io() {
+    async fn connected_interpreter_channel() {
         for len in mock::payload_len_iter() {
             MockProxyNetwork::new(len)
                 .run_with_forwarder(
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_network_disconnected_channel_interpreter_io() {
+    async fn disconnected_interpreter_channel() {
         for len in mock::payload_len_iter() {
             // Channel is not connected yet, we need to simulate a connection.
             let mut connector = MockConnector::new(Some(Duration::from_millis(10)));
