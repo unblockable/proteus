@@ -28,7 +28,7 @@ pub struct TurboState {
     /// True if we should return an ack next.
     next_ack: bool,
     /// Holds control messages that should be sent before any forward messages.
-    queue: VecDeque<MessageResponse>,
+    queue: VecDeque<MessageKind>,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
@@ -42,8 +42,10 @@ enum State {
     LocalShutRemoteShut,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-enum MessageResponse {
+#[derive(Debug, Clone, PartialEq)]
+enum MessageKind {
+    Forward(Bytes),
+    Shut,
     ShutOk,
     Reset,
 }
@@ -67,9 +69,14 @@ impl TurboState {
     pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Option<TurboMessage>> {
         if let Some(response) = self.queue.pop_front() {
             let msg = match response {
-                MessageResponse::Reset => TurboMessage::reset(self.write_inc(), self.read),
-                MessageResponse::ShutOk => TurboMessage::shut_ok(self.write_inc(), self.read),
+                MessageKind::Forward(bytes) => {
+                    TurboMessage::forward(self.write_inc(), self.read, bytes)
+                }
+                MessageKind::Shut => TurboMessage::shut(self.write_inc(), self.read),
+                MessageKind::ShutOk => TurboMessage::shut_ok(self.write_inc(), self.read),
+                MessageKind::Reset => TurboMessage::reset(self.write_inc(), self.read),
             };
+            self.next_ack = false;
             Poll::Ready(Some(msg))
         } else if self.state == State::LocalShutRemoteShut {
             Poll::Ready(None)
@@ -88,20 +95,18 @@ impl TurboState {
         cx: &mut Context,
         payload: &mut Poll<Option<Bytes>>,
     ) -> Poll<Option<TurboMessage>> {
+        // Should not be called unless is_payload_next() is true.
         assert!(self.is_payload_next());
 
         // We asked the stream to try reading a payload first and give us the result.
         // The message we return next depends on if a payload is ready or not.
         match payload {
             Poll::Ready(opt) => match opt.take() {
-                Some(bytes) => {
-                    // Forward the payload. This doubles as an ack too.
-                    let fwd = TurboMessage::forward(self.write_inc(), self.read, bytes);
-                    self.next_ack = false;
-                    Poll::Ready(Some(fwd))
-                }
+                // Forward along the payload.
+                Some(bytes) => self.queue(MessageKind::Forward(bytes)),
+                // Reader got Error/EOF, so we are done sending payloads now.
                 None => {
-                    // Reader got Error/EOF, we get no more payloads, start shuting our side.
+                    // Initiate a graceful shutdown to indicate we are done writing.
                     let new_state = match self.state {
                         // Should match `is_payload_next()`.
                         State::LocalOpenRemoteOpen => State::LocalShuttingRemoteOpen,
@@ -109,29 +114,16 @@ impl TurboState {
                         _ => unreachable!(),
                     };
                     self.set_state(new_state);
-
-                    // We are done writing now.
                     self.write_end.get_or_insert(self.write);
-                    let shut = TurboMessage::shut(self.write_inc(), self.read);
-                    self.next_ack = false;
-                    Poll::Ready(Some(shut))
+                    self.queue(MessageKind::Shut);
                 }
             },
-            Poll::Pending => {
-                // No payload bytes are ready yet.
-                if self.next_ack {
-                    // We need to send an ack now anyway.
-                    let ack = TurboMessage::forward_ok(self.write_inc(), self.read);
-                    self.next_ack = false;
-                    Poll::Ready(Some(ack))
-                } else {
-                    // The stream should wakeup if payload arrives, we should wakeup
-                    // if we need to send a control or ack message.
-                    self.set_waker(cx);
-                    Poll::Pending
-                }
-            }
-        }
+            // Already handled in poll_recv().
+            Poll::Pending => {}
+        };
+
+        // Construct and return any ready messages, or handle Pending logic.
+        self.poll_recv(cx)
     }
 
     pub fn send(&mut self, msg: &TurboMessage) -> Option<Bytes> {
@@ -182,7 +174,7 @@ impl TurboState {
         if self.state != State::LocalShutRemoteShut {
             self.write_end.get_or_insert(self.write);
             self.read_end.get_or_insert(self.read);
-            self.queue(MessageResponse::Reset);
+            self.queue(MessageKind::Reset);
             self.set_state(State::LocalShutRemoteShut);
         }
     }
@@ -217,7 +209,7 @@ impl TurboState {
         val
     }
 
-    fn queue(&mut self, response: MessageResponse) {
+    fn queue(&mut self, response: MessageKind) {
         self.queue.push_back(response);
         self.wake();
     }
@@ -272,7 +264,7 @@ impl TurboState {
         assert!(self.read >= cursor);
 
         // The remote moves from open to shut.
-        self.queue(MessageResponse::ShutOk);
+        self.queue(MessageKind::ShutOk);
         self.set_state(shut_state);
         true
     }
