@@ -3,9 +3,7 @@ use std::io::{self, Cursor};
 use bytes::{Buf, BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::net::proto::turbo::message::{
-    self, Command, DataCursor, Payload, Request, Response, TurboMessage,
-};
+use crate::net::proto::turbo::message::{Command, DataCursor, Payload, TurboMessage};
 
 pub struct TurboCodec;
 
@@ -76,18 +74,21 @@ impl TurboCodec {
     }
 
     fn encode_command(&mut self, command: Command, dst: &mut BytesMut) -> io::Result<()> {
-        let command_type = match command {
-            Command::Request(_) => 0,
-            Command::Response(_) => 1,
-            Command::Reset => 2,
+        let command_type = match &command {
+            Command::Forward(_) => 0,
+            Command::ForwardAck => 1,
+            Command::Rewind => 2,
+            Command::RewindAck => 3,
+            Command::Shut => 4,
+            Command::ShutAck => 5,
+            Command::Reset => 6,
         };
         dst.reserve(1);
         dst.put_u8(command_type);
 
         match command {
-            Command::Request(request) => self.encode_request(request, dst),
-            Command::Response(response) => self.encode_response(response, dst),
-            Command::Reset => Ok(())
+            Command::Forward(payload) => self.encode_payload(payload, dst),
+            _ => Ok(()),
         }
     }
 
@@ -96,87 +97,20 @@ impl TurboCodec {
             let command_type = src.get_u8();
             let command = match command_type {
                 0 => {
-                    let Some(request) = self.decode_request(src)? else {
-                        return Ok(None);
-                    };
-                    Command::Request(request)
-                }
-                1 => {
-                    let Some(response) = self.decode_response(src)? else {
-                        return Ok(None);
-                    };
-                    Command::Response(response)
-                }
-                2 => Command::Reset,
-                _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
-            };
-            Ok(Some(command))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn encode_request(&mut self, request: Request, dst: &mut BytesMut) -> io::Result<()> {
-        let request_type = match request {
-            Request::Forward(_) => 0,
-            Request::Rewind => 1,
-            Request::Shut => 2,
-        };
-        dst.reserve(1);
-        dst.put_u8(request_type);
-
-        match request {
-            Request::Forward(payload) => self.encode_payload(payload, dst),
-            _ => Ok(()),
-        }
-    }
-
-    fn decode_request(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Request>> {
-        if src.remaining() >= 1 {
-            let request_type = src.get_u8();
-            let request = match request_type {
-                0 => {
                     let Some(payload) = self.decode_payload(src)? else {
                         return Ok(None);
                     };
-                    Request::Forward(payload)
+                    Command::Forward(payload)
                 }
-                1 => Request::Rewind,
-                2 => Request::Shut,
+                1 => Command::ForwardAck,
+                2 => Command::Rewind,
+                3 => Command::RewindAck,
+                4 => Command::Shut,
+                5 => Command::ShutAck,
+                6 => Command::Reset,
                 _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
             };
-            Ok(Some(request))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn encode_response(&mut self, response: Response, dst: &mut BytesMut) -> io::Result<()> {
-        let (response_type, result) = match response {
-            Response::Forward(result) => (0, result),
-            Response::Rewind(result) => (1, result),
-            Response::Shut(result) => (2, result),
-        };
-        dst.reserve(1);
-        dst.put_u8(response_type);
-        self.encode_result(result, dst)
-    }
-
-    fn decode_response(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Response>> {
-        if src.remaining() >= 1 {
-            let response_type = src.get_u8();
-
-            let Some(result) = self.decode_result(src)? else {
-                return Ok(None);
-            };
-
-            let response = match response_type {
-                0 => Response::Forward(result),
-                1 => Response::Rewind(result),
-                2 => Response::Shut(result),
-                _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
-            };
-            Ok(Some(response))
+            Ok(Some(command))
         } else {
             Ok(None)
         }
@@ -203,32 +137,6 @@ impl TurboCodec {
             } else {
                 Ok(None)
             }
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn encode_result(&mut self, result: message::Result, dst: &mut BytesMut) -> io::Result<()> {
-        let value = match result {
-            message::Result::Ok => 0,
-            message::Result::Error => 1,
-        };
-        dst.reserve(1);
-        dst.put_u8(value);
-        Ok(())
-    }
-
-    fn decode_result(
-        &mut self,
-        src: &mut Cursor<&BytesMut>,
-    ) -> io::Result<Option<message::Result>> {
-        if src.remaining() >= 1 {
-            let result = match src.get_u8() {
-                0 => message::Result::Ok,
-                1 => message::Result::Error,
-                _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
-            };
-            Ok(Some(result))
         } else {
             Ok(None)
         }
@@ -269,41 +177,35 @@ mod tests {
     }
 
     #[test]
-    fn request_forward() {
-        test_valid_command(Command::Request(Request::Forward(Payload::from(
-            Bytes::from("This is the payload."),
+    fn command_forward() {
+        test_valid_command(Command::Forward(Payload::from(Bytes::from(
+            "This is the payload.",
         ))));
     }
 
     #[test]
-    fn request_rewind() {
-        test_valid_command(Command::Request(Request::Rewind));
+    fn command_forward_ack() {
+        test_valid_command(Command::ForwardAck);
     }
 
     #[test]
-    fn request_shut() {
-        test_valid_command(Command::Request(Request::Shut));
+    fn command_rewind() {
+        test_valid_command(Command::Rewind);
     }
 
     #[test]
-    fn response_forward() {
-        for result in [message::Result::Ok, message::Result::Error] {
-            test_valid_command(Command::Response(Response::Forward(result)));
-        }
+    fn command_rewind_ack() {
+        test_valid_command(Command::RewindAck);
     }
 
     #[test]
-    fn response_rewind() {
-        for result in [message::Result::Ok, message::Result::Error] {
-            test_valid_command(Command::Response(Response::Rewind(result)));
-        }
+    fn command_shut() {
+        test_valid_command(Command::Shut);
     }
 
     #[test]
-    fn response_shut() {
-        for result in [message::Result::Ok, message::Result::Error] {
-            test_valid_command(Command::Response(Response::Shut(result)));
-        }
+    fn command_shut_ack() {
+        test_valid_command(Command::ShutAck);
     }
 
     #[test]
@@ -315,11 +217,11 @@ mod tests {
     fn invalid_payload_length() {
         // Max supported payload length.
         let payload = Payload::from(mock::payload(u16::MAX as usize));
-        test_valid_command(Command::Request(Request::Forward(payload)));
+        test_valid_command(Command::Forward(payload));
 
         // This payload is larger than supported.
         let payload = Payload::from(mock::payload(u16::MAX as usize + 1));
-        let msg = message(Command::Request(Request::Forward(payload)));
+        let msg = message(Command::Forward(payload));
 
         // Should get encode error.
         let mut buf = BytesMut::new();
@@ -341,24 +243,6 @@ mod tests {
     #[test]
     fn invalid_command() {
         // The command type is the 17th byte (index 16).
-        test_invalid(Command::Request(Request::Shut), 16);
-    }
-
-    #[test]
-    fn invalid_request() {
-        // The request type is the 18th byte (index 17).
-        test_invalid(Command::Request(Request::Shut), 17);
-    }
-
-    #[test]
-    fn invalid_response() {
-        // The response type is the 18th byte (index 17).
-        test_invalid(Command::Response(Response::Shut(message::Result::Ok)), 17);
-    }
-
-    #[test]
-    fn invalid_response_result() {
-        // The response result type is the 19th byte (index 18).
-        test_invalid(Command::Response(Response::Shut(message::Result::Ok)), 18);
+        test_invalid(Command::Shut, 16);
     }
 }

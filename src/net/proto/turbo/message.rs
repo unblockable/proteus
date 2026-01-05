@@ -1,10 +1,11 @@
+use std::cmp::Ordering;
 use std::fmt::Debug;
 
 use bytes::Bytes;
 
 pub type DataCursor = u64;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TurboMessage {
     /// Similar to TCP sequence number.
     pub write: DataCursor,
@@ -13,53 +14,18 @@ pub struct TurboMessage {
     pub command: Command,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
-    Request(Request),
-    Response(Response),
+    Forward(Payload),
+    ForwardAck,
+    Rewind,
+    RewindAck,
+    Shut,
+    ShutAck,
     Reset,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Request {
-    Forward(Payload),
-    Rewind,
-    Shut,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Response {
-    Forward(Result),
-    Rewind(Result),
-    Shut(Result),
-}
-
-impl Response {
-    pub fn is_error(&self) -> bool {
-        match self {
-            Response::Forward(result) => result.is_error(),
-            Response::Rewind(result) => result.is_error(),
-            Response::Shut(result) => result.is_error(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Result {
-    Ok,
-    Error,
-}
-
-impl Result {
-    pub fn is_error(&self) -> bool {
-        match self {
-            Result::Ok => false,
-            Result::Error => true,
-        }
-    }
-}
-
-#[derive(PartialEq, Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Payload {
     /// The application data payload bytes.
     pub data: Bytes,
@@ -77,21 +43,49 @@ impl Debug for Payload {
     }
 }
 
+impl Ord for TurboMessage {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.write.cmp(&other.write)
+    }
+}
+
+impl PartialOrd for TurboMessage {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl TurboMessage {
-    fn request(write: DataCursor, read: DataCursor, request: Request) -> Self {
+    pub fn new(write: DataCursor, read: DataCursor, command: Command) -> Self {
         Self {
             write,
             read,
-            command: Command::Request(request),
+            command,
         }
     }
 
-    fn response(write: DataCursor, read: DataCursor, response: Response) -> Self {
-        Self {
-            write,
-            read,
-            command: Command::Response(response),
-        }
+    pub fn forward(write: DataCursor, read: DataCursor, payload: Bytes) -> Self {
+        Self::new(write, read, Command::Forward(payload.into()))
+    }
+
+    pub fn forward_ack(write: DataCursor, read: DataCursor) -> Self {
+        Self::new(write, read, Command::ForwardAck)
+    }
+
+    pub fn rewind(write: DataCursor, read: DataCursor) -> Self {
+        Self::new(write, read, Command::Rewind)
+    }
+
+    pub fn rewind_ack(write: DataCursor, read: DataCursor) -> Self {
+        Self::new(write, read, Command::RewindAck)
+    }
+
+    pub fn shut(write: DataCursor, read: DataCursor) -> Self {
+        Self::new(write, read, Command::Shut)
+    }
+
+    pub fn shut_ack(write: DataCursor, read: DataCursor) -> Self {
+        Self::new(write, read, Command::ShutAck)
     }
 
     pub fn reset(write: DataCursor, read: DataCursor) -> Self {
@@ -99,49 +93,6 @@ impl TurboMessage {
             write,
             read,
             command: Command::Reset,
-        }
-    }
-
-    pub fn forward(write: DataCursor, read: DataCursor, payload: Bytes) -> Self {
-        Self::request(write, read, Request::Forward(payload.into()))
-    }
-
-    pub fn rewind(write: DataCursor, read: DataCursor) -> Self {
-        Self::request(write, read, Request::Rewind)
-    }
-
-    pub fn shut(write: DataCursor, read: DataCursor) -> Self {
-        Self::request(write, read, Request::Shut)
-    }
-
-    pub fn forward_ok(write: DataCursor, read: DataCursor) -> Self {
-        Self::response(write, read, Response::Forward(Result::Ok))
-    }
-
-    pub fn rewind_ok(write: DataCursor, read: DataCursor) -> Self {
-        Self::response(write, read, Response::Rewind(Result::Ok))
-    }
-
-    pub fn shut_ok(write: DataCursor, read: DataCursor) -> Self {
-        Self::response(write, read, Response::Shut(Result::Ok))
-    }
-
-    pub fn forward_err(write: DataCursor, read: DataCursor) -> Self {
-        Self::response(write, read, Response::Forward(Result::Error))
-    }
-
-    pub fn rewind_err(write: DataCursor, read: DataCursor) -> Self {
-        Self::response(write, read, Response::Rewind(Result::Error))
-    }
-
-    pub fn shut_err(write: DataCursor, read: DataCursor) -> Self {
-        Self::response(write, read, Response::Shut(Result::Error))
-    }
-
-    pub fn is_error(&self) -> bool {
-        match &self.command {
-            Command::Response(response) => response.is_error(),
-            _ => false,
         }
     }
 }
