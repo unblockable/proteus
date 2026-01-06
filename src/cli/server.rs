@@ -20,8 +20,10 @@ pub async fn run(args: ServerArgs) -> anyhow::Result<()> {
         .to_string();
 
     if args.session.turbo {
+        log::info!("Tunnels will use the TurboSession session manager.");
         run_server::<TurboSession<OwnedReadHalf, OwnedWriteHalf>>(args, psf_path).await?;
     } else {
+        log::info!("Tunnels will use the BytesSession session manager.");
         run_server::<BytesSession<OwnedReadHalf, OwnedWriteHalf>>(args, psf_path).await?;
     }
 

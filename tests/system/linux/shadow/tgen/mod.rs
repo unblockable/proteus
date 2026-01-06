@@ -13,7 +13,7 @@ fn initialize_test_directory(in_dir: &PathBuf, psf_filepath: &Path) -> PathBuf {
     let out_dir = PathBuf::from("target").join(in_dir).join(test_name);
 
     // We need to write the proteus bin and PSF paths into the config files.
-    let bin_path = PathBuf::from(test_bin::get_test_bin("proteus").get_program());
+    let bin_path = PathBuf::from(test_bin::get_test_bin!("proteus").get_program());
     let psf_path = fs::canonicalize(psf_filepath).expect("Canonicalize path");
 
     // Use the common tgen client and server confs.

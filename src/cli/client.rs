@@ -25,12 +25,20 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
 
     match args.mode {
         ClientMode::Stream => {
+            log::info!(
+                "Running in stream mode, will create a new Proteus tunnel for each application stream."
+            );
+
             if args.session.turbo {
+                log::info!("Tunnels will use the TurboSession session manager.");
+
                 run_stream_client::<
                     TurboSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
                 .await?
             } else {
+                log::info!("Tunnels will use the BytesSession session manager.");
+
                 run_stream_client::<
                     BytesSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
@@ -38,12 +46,20 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
             }
         }
         ClientMode::Tunnel => {
+            log::info!(
+                "Running in tunnel mode, will multiplex all application streams over a single Proteus tunnel."
+            );
+
             if args.session.turbo {
+                log::info!("Tunnels will use the TurboSession session manager.");
+
                 run_tunnel_client::<
                     TurboSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
                 .await?
             } else {
+                log::info!("Tunnels will use the BytesSession session manager.");
+
                 run_tunnel_client::<
                     BytesSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
@@ -64,10 +80,6 @@ where
             WriteHalf = OwnedWriteHalf,
         >,
 {
-    log::info!(
-        "Running in stream mode, will create a new Proteus tunnel for each application stream."
-    );
-
     // Clients listen for app connections and create proteus tunnels to a server.
     let protocol_spec = super::parse_protocol_spec(psf_path.clone(), Role::Client)?;
     let server_addr = super::parse_connect_address(&args.connect)?;
@@ -109,10 +121,6 @@ where
             WriteHalf = OwnedWriteHalf,
         > + 'static,
 {
-    log::info!(
-        "Running in tunnel mode, will multiplex all application streams over a single Proteus tunnel."
-    );
-
     // Clients listen for app connections and create proteus tunnels to a server.
     let protocol_spec = super::parse_protocol_spec(psf_path.clone(), Role::Client)?;
     let server_addr = super::parse_connect_address(&args.connect)?;

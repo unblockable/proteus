@@ -160,15 +160,19 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 .get("turbo")
                 .map_or(false, |v| v.to_ascii_lowercase().eq("true"))
             {
-                log::debug!("Forwarding bytes using a turbo-tunnel session management protocol");
+                log::debug!("Using the TurboSession session manager.");
+
                 // Wrap the connection in a tunnel using the Turbo protocol.
                 let net = Channel::disconnected(target, TcpConnector::default());
                 let mut app: TunnelClient<TurboSession<_, _>> =
                     TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
+
                 app.add_session(app_src, app_dst, None).await;
+
                 super::run_interpreter(net.clone(), net, app.clone(), app, client_spec).await;
             } else {
-                log::debug!("Forwarding bytes without session management");
+                log::debug!("Using TCP connections as direct i/o.");
+
                 // Use the TcpStream io directly without wrappers.
                 match TcpConnector::default().connect(target.clone()).await {
                     Ok((net_src, net_dst, name)) => {
