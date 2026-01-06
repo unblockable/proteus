@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::{io, process};
 
 use control::PtLogLevel;
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
 use super::args::PtArgs;
@@ -117,15 +119,8 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
         Ok(info) => {
             log::debug!("Socks5 with peer {peer_name} succeeded");
 
-            if !info.remaining_read_buf.is_empty() {
-                log::error!(
-                    "Socks5 buffer has {} bytes remaining",
-                    info.remaining_read_buf.len()
-                );
-                // TODO: can we maybe do something like this?
-                // app_src = Cursor::new(info.remaining_read_buf).chain(app_src);
-                return;
-            }
+            // Do not discard bytes remaining from the socks interaction.
+            let app_src = Cursor::new(info.remaining_read_buf).chain(app_src);
 
             let target = info.target.clone();
 

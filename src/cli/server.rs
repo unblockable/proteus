@@ -5,9 +5,9 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::cli::args::ServerArgs;
 use crate::lang::Role;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::proto::{BytesSession, TurboSession};
+use crate::net::proto::{BytesSession, TunnelMessage, TurboSession};
 use crate::net::{
-    Channel, TcpConnector, TcpSessionBuilder, TunnelEofMethod, TunnelServer, fmt_stream_name,
+    Channel, SessionBuilder, TcpConnector, TunnelEofMethod, TunnelServer, fmt_stream_name,
 };
 
 pub async fn run(args: ServerArgs) -> anyhow::Result<()> {
@@ -29,10 +29,14 @@ pub async fn run(args: ServerArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_server<S: TcpSessionBuilder>(
-    server_args: ServerArgs,
-    psf_path: String,
-) -> anyhow::Result<()> {
+async fn run_server<S>(server_args: ServerArgs, psf_path: String) -> anyhow::Result<()>
+where
+    S: SessionBuilder<
+            Message = TunnelMessage,
+            ReadHalf = OwnedReadHalf,
+            WriteHalf = OwnedWriteHalf,
+        > + 'static,
+{
     let protocol_spec = super::parse_protocol_spec(psf_path.clone(), Role::Server)?;
     let listener = super::bind_listener(&server_args.listen, Role::Server).await?;
 
@@ -45,10 +49,16 @@ async fn run_server<S: TcpSessionBuilder>(
     }
 }
 
-async fn handle_connection<S: TcpSessionBuilder>(
+async fn handle_connection<S>(
     net_stream: TcpStream,
     protocol_spec: impl TaskProvider + Send + Clone,
-) {
+) where
+    S: SessionBuilder<
+            Message = TunnelMessage,
+            ReadHalf = OwnedReadHalf,
+            WriteHalf = OwnedWriteHalf,
+        > + 'static,
+{
     let peer_name = fmt_stream_name(&net_stream);
     log::debug!("Accepted new connection from Proteus client {peer_name}");
 

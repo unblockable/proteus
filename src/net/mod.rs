@@ -7,9 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
-use crate::net::proto::TunnelMessage;
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
-use crate::net::session::SessionBuilder;
 
 mod channel;
 pub mod proto;
@@ -18,6 +16,7 @@ mod tunnel;
 
 // Re-export to make these available in the net namespace.
 pub use channel::Channel;
+pub use session::SessionBuilder;
 pub use tunnel::{TunnelClient, TunnelEofMethod, TunnelServer};
 
 pub const CHUNK_SIZE: usize = 2usize.pow(14u32); // 16 KiB
@@ -173,20 +172,4 @@ impl Clone for FixedTargetTcpConnector {
     fn clone(&self) -> Self {
         Self::new(self.fixed_target.clone())
     }
-}
-
-/// A SessionBuilder backed by TCP connection halves.
-pub trait TcpSessionBuilder:
-    SessionBuilder<Message = TunnelMessage, ReadHalf = OwnedReadHalf, WriteHalf = OwnedWriteHalf>
-    + 'static
-{
-}
-/// Blanket implementation for all types that satisfy the bounds.
-impl<T> TcpSessionBuilder for T where
-    T: SessionBuilder<
-            Message = TunnelMessage,
-            ReadHalf = OwnedReadHalf,
-            WriteHalf = OwnedWriteHalf,
-        > + 'static
-{
 }
