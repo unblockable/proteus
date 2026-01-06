@@ -512,14 +512,14 @@ mod tests {
         }
 
         fn get_fwd(&mut self, w: DataCursor, r: DataCursor) {
-            assert!(matches!(
-                self.turbo.poll_recv(&mut self.cx),
-                Poll::Ready(Some(TurboMessage {
-                    write: w,
-                    read: r,
-                    command: Command::Forward(_)
-                }))
-            ));
+            let result = self.turbo.poll_recv(&mut self.cx);
+            assert!(matches!(result, Poll::Ready(Some(_))));
+            let Poll::Ready(Some(msg)) = result else {
+                unreachable!();
+            };
+            assert_eq!(msg.write, w);
+            assert_eq!(msg.read, r);
+            assert!(matches!(msg.command, Command::Forward(_)));
         }
 
         fn get_rwd(&mut self, w: DataCursor, r: DataCursor) {
