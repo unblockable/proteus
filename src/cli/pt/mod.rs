@@ -120,7 +120,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
             log::debug!("Socks5 with peer {peer_name} succeeded");
 
             // Do not discard bytes remaining from the socks interaction.
-            let app_src = Cursor::new(info.remaining_read_buf).chain(app_src);
+            let app_src = Cursor::new(info.remaining_read_buf.freeze()).chain(app_src);
 
             let target = info.target.clone();
 

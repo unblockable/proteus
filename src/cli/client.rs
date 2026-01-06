@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use anyhow::{anyhow, bail};
-use bytes::BytesMut;
+use bytes::Bytes;
 use tokio::io::{AsyncReadExt, Chain};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -27,12 +27,12 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
         ClientMode::Stream => {
             if args.session.turbo {
                 run_stream_client::<
-                    TurboSession<Chain<Cursor<BytesMut>, OwnedReadHalf>, OwnedWriteHalf>,
+                    TurboSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
                 .await?
             } else {
                 run_stream_client::<
-                    BytesSession<Chain<Cursor<BytesMut>, OwnedReadHalf>, OwnedWriteHalf>,
+                    BytesSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
                 .await?
             }
@@ -40,12 +40,12 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
         ClientMode::Tunnel => {
             if args.session.turbo {
                 run_tunnel_client::<
-                    TurboSession<Chain<Cursor<BytesMut>, OwnedReadHalf>, OwnedWriteHalf>,
+                    TurboSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
                 .await?
             } else {
                 run_tunnel_client::<
-                    BytesSession<Chain<Cursor<BytesMut>, OwnedReadHalf>, OwnedWriteHalf>,
+                    BytesSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
                 >(args, psf_path)
                 .await?
             }
@@ -60,7 +60,7 @@ async fn run_stream_client<S>(args: ClientArgs, psf_path: String) -> anyhow::Res
 where
     S: SessionBuilder<
             Message = TunnelMessage,
-            ReadHalf = Chain<Cursor<BytesMut>, OwnedReadHalf>,
+            ReadHalf = Chain<Cursor<Bytes>, OwnedReadHalf>,
             WriteHalf = OwnedWriteHalf,
         >,
 {
@@ -105,7 +105,7 @@ async fn run_tunnel_client<S>(args: ClientArgs, psf_path: String) -> anyhow::Res
 where
     S: SessionBuilder<
             Message = TunnelMessage,
-            ReadHalf = Chain<Cursor<BytesMut>, OwnedReadHalf>,
+            ReadHalf = Chain<Cursor<Bytes>, OwnedReadHalf>,
             WriteHalf = OwnedWriteHalf,
         > + 'static,
 {
@@ -155,7 +155,7 @@ async fn add_stream_to_tunnel<S>(
 where
     S: SessionBuilder<
             Message = TunnelMessage,
-            ReadHalf = Chain<Cursor<BytesMut>, OwnedReadHalf>,
+            ReadHalf = Chain<Cursor<Bytes>, OwnedReadHalf>,
             WriteHalf = OwnedWriteHalf,
         >,
 {
@@ -169,7 +169,7 @@ where
             log::debug!("Socks5 with peer {peer_name} succeeded");
 
             // Do not discard bytes remaining from the socks interaction.
-            let app_src = Cursor::new(info.remaining_read_buf).chain(app_src);
+            let app_src = Cursor::new(info.remaining_read_buf.freeze()).chain(app_src);
 
             tunnel
                 .add_session(app_src, app_dst, Some(info.target))
