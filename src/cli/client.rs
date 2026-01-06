@@ -5,8 +5,10 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::cli::args::{ClientArgs, ClientMode};
 use crate::lang::Role;
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::{BytesSession, socks};
-use crate::net::{Channel, TcpConnector, TunnelClient, TunnelEofMethod, fmt_stream_name};
+use crate::net::proto::{BytesSession, TurboSession, socks};
+use crate::net::{
+    Channel, TcpConnector, TcpSessionBuilder, TunnelClient, TunnelEofMethod, fmt_stream_name,
+};
 
 pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
     log::info!("Proteus is running in Client mode.");
@@ -18,15 +20,34 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
         .to_string();
 
     match args.mode {
-        ClientMode::Stream => run_stream_client(args, psf_path).await?,
-        ClientMode::Tunnel => run_tunnel_client(args, psf_path).await?,
+        ClientMode::Stream => {
+            if args.session.turbo {
+                run_stream_client::<TurboSession<OwnedReadHalf, OwnedWriteHalf>>(args, psf_path)
+                    .await?
+            } else {
+                run_stream_client::<BytesSession<OwnedReadHalf, OwnedWriteHalf>>(args, psf_path)
+                    .await?
+            }
+        }
+        ClientMode::Tunnel => {
+            if args.session.turbo {
+                run_tunnel_client::<TurboSession<OwnedReadHalf, OwnedWriteHalf>>(args, psf_path)
+                    .await?
+            } else {
+                run_tunnel_client::<BytesSession<OwnedReadHalf, OwnedWriteHalf>>(args, psf_path)
+                    .await?
+            }
+        }
     }
 
     log::info!("Proteus completed, exiting now.");
     Ok(())
 }
 
-async fn run_stream_client(args: ClientArgs, psf_path: String) -> anyhow::Result<()> {
+async fn run_stream_client<S: TcpSessionBuilder>(
+    args: ClientArgs,
+    psf_path: String,
+) -> anyhow::Result<()> {
     log::info!(
         "Running in stream mode, will create a new Proteus tunnel for each application stream."
     );
@@ -45,7 +66,7 @@ async fn run_stream_client(args: ClientArgs, psf_path: String) -> anyhow::Result
         tokio::spawn(async move {
             let channel =
                 Channel::disconnected(Socks5Target::from(server_addr), TcpConnector::default());
-            let tunnel = TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
+            let tunnel = TunnelClient::<S>::new(TunnelEofMethod::OnStreamCount(1));
 
             match add_stream_to_tunnel(app_stream, tunnel.clone()).await {
                 Ok(_) => {
@@ -64,7 +85,10 @@ async fn run_stream_client(args: ClientArgs, psf_path: String) -> anyhow::Result
     }
 }
 
-async fn run_tunnel_client(args: ClientArgs, psf_path: String) -> anyhow::Result<()> {
+async fn run_tunnel_client<S: TcpSessionBuilder>(
+    args: ClientArgs,
+    psf_path: String,
+) -> anyhow::Result<()> {
     log::info!(
         "Running in tunnel mode, will multiplex all application streams over a single Proteus tunnel."
     );
@@ -77,7 +101,7 @@ async fn run_tunnel_client(args: ClientArgs, psf_path: String) -> anyhow::Result
     // We use a channel to manage a single connection to the proxy server.
     let channel = Channel::disconnected(Socks5Target::from(server_addr), TcpConnector::default());
     // We use a tunnel to manage the incoming virtual application stream sessions.
-    let tunnel = TunnelClient::new(TunnelEofMethod::OnClose);
+    let tunnel = TunnelClient::<S>::new(TunnelEofMethod::OnClose);
 
     // TODO: gracefully handle channel/tunnel close. (On timeout? On ctrl-c?)
 
@@ -104,9 +128,9 @@ async fn run_tunnel_client(args: ClientArgs, psf_path: String) -> anyhow::Result
     }
 }
 
-async fn add_stream_to_tunnel(
+async fn add_stream_to_tunnel<S: TcpSessionBuilder>(
     app_stream: TcpStream,
-    mut tunnel: TunnelClient<BytesSession<OwnedReadHalf, OwnedWriteHalf>>,
+    mut tunnel: TunnelClient<S>,
 ) -> anyhow::Result<()> {
     let peer_name = fmt_stream_name(&app_stream);
     log::debug!("Accepted new connection from client application {peer_name}");

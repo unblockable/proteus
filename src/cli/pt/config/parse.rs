@@ -132,7 +132,7 @@ impl Parser {
 
             if k == keys::TRANSPORT_NAME {
                 let (k, v) = Self::split_in_two(v, "=")?;
-                map.insert(k.to_string(), v.to_string());
+                map.insert(k.to_string().to_lowercase(), v.to_string());
             }
         }
 

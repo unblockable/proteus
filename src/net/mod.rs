@@ -7,7 +7,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
+use crate::net::proto::TunnelMessage;
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
+use crate::net::session::SessionBuilder;
 
 mod channel;
 pub mod proto;
@@ -171,4 +173,20 @@ impl Clone for FixedTargetTcpConnector {
     fn clone(&self) -> Self {
         Self::new(self.fixed_target.clone())
     }
+}
+
+/// A SessionBuilder backed by TCP connection halves.
+pub trait TcpSessionBuilder:
+    SessionBuilder<Message = TunnelMessage, ReadHalf = OwnedReadHalf, WriteHalf = OwnedWriteHalf>
+    + 'static
+{
+}
+/// Blanket implementation for all types that satisfy the bounds.
+impl<T> TcpSessionBuilder for T where
+    T: SessionBuilder<
+            Message = TunnelMessage,
+            ReadHalf = OwnedReadHalf,
+            WriteHalf = OwnedWriteHalf,
+        > + 'static
+{
 }

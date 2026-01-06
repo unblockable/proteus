@@ -63,7 +63,10 @@ impl TurboMessage {
             command,
         }
     }
+}
 
+#[cfg(test)]
+impl TurboMessage{
     pub fn forward(write: DataCursor, read: DataCursor, payload: Bytes) -> Self {
         Self::new(write, read, Command::Forward(payload.into()))
     }

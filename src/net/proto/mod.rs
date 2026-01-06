@@ -6,3 +6,5 @@ mod turbo;
 
 pub use bytes::BytesSession;
 pub use turbo::TurboSession;
+
+pub use tunnel::message::TunnelMessage;

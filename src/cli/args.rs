@@ -53,12 +53,20 @@ pub struct CliArgs {
     pub command: Command,
 }
 
+#[derive(Debug, Args)]
+pub struct SessionArgs {
+    /// Use a session-management protocol to recover from broken tunnels.
+    #[arg(short, long, value_name = "BOOL", default_value_t = false)]
+    // Using the full bool path to stop clap from treating this as a simple flag.
+    pub turbo: std::primitive::bool,
+}
+
 /// Holds the supported subcommands and their args.
 #[derive(Subcommand)]
 pub enum Command {
-    /// Relay network traffic between applications and Proteus proxy servers.
+    /// Relay network traffic between applications and proteus proxy servers.
     Client(ClientArgs),
-    /// Relay network traffic between Proteus clients and Internet destinations.
+    /// Relay network traffic between proteus clients and Internet destinations.
     Server(ServerArgs),
     /// Relay network traffic through proteus tunnels using the pluggable transport v1 API.
     Pt(PtArgs),
@@ -82,11 +90,14 @@ pub struct ClientArgs {
     /// The address of the proteus proxy server to which we connect our tunnels.
     #[arg(short, long, value_name = "ADDR:PORT", required = true)]
     pub connect: String,
-    /// The address to listen for client application connections (use port 0 to auto-select)
+    /// The address to listen for client application connections (use port 0 to auto-select).
     #[arg(short, long, value_name = "ADDR:PORT", default_value = "127.0.0.1:0")]
     pub listen: String,
+    /// The mode for connecting to the proteus proxy server.
     #[arg(short, long, default_value = "tunnel")]
     pub mode: ClientMode,
+    #[command(flatten)]
+    pub session: SessionArgs,
 }
 
 #[derive(Args)]
@@ -94,11 +105,14 @@ pub struct ServerArgs {
     /// The proteus protocol specification to use for our tunnels.
     #[arg(required = true)]
     pub protocol: PathBuf,
-    /// The address to listen for proteus client connections (use port 0 to auto-select)
+    /// The address to listen for proteus client connections (use port 0 to auto-select).
     #[arg(short, long, value_name = "ADDR:PORT", default_value = "127.0.0.1:0")]
     pub listen: String,
+    #[command(flatten)]
+    pub session: SessionArgs,
 }
 
+// Args for PT mode are configured via env variables.
 #[derive(Args)]
 pub struct PtArgs {}
 

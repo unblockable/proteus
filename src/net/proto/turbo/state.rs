@@ -79,7 +79,7 @@ impl TurboState {
         } else if self.state == State::LocalShutRemoteShut {
             Poll::Ready(None)
         } else if self.next_ack {
-            let ack = TurboMessage::forward_ack(self.write_inc(), self.read);
+            let ack = TurboMessage::new(self.write_inc(), self.read, Command::ForwardAck);
             self.retransmit_q.push(Reverse(ack.clone()));
             self.next_ack = false;
             Poll::Ready(Some(ack))

@@ -12,7 +12,7 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::proto::socks::address::Socks5Target;
-use crate::net::proto::{BytesSession, socks};
+use crate::net::proto::{TurboSession, socks};
 use crate::net::{
     AsyncConnectExt, Channel, FixedTargetTcpConnector, TcpConnector, TunnelClient, TunnelEofMethod,
     TunnelServer, fmt_stream_name,
@@ -137,7 +137,7 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                         let parts: Vec<&str> =
                             entry.split('=').filter(|tok| !tok.is_empty()).collect();
                         if parts.len() == 2 {
-                            let k = parts.first().unwrap().to_string();
+                            let k = parts.first().unwrap().to_string().to_lowercase();
                             let v = parts.get(1).unwrap().to_string();
                             map.insert(k, v);
                         }
@@ -161,14 +161,19 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
             // We currently removed that from our SOCKS impl to handle other modes.
             log::debug!("Will need to connect network tunnel to proxy server {target}",);
 
-            if false {
-                // TODO run a wrapped tunnel session.
+            if options
+                .get("turbo")
+                .map_or(false, |v| v.to_ascii_lowercase().eq("true"))
+            {
+                log::debug!("Forwarding bytes using a turbo-tunnel session management protocol");
+                // Wrap the connection in a tunnel using the Turbo protocol.
                 let net = Channel::disconnected(target, TcpConnector::default());
-                let mut app: TunnelClient<BytesSession<_, _>> =
+                let mut app: TunnelClient<TurboSession<_, _>> =
                     TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
                 app.add_session(app_src, app_dst, None).await;
                 super::run_interpreter(net.clone(), net, app.clone(), app, client_spec).await;
             } else {
+                log::debug!("Forwarding bytes without session management");
                 // Use the TcpStream io directly without wrappers.
                 match TcpConnector::default().connect(target.clone()).await {
                     Ok((net_src, net_dst, name)) => {
@@ -257,14 +262,20 @@ where
 
     let target = Socks5Target::from(conf.forward_addr);
 
-    if false {
-        // TODO run a wrapped tunnel session.
+    if conf
+        .options
+        .get("turbo")
+        .map_or(false, |v| v.to_ascii_lowercase().eq("true"))
+    {
+        log::debug!("Forwarding bytes using a turbo-tunnel session management protocol");
+        // Wrap the connection in a tunnel using the Turbo protocol.
         let connector = FixedTargetTcpConnector::new(target);
-        let app: TunnelServer<BytesSession<_, _>, _> =
+        let app: TunnelServer<TurboSession<_, _>, _> =
             TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector);
         let net = Channel::connected(net_src, net_dst, peer_name);
         super::run_interpreter(net.clone(), net, app.clone(), app, server_spec).await;
     } else {
+        log::debug!("Forwarding bytes without session management");
         // Use the TcpStream io directly without wrappers.
         match TcpConnector::default().connect(target.clone()).await {
             Ok((app_src, app_dst, name)) => {
