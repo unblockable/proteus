@@ -2,7 +2,7 @@ use std::future::Future;
 use std::io;
 
 use bytes::Bytes;
-use rand::distributions::{Alphanumeric, DistString};
+use rand::distr::{Alphanumeric, SampleString};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(test)]
 use {
@@ -38,7 +38,7 @@ pub fn payload_len_iter() -> impl Iterator<Item = usize> {
 }
 
 pub fn payload(len: usize) -> Bytes {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let s = Alphanumeric.sample_string(&mut rng, len);
     Bytes::from(s)
 }

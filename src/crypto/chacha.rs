@@ -1,5 +1,5 @@
-use chacha20poly1305::ChaCha20Poly1305;
-use chacha20poly1305::aead::{Aead, NewAead};
+use chacha20poly1305::aead::Aead;
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 use salsa20::Salsa20;
 use salsa20::cipher::{KeyIvInit, StreamCipher};
 

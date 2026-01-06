@@ -4,6 +4,9 @@ use std::collections::hash_map::HashMap;
 use std::convert::{From, TryFrom};
 use std::str::FromStr;
 
+use rand::TryRngCore;
+use rand_core::OsRng;
+
 use crate::lang::Role;
 
 pub trait StaticallySized {
@@ -701,9 +704,8 @@ impl Semantics {
                 ),
                 FieldSemantic::FixedBytes(b) => (e.0.clone(), b.clone()),
                 FieldSemantic::Random(n) => {
-                    use rand_core::{OsRng, RngCore};
                     let mut bytes = vec![0; *n];
-                    OsRng.fill_bytes(&mut bytes);
+                    OsRng.try_fill_bytes(&mut bytes).unwrap();
                     (e.0.clone(), bytes)
                 }
                 FieldSemantic::Pubkey(encoding) => {

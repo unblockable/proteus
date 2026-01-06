@@ -7,7 +7,7 @@ mod integration {
         for len in [
             1, 10, 100, 1000, 1500, 2000, 5000, 10_000, 100_000, 1_000_000,
         ] {
-            let output = test_bin::get_test_bin("proteus")
+            let output = test_bin::get_test_bin!("proteus")
                 .arg("check")
                 .args(["--num-bytes", format!("{len}").as_str()])
                 .arg(psf_filepath)
