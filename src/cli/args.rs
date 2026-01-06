@@ -37,7 +37,7 @@ pub struct CliArgs {
         global = true,
         value_name = "LEVEL",
         default_value = "info",
-        display_order = 0
+        display_order = 10
     )]
     pub log_level: EnumerableLevelFilter,
     /// Override log filters using RUST_LOG directives supported by the env_logger crate.
@@ -46,7 +46,7 @@ pub struct CliArgs {
         long,
         global = true,
         value_name = "FILTERS",
-        display_order = 1
+        display_order = 11
     )]
     pub log_filter: Option<String>,
     #[command(subcommand)]
@@ -56,7 +56,7 @@ pub struct CliArgs {
 /// Holds the supported subcommands and their args.
 #[derive(Subcommand)]
 pub enum Command {
-    /// Relay network traffic from applications through Proteus proxy server tunnels.
+    /// Relay network traffic between applications and Proteus proxy servers.
     Client(ClientArgs),
     /// Relay network traffic between Proteus clients and Internet destinations.
     Server(ServerArgs),
@@ -79,12 +79,12 @@ pub struct ClientArgs {
     /// The proteus protocol specification to use for our tunnels.
     #[arg(required = true)]
     pub protocol: PathBuf,
-    /// The address to listen for client application connections (use port 0 to auto-select)
-    #[arg(short, long, value_name = "ADDR:PORT", default_value = "127.0.0.1:0")]
-    pub listen: String,
     /// The address of the proteus proxy server to which we connect our tunnels.
     #[arg(short, long, value_name = "ADDR:PORT", required = true)]
     pub connect: String,
+    /// The address to listen for client application connections (use port 0 to auto-select)
+    #[arg(short, long, value_name = "ADDR:PORT", default_value = "127.0.0.1:0")]
+    pub listen: String,
     #[arg(short, long, default_value = "tunnel")]
     pub mode: ClientMode,
 }
@@ -113,7 +113,7 @@ pub struct CheckArgs {
         long,
         value_name = "N",
         default_value = "1024",
-        display_order = 2
+        display_order = 0
     )]
     pub num_bytes: usize,
 }
