@@ -11,7 +11,10 @@ mod data;
 pub mod interpreter;
 pub mod ir;
 mod message;
+mod result;
 mod types;
+
+pub use result::{Result, RuntimeError};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Role {

@@ -34,6 +34,10 @@ where
         }
     }
 
+    pub fn into_inner(self) -> (R, W) {
+        (self.src, self.dst)
+    }
+
     pub async fn send(&mut self, mut bytes: Bytes) -> io::Result<usize> {
         log::trace!("Entering io::send({})", bytes.len());
 

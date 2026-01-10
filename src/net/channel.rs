@@ -332,9 +332,9 @@ mod tests {
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
-    use crate::lang::Role;
     use crate::lang::ir::bridge::TaskProvider;
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
+    use crate::lang::{self, Role};
     use crate::net::Channel;
 
     fn wrapped_proxy<R, W>(app_io: MockIo, net_io: Channel<R, W>) -> MockProxy
@@ -351,7 +351,7 @@ mod tests {
     async fn connected_channel_direct_io(
         _: Option<u8>,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (lang::Result<()>, lang::Result<()>) {
         // Channel is already connected.
         let channel = Channel::connected(proxy.net.reader, proxy.net.writer, String::from("Test"));
         mock::io_copy_direct(None::<u8>, wrapped_proxy(proxy.app, channel)).await
@@ -375,7 +375,7 @@ mod tests {
     async fn disconnected_channel_direct_io_client(
         connector: MockConnector,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (lang::Result<()>, lang::Result<()>) {
         // Client starts in a disconnected state.
         let channel = Channel::disconnected(MockConnector::default_target(), connector);
         // The channel should handle the connection transparently, so we can start io already.
@@ -385,7 +385,7 @@ mod tests {
     async fn disconnected_channel_direct_io_server(
         replaced_net: MockIo,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (lang::Result<()>, lang::Result<()>) {
         // The server is already connected using the remote socket from the client connection.
         let channel = Channel::connected(
             replaced_net.reader,
@@ -418,7 +418,7 @@ mod tests {
     async fn connected_channel_interpreter_io<T: TaskProvider + Clone + Send>(
         protospec: T,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (lang::Result<()>, lang::Result<()>) {
         // Channel is already connected.
         let channel = Channel::connected(proxy.net.reader, proxy.net.writer, String::from("Test"));
         mock::io_copy_interpreter(protospec, wrapped_proxy(proxy.app, channel)).await
@@ -442,7 +442,7 @@ mod tests {
     async fn disconnected_channel_interpreter_io_client(
         connector: MockConnector,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (lang::Result<()>, lang::Result<()>) {
         // Client starts in a disconnected state.
         let channel = Channel::disconnected(MockConnector::default_target(), connector);
         // The channel should handle the connection transparently, so we can start io already.
@@ -456,7 +456,7 @@ mod tests {
     async fn disconnected_channel_interpreter_io_server(
         replaced_net: MockIo,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    ) -> (lang::Result<()>, lang::Result<()>) {
         // The server is already connected using the remote socket from the client connection.
         let channel = Channel::connected(
             replaced_net.reader,

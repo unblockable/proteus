@@ -698,7 +698,7 @@ pub mod tests {
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
-    use crate::lang::Role;
+    use crate::lang::{self, Role};
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
     use crate::net::proto::tunnel::message::TunnelMessage;
     use crate::net::session::SessionBuilder;
@@ -775,7 +775,7 @@ pub mod tests {
     async fn connected_client<S>(
         io_kind: MockIoKind,
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>)
+    ) -> (lang::Result<()>, lang::Result<()>)
     where
         S: SessionBuilder<
                 Message = TunnelMessage,
@@ -806,7 +806,7 @@ pub mod tests {
     async fn server<S>(
         args: (MockIoKind, MockSocketKind),
         proxy: MockProxy,
-    ) -> (anyhow::Result<()>, anyhow::Result<()>)
+    ) -> (lang::Result<()>, lang::Result<()>)
     where
         S: SessionBuilder<
                 Message = TunnelMessage,

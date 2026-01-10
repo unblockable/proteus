@@ -45,6 +45,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
     pub fn clear_heap(&mut self) {
         self.heap.clear();
     }
+
+    pub fn into_inner(self) -> (R, W) {
+        self.io.into_inner()
+    }
 }
 
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, W> {

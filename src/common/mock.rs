@@ -8,7 +8,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use {
     crate::net::AsyncConnect,
     crate::net::proto::socks::address::{Socks5Address, Socks5Target},
-    anyhow::anyhow,
     std::pin::Pin,
     std::sync::{Arc, Mutex},
     std::task::{Context, Poll},
@@ -18,6 +17,7 @@ use {
 
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
+use crate::lang;
 use crate::net::CHUNK_SIZE;
 
 #[cfg(test)]
@@ -136,8 +136,8 @@ impl MockProxyNetwork {
     where
         FC: Fn(C, MockProxy) -> FutC,
         FS: Fn(S, MockProxy) -> FutS,
-        FutC: Future<Output = (anyhow::Result<()>, anyhow::Result<()>)>,
-        FutS: Future<Output = (anyhow::Result<()>, anyhow::Result<()>)>,
+        FutC: Future<Output = (lang::Result<()>, lang::Result<()>)>,
+        FutS: Future<Output = (lang::Result<()>, lang::Result<()>)>,
     {
         let results = tokio::join!(
             // Run the client-side app tasks.
@@ -168,10 +168,10 @@ impl MockProxyNetwork {
 pub struct Result {
     pub c_app_src: io::Result<Bytes>,
     pub c_app_dst: io::Result<Bytes>,
-    pub c_app_to_net: anyhow::Result<()>,
-    pub c_net_to_app: anyhow::Result<()>,
-    pub s_app_to_net: anyhow::Result<()>,
-    pub s_net_to_app: anyhow::Result<()>,
+    pub c_app_to_net: lang::Result<()>,
+    pub c_net_to_app: lang::Result<()>,
+    pub s_app_to_net: lang::Result<()>,
+    pub s_net_to_app: lang::Result<()>,
     pub s_app_src: io::Result<Bytes>,
     pub s_app_dst: io::Result<Bytes>,
 }
@@ -248,7 +248,7 @@ where
 pub async fn io_copy_direct(
     _: Option<u8>,
     proxy: MockProxy,
-) -> (anyhow::Result<()>, anyhow::Result<()>) {
+) -> (lang::Result<()>, lang::Result<()>) {
     // Note: we MUST moved the streams so they are dropped when the copy completes.
     // Use the `mock::copy()` function. This ensures that when the copy completes,
     // the underlying streams are dropped, and the EOF correctly propagates backwards.
@@ -258,23 +258,24 @@ pub async fn io_copy_direct(
     );
     // Discard the count of bytes copied on Ok.
     (
-        app_to_net.map(|_| ()).map_err(|e| anyhow!(e)),
-        net_to_app.map(|_| ()).map_err(|e| anyhow!(e)),
+        app_to_net.map(|_| ()).map_err(|e| e.into()),
+        net_to_app.map(|_| ()).map_err(|e| e.into()),
     )
 }
 
 pub async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
     protospec: T,
     proxy: MockProxy,
-) -> (anyhow::Result<()>, anyhow::Result<()>) {
-    Interpreter::run(
+) -> (lang::Result<()>, lang::Result<()>) {
+    let result = Interpreter::run(
         proxy.net.reader,
         proxy.net.writer,
         proxy.app.reader,
         proxy.app.writer,
         protospec,
     )
-    .await
+    .await;
+    (result.app_to_net.result, result.net_to_app.result)
 }
 
 pub async fn check_protocol_interpretability<T: TaskProvider + Clone + Send>(

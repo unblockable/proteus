@@ -100,12 +100,6 @@ async fn run_interpreter(
     app_dst: impl AsyncWrite + Unpin,
     protocol_spec: impl TaskProvider + Clone + Send,
 ) {
-    match Interpreter::run(net_src, net_dst, app_src, app_dst, protocol_spec).await {
-        (Ok(_), Ok(_)) => log::debug!("Tunnel protocol succeeded",),
-        (Ok(_), Err(e)) => log::debug!("Tunnel protocol failed: app-to-net: {e}",),
-        (Err(e), Ok(_)) => log::debug!("Tunnel protocol failed: net-to-app: {e}",),
-        (Err(e1), Err(e2)) => {
-            log::debug!("Tunnel protocol failed: app-to-net: {e1}, net-to-app: {e2}",)
-        }
-    }
+    let result = Interpreter::run(net_src, net_dst, app_src, app_dst, protocol_spec).await;
+    log::info!("Interpreter completed with result: {result}");
 }
