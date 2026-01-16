@@ -2,13 +2,13 @@ use loader::Loader;
 use tokio::io::{AsyncRead, AsyncWrite};
 use vm::VirtualMachine;
 
+use crate::lang;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::lang::{ExecuteOk, RuntimeError};
 
-mod crypto;
-mod io;
+pub mod crypto;
+pub mod io;
 mod loader;
-mod mem;
+pub mod mem;
 pub mod program;
 mod vm;
 
@@ -26,7 +26,7 @@ pub struct RunResult<NetR, AppR, NetW, AppW> {
 
 #[derive(Debug)]
 pub struct ForwardResult<R, W> {
-    pub result: Result<(), RuntimeError>,
+    pub result: lang::Result<()>,
     pub src: R,
     pub dst: W,
 }
@@ -108,7 +108,7 @@ impl Interpreter {
             // Load a program for our direction, once one becomes available.
             let mut program = match loader.load(direction).await {
                 Ok(prog) => prog,
-                Err(e) => return make_result(vm, Err(RuntimeError::Anyhow(e))),
+                Err(e) => return make_result(vm, lang::Error::Anyhow(e)),
             };
 
             // Runs the program by executing its sequence of instructions.
@@ -117,27 +117,26 @@ impl Interpreter {
             // The loader needs to know that this program finished, even on error.
             let unload_result = loader.unload(program);
 
-            if let Ok(ExecuteOk::ReadEof) = exe_result {
-                return make_result(vm, Ok(()));
-            } else if let Err(e) = exe_result {
-                return make_result(vm, Err(RuntimeError::Anyhow(e)));
+            if let Err(e) = exe_result {
+                return make_result(vm, e);
             } else if let Err(e) = unload_result {
-                return make_result(vm, Err(RuntimeError::Anyhow(e)));
+                return make_result(vm, lang::Error::Anyhow(e));
             }
         }
     }
 }
 
-fn make_result<R, W>(
-    vm: VirtualMachine<R, W>,
-    result: Result<(), RuntimeError>,
-) -> ForwardResult<R, W>
+fn make_result<R, W>(vm: VirtualMachine<R, W>, e: lang::Error) -> ForwardResult<R, W>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let (src, dst) = vm.into_inner();
-    ForwardResult { result, src, dst }
+    ForwardResult {
+        result: Err(e),
+        src,
+        dst,
+    }
 }
 
 #[cfg(test)]

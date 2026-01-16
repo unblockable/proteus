@@ -227,11 +227,15 @@ impl Message {
         self.data.freeze()
     }
 
-    pub fn into_inner_field(mut self, field_name: &Identifier) -> Option<Bytes> {
-        self.format
+    pub fn into_inner_field(mut self, field_name: &Identifier) -> Result<Bytes, GetFieldError> {
+        match self
+            .format
             .format
             .try_get_field_type_offset_and_size(field_name)
-            .map(|(_, offset, size)| self.data.split_off(offset).split_to(size).freeze())
+        {
+            Some((_, offset, size)) => Ok(self.data.split_off(offset).split_to(size).freeze()),
+            None => Err(GetFieldError::NotDefined),
+        }
     }
 }
 

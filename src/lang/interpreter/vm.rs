@@ -1,6 +1,3 @@
-use std::io;
-
-use anyhow::{anyhow, bail};
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -14,7 +11,7 @@ use crate::lang::ir::Instruction;
 use crate::lang::ir::v1::*;
 use crate::lang::message::Message;
 use crate::lang::types::{Identifier, PubkeyEncoding};
-use crate::lang::{Execute, ExecuteOk, Role, Runtime};
+use crate::lang::{self, Execute, Role, Runtime};
 
 pub struct VirtualMachine<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> {
     heap: Heap,
@@ -52,69 +49,85 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
 }
 
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, W> {
-    fn store<T: Into<Data>>(&mut self, addr: Identifier, data: T) -> anyhow::Result<()> {
-        self.heap.insert(addr, data)
+    fn store<T: Into<Data>>(&mut self, addr: Identifier, data: T) -> lang::Result<()> {
+        self.heap
+            .insert(addr, data)
+            .map_err(|e| lang::Error::Mem(e))
     }
 
-    fn load<'a, T: TryFrom<&'a Data>>(&'a self, addr: &Identifier) -> anyhow::Result<T> {
-        self.heap.get(addr)
+    fn load<'a, T: TryFrom<&'a Data>>(&'a self, addr: &Identifier) -> lang::Result<T> {
+        self.heap.get(addr).map_err(|e| lang::Error::Mem(e))
     }
 
-    fn drop<T: TryFrom<Data>>(&mut self, addr: &Identifier) -> anyhow::Result<T> {
-        self.heap.remove(addr)
+    fn drop<T: TryFrom<Data>>(&mut self, addr: &Identifier) -> lang::Result<T> {
+        self.heap.remove(addr).map_err(|e| lang::Error::Mem(e))
     }
 
-    fn init_key(&mut self, key: &[u8]) -> anyhow::Result<()> {
-        self.crypto.init_key(key)
+    fn init_key(&mut self, key: &[u8]) -> lang::Result<()> {
+        self.crypto.init_key(key);
+        Ok(())
     }
 
-    fn create_cipher(&mut self, secret_key: [u8; 32], kind: CipherKind) {
-        self.crypto.create_cipher(secret_key, kind);
+    fn create_cipher(&mut self, secret_key: [u8; 32], kind: CipherKind) -> lang::Result<()> {
+        self.crypto
+            .create_cipher(secret_key, kind)
+            .map_err(|e| lang::Error::Crypto(e))
     }
 
-    fn encrypt(&mut self, plaintext: &[u8]) -> anyhow::Result<(Vec<u8>, [u8; 16])> {
-        self.crypto.encrypt(plaintext)
+    fn encrypt(&mut self, plaintext: &[u8]) -> lang::Result<(Vec<u8>, [u8; 16])> {
+        self.crypto
+            .encrypt(plaintext)
+            .map_err(|e| lang::Error::Crypto(e))
     }
 
-    fn encrypt_unauth(&mut self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
-        self.crypto.encrypt_unauth(plaintext)
+    fn encrypt_unauth(&mut self, plaintext: &[u8]) -> lang::Result<Vec<u8>> {
+        self.crypto
+            .encrypt_unauth(plaintext)
+            .map_err(|e| lang::Error::Crypto(e))
     }
 
-    fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> anyhow::Result<Vec<u8>> {
-        self.crypto.decrypt(ciphertext, mac)
+    fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> lang::Result<Vec<u8>> {
+        self.crypto
+            .decrypt(ciphertext, mac)
+            .map_err(|e| lang::Error::Crypto(e))
     }
 
-    fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
-        self.crypto.decrypt_unauth(ciphertext)
+    fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> lang::Result<Vec<u8>> {
+        self.crypto
+            .decrypt_unauth(ciphertext)
+            .map_err(|e| lang::Error::Crypto(e))
     }
 
-    async fn send(&mut self, bytes: Bytes) -> io::Result<usize> {
-        self.io.send(bytes).await
+    async fn send(&mut self, bytes: Bytes) -> lang::Result<usize> {
+        self.io.send(bytes).await.map_err(|e| lang::Error::Io(e))
     }
 
-    async fn flush(&mut self) -> io::Result<()> {
-        self.io.flush().await
+    async fn flush(&mut self) -> lang::Result<()> {
+        self.io.flush().await.map_err(|e| lang::Error::Io(e))
     }
 
-    async fn shutdown(&mut self) -> io::Result<()> {
-        self.io.shutdown().await
+    async fn shutdown(&mut self) -> lang::Result<()> {
+        self.io.shutdown().await.map_err(|e| lang::Error::Io(e))
     }
 
-    async fn read(&mut self, len: usize) -> io::Result<Bytes> {
-        self.io.read(len).await
+    async fn read(&mut self, len: usize) -> lang::Result<Bytes> {
+        self.io.read(len).await.map_err(|e| lang::Error::Io(e))
     }
 
-    fn try_read(&mut self, len: usize) -> io::Result<Option<Bytes>> {
-        self.io.try_read(len)
+    fn try_read(&mut self, len: usize) -> lang::Result<Option<Bytes>> {
+        self.io.try_read(len).map_err(|e| lang::Error::Io(e))
     }
 
-    async fn read_exact(&mut self, len: usize) -> io::Result<Bytes> {
-        self.io.read_exact(len).await
+    async fn read_exact(&mut self, len: usize) -> lang::Result<Bytes> {
+        self.io
+            .read_exact(len)
+            .await
+            .map_err(|e| lang::Error::Io(e))
     }
 }
 
 impl Execute for Instruction {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         match self {
             Instruction::V1(ins) => ins.execute(runtime).await,
         }
@@ -122,7 +135,7 @@ impl Execute for Instruction {
 }
 
 impl Execute for InstructionV1 {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         match &self {
             InstructionV1::ComputeLength(ins) => ins.execute(runtime).await,
             InstructionV1::ConcretizeFormat(ins) => ins.execute(runtime).await,
@@ -144,16 +157,16 @@ impl Execute for InstructionV1 {
 }
 
 impl Execute for ComputeLengthArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let len = msg.len_suffix(&self.from_field_id);
         runtime.store(self.to_heap_id.clone(), len as u128)?;
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for ConcretizeFormatArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let aformat = self.from_format.clone();
 
         // The following block is ryans hack to support padding.
@@ -186,7 +199,7 @@ impl Execute for ConcretizeFormatArgs {
 
         // Get the fields that have dynamic lengths, and compute what the lengths
         // will be now that we should have the data for each field on the heap.
-        let concrete_bytes: Vec<(Identifier, anyhow::Result<&Bytes>)> = aformat
+        let concrete_bytes: Vec<(Identifier, lang::Result<&Bytes>)> = aformat
             .get_dynamic_arrays()
             .iter()
             .map(|id| {
@@ -209,12 +222,12 @@ impl Execute for ConcretizeFormatArgs {
         // Store it for use by later instructions.
         runtime.store(self.to_heap_id.clone(), cformat)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for CreateMessageArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         // Create a message with an existing concrete format.
         let cformat = runtime.drop(&self.from_format_heap_id)?;
         let msg = Message::new(cformat);
@@ -222,24 +235,30 @@ impl Execute for CreateMessageArgs {
         // Store the message for use in later instructions.
         runtime.store(self.to_heap_id.clone(), msg)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for DecryptFieldArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         // TODO way too much copying here :(
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let ciphertext = msg
             .get_field_bytes(&self.from_ciphertext_field_id)
-            .map_err(|_| anyhow!("No ciphertext bytes"))?;
+            .map_err(|e| lang::Error::GetFieldError {
+                field_id: self.from_ciphertext_field_id.clone(),
+                err: e,
+            })?;
 
         // TODO Should auth and unauth encrypt be separate instructions?
-        let plaintext = if self.from_mac_field_id.is_some() {
+        let plaintext = if let Some(fid) = self.from_mac_field_id.as_ref() {
             // We are doing authenticated encryption.
             let mac = msg
-                .get_field_bytes(self.from_mac_field_id.as_ref().unwrap())
-                .map_err(|_| anyhow!("No mac bytes"))?;
+                .get_field_bytes(fid)
+                .map_err(|e| lang::Error::GetFieldError {
+                    field_id: fid.clone(),
+                    err: e,
+                })?;
 
             let mut mac_fixed = [0u8; 16];
             mac_fixed.copy_from_slice(&mac);
@@ -254,16 +273,19 @@ impl Execute for DecryptFieldArgs {
         buf.put_slice(&plaintext);
         runtime.store(self.to_plaintext_heap_id.clone(), buf.freeze())?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for EncryptFieldArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
-        let plaintext = msg
-            .get_field_bytes(&self.from_field_id)
-            .map_err(|_| anyhow!("No field bytes"))?;
+        let plaintext =
+            msg.get_field_bytes(&self.from_field_id)
+                .map_err(|e| lang::Error::GetFieldError {
+                    field_id: self.from_field_id.clone(),
+                    err: e,
+                })?;
 
         // TODO Should auth and unauth encrypt be separate instructions?
         if self.to_mac_heap_id.is_some() {
@@ -285,36 +307,42 @@ impl Execute for EncryptFieldArgs {
             runtime.store(self.to_ciphertext_heap_id.clone(), buf.freeze())?;
         }
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for GetArrayBytesArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
-        let bytes = msg
-            .get_field_bytes(&self.from_field_id)
-            .map_err(|_| anyhow!("No field bytes"))?;
+        let bytes =
+            msg.get_field_bytes(&self.from_field_id)
+                .map_err(|e| lang::Error::GetFieldError {
+                    field_id: self.from_field_id.clone(),
+                    err: e,
+                })?;
         runtime.store(self.to_heap_id.clone(), bytes)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for GetNumericValueArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let num = msg
             .get_field_unsigned_numeric(&self.from_field_id)
-            .map_err(|_| anyhow!("No field num"))?;
+            .map_err(|e| lang::Error::GetFieldError {
+                field_id: self.from_field_id.clone(),
+                err: e,
+            })?;
         runtime.store(self.to_heap_id.clone(), num)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for InitFixedSharedKeyArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let salt = "stupid stupid stupid";
         let skey = kdf::derive_key_256(self.password.as_str(), salt);
 
@@ -323,14 +351,14 @@ impl Execute for InitFixedSharedKeyArgs {
             Role::Server => CipherKind::Receiver,
         };
 
-        runtime.create_cipher(skey, kind);
+        runtime.create_cipher(skey, kind)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for ReadArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let len = match &self.from_len {
             ReadLength::Identifier(id) => {
                 let num: &u128 = runtime.load(id)?;
@@ -361,111 +389,105 @@ impl Execute for ReadArgs {
         match io_result {
             Ok(data) => {
                 runtime.store(self.to_heap_id.clone(), data)?;
-                Ok(ExecuteOk::Ok)
+                Ok(())
             }
             Err(e) => {
                 // We will stop forwarding data too.
                 let _ = runtime.shutdown().await;
-
-                if let io::ErrorKind::UnexpectedEof = e.kind() {
-                    Ok(ExecuteOk::ReadEof)
-                } else {
-                    bail!("Read({:?},{:?}) error {e}", self.which, self.how)
-                }
+                Err(e)
             }
         }
     }
 }
 
 impl Execute for SetArrayBytesArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let mut msg: Message = runtime.drop(&self.to_msg_heap_id)?;
         let bytes = runtime.load(&self.from_heap_id)?;
         msg.set_field_bytes(&self.to_field_id, bytes)
-            .map_err(|_| anyhow!("No field bytes"))?;
+            .map_err(|e| lang::Error::SetFieldError {
+                field_id: self.to_field_id.clone(),
+                err: e,
+            })?;
         runtime.store(self.to_msg_heap_id.clone(), msg)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for SetNumericValueArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let mut msg: Message = runtime.drop(&self.to_msg_heap_id)?;
         let val: &u128 = runtime.load(&self.from_heap_id)?;
         msg.set_field_unsigned_numeric(&self.to_field_id, *val)
-            .map_err(|_| anyhow!("Cannot set field num"))?;
+            .map_err(|e| lang::Error::SetFieldError {
+                field_id: self.to_field_id.clone(),
+                err: e,
+            })?;
         runtime.store(self.to_msg_heap_id.clone(), msg)?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for WriteAppArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: Message = runtime.drop(&self.from_msg_heap_id)?;
-        let data = msg
-            .into_inner_field(&self.from_field_id)
-            .ok_or(anyhow!("No msg to bytes"))?;
-        runtime
-            .send(data)
-            .await
-            .map_err(|e| anyhow!("WriteApp error {e}"))?;
+        let data =
+            msg.into_inner_field(&self.from_field_id)
+                .map_err(|e| lang::Error::GetFieldError {
+                    field_id: self.from_field_id.clone(),
+                    err: e,
+                })?;
 
-        Ok(ExecuteOk::Ok)
+        runtime.send(data).await?;
+
+        Ok(())
     }
 }
 
 impl Execute for WriteNetArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: Message = runtime.drop(&self.from_msg_heap_id)?;
         let data = msg.into_inner();
-        runtime
-            .send(data)
-            .await
-            .map_err(|e| anyhow!("WriteNet error {e}"))?;
 
-        Ok(ExecuteOk::Ok)
+        runtime.send(data).await?;
+
+        Ok(())
     }
 }
 
 impl Execute for WriteNetTwiceArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: Message = runtime.drop(&self.from_msg_heap_id)?;
 
         let mut data: Bytes = msg.into_inner();
         let more = data.split_off(self.len_first_write);
 
-        runtime
-            .send(data)
-            .await
-            .map_err(|e| anyhow!("WriteNetTwice error on first write {e}"))?;
+        runtime.send(data).await?;
 
         if !more.is_empty() {
-            runtime
-                .flush()
-                .await
-                .map_err(|e| anyhow!("WriteNetTwice flush error {e}"))?;
+            runtime.flush().await?;
             // If we decide we need a delay to ensure the second write
             // is sent in a separate packet, we can use the following.
             // std::thread::sleep(std::time::Duration::from_millis(1));
-            runtime
-                .send(more)
-                .await
-                .map_err(|e| anyhow!("WriteNetTwice error on second write {e}"))?;
+            runtime.send(more).await?;
         }
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }
 
 impl Execute for SaveKeyArgs {
-    async fn execute(&self, runtime: &mut impl Runtime) -> anyhow::Result<ExecuteOk> {
+    async fn execute(&self, runtime: &mut impl Runtime) -> lang::Result<()> {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
 
-        let bytes = msg
-            .get_field_bytes(&self.from_field_id)
-            .map_err(|_| anyhow!("No field bytes"))?;
+        let bytes =
+            msg.get_field_bytes(&self.from_field_id)
+                .map_err(|e| lang::Error::GetFieldError {
+                    field_id: self.from_field_id.clone(),
+                    err: e,
+                })?;
 
         let decoded_key = match self.pubkey_encoding {
             PubkeyEncoding::Raw => crate::crypto::pubkey::X25519PubKey::from_bytes(&bytes),
@@ -475,6 +497,6 @@ impl Execute for SaveKeyArgs {
 
         runtime.init_key(decoded_key.as_bytes())?;
 
-        Ok(ExecuteOk::Ok)
+        Ok(())
     }
 }

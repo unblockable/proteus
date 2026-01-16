@@ -1,8 +1,24 @@
 use std::sync::{Arc, Mutex};
 
-use anyhow::anyhow;
+use crate::crypto::chacha::{Cipher, CipherError, CipherKind, DecryptionCipher, EncryptionCipher};
 
-use crate::crypto::chacha::{Cipher, CipherKind, DecryptionCipher, EncryptionCipher};
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("Mutex poisoned: {0:?}")]
+    MutexPoisoned(String),
+    #[error("{self:?}")]
+    SharedEncryptorMissing,
+    #[error("{self:?}")]
+    OwnedEncryptorMissing,
+    #[error("{self:?}")]
+    SharedDecryptorMissing,
+    #[error("{self:?}")]
+    OwnedDecryptorMissing,
+    #[error("Encrypt error: {0:?}")]
+    Encrypt(CipherError),
+    #[error("Decrypt error: {0:?}")]
+    Decrypt(CipherError),
+}
 
 pub struct CryptoState {
     encryptor: Option<EncryptionCipher>,
@@ -55,7 +71,11 @@ impl CryptoStream {
         self.state_shared.clone()
     }
 
-    pub fn create_cipher(&mut self, secret_key: [u8; 32], kind: CipherKind) {
+    pub fn create_cipher(
+        &mut self,
+        secret_key: [u8; 32],
+        kind: CipherKind,
+    ) -> Result<(), self::Error> {
         let cipher = Cipher::new(secret_key, kind);
         let (enc, dec) = cipher.into_split();
 
@@ -63,33 +83,41 @@ impl CryptoStream {
         // direction can grab _only_ the enc or dec one they need.
         {
             // Take care not to panic while holding the lock.
-            let mut crypt = self.state_shared.inner.lock().unwrap();
+            let mut crypt = self
+                .state_shared
+                .inner
+                .lock()
+                .map_err(|e| self::Error::MutexPoisoned(e.to_string()))?;
             crypt.encryptor = Some(enc);
             crypt.decryptor = Some(dec);
+            Ok(())
         }
     }
 
-    pub fn init_key(&mut self, key: &[u8]) -> anyhow::Result<()> {
+    pub fn init_key(&mut self, key: &[u8]) {
         if let Some(enc) = self.state_owned.encryptor.as_mut() {
             enc.init_key(key);
         }
         if let Some(dec) = self.state_owned.decryptor.as_mut() {
             dec.init_key(key);
         }
-        Ok(())
     }
 
-    fn take_shared_encryptor(&self) -> anyhow::Result<EncryptionCipher> {
+    fn take_shared_encryptor(&self) -> Result<EncryptionCipher, self::Error> {
         // Take care not to panic in this scope while holding the lock.
-        let mut crypt = self.state_shared.inner.lock().unwrap();
+        let mut crypt = self
+            .state_shared
+            .inner
+            .lock()
+            .map_err(|e| self::Error::MutexPoisoned(e.to_string()))?;
         // Move an existing cipher out of shared state.
         crypt
             .encryptor
             .take()
-            .ok_or_else(|| anyhow!("No shared encryption cipher"))
+            .ok_or_else(|| self::Error::SharedEncryptorMissing)
     }
 
-    fn load_owned_encryptor(&mut self) -> anyhow::Result<&mut EncryptionCipher> {
+    fn load_owned_encryptor(&mut self) -> Result<&mut EncryptionCipher, self::Error> {
         if self.state_owned.encryptor.is_none() {
             // Move an existing cipher from shared to local state.
             self.state_owned.encryptor = Some(self.take_shared_encryptor()?);
@@ -97,28 +125,34 @@ impl CryptoStream {
         self.state_owned
             .encryptor
             .as_mut()
-            .ok_or_else(|| anyhow!("No local encryption cipher"))
+            .ok_or_else(|| self::Error::OwnedEncryptorMissing)
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> anyhow::Result<(Vec<u8>, [u8; 16])> {
-        Ok(self.load_owned_encryptor()?.encrypt(plaintext))
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 16]), self::Error> {
+        self.load_owned_encryptor()?
+            .encrypt(plaintext)
+            .map_err(|e| self::Error::Encrypt(e))
     }
 
-    pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
+    pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, self::Error> {
         Ok(self.load_owned_encryptor()?.encrypt_unauth(plaintext))
     }
 
-    fn take_shared_decryptor(&self) -> anyhow::Result<DecryptionCipher> {
+    fn take_shared_decryptor(&self) -> Result<DecryptionCipher, self::Error> {
         // Take care not to panic in this scope while holding the lock.
-        let mut crypt = self.state_shared.inner.lock().unwrap();
+        let mut crypt = self
+            .state_shared
+            .inner
+            .lock()
+            .map_err(|e| self::Error::MutexPoisoned(e.to_string()))?;
         // Move an existing cipher out of shared state.
         crypt
             .decryptor
             .take()
-            .ok_or_else(|| anyhow!("No shared decryption cipher"))
+            .ok_or_else(|| self::Error::SharedDecryptorMissing)
     }
 
-    fn load_owned_decryptor(&mut self) -> anyhow::Result<&mut DecryptionCipher> {
+    fn load_owned_decryptor(&mut self) -> Result<&mut DecryptionCipher, self::Error> {
         if self.state_owned.decryptor.is_none() {
             // Move an existing cipher from shared to local state.
             self.state_owned.decryptor = Some(self.take_shared_decryptor()?);
@@ -126,14 +160,16 @@ impl CryptoStream {
         self.state_owned
             .decryptor
             .as_mut()
-            .ok_or_else(|| anyhow!("No local decryption cipher"))
+            .ok_or_else(|| self::Error::OwnedDecryptorMissing)
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> anyhow::Result<Vec<u8>> {
-        Ok(self.load_owned_decryptor()?.decrypt(ciphertext, mac))
+    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> Result<Vec<u8>, self::Error> {
+        self.load_owned_decryptor()?
+            .decrypt(ciphertext, mac)
+            .map_err(|e| self::Error::Decrypt(e))
     }
 
-    pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
+    pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, self::Error> {
         Ok(self.load_owned_decryptor()?.decrypt_unauth(ciphertext))
     }
 }

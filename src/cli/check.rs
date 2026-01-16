@@ -4,9 +4,9 @@ use anyhow::{Context, bail};
 
 use super::args::CheckArgs;
 use crate::common::mock;
-use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::OldCompile;
+use crate::lang::{ResultExt, Role};
 
 pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
     log::info!("Running in check mode");
@@ -43,14 +43,18 @@ pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
 
     let c_recv = res.c_app_dst.context("inspecting client app recv result")?;
     let c_sent = res.c_app_src.context("inspecting client app send result")?;
-    res.c_app_to_net
-        .context("inspecting client proxy app-to-net result")?;
-    res.c_net_to_app
-        .context("inspecting client proxy net-to-app result")?;
-    res.s_app_to_net
-        .context("inspecting server proxy app-to-net result")?;
-    res.s_net_to_app
-        .context("inspecting server proxy net-to-app result")?;
+    if !res.c_app_to_net.is_success() {
+        bail!("client proxy app-to-net failed: {:?}", res.c_app_to_net);
+    }
+    if !res.c_net_to_app.is_success() {
+        bail!("client proxy net-to-app failed: {:?}", res.c_net_to_app);
+    }
+    if !res.s_app_to_net.is_success() {
+        bail!("server proxy app-to-net failed: {:?}", res.s_app_to_net);
+    }
+    if !res.s_net_to_app.is_success() {
+        bail!("server proxy net-to-app failed: {:?}", res.s_net_to_app);
+    }
     let s_recv = res.s_app_dst.context("inspecting server app recv result")?;
     let s_sent = res.s_app_src.context("inspecting server app send result")?;
 

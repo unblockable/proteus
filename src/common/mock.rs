@@ -15,9 +15,9 @@ use {
     tokio::time::{Sleep, sleep},
 };
 
+use crate::lang;
 use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
-use crate::lang;
 use crate::net::CHUNK_SIZE;
 
 #[cfg(test)]
@@ -191,12 +191,14 @@ impl Result {
     }
 
     fn assert_success(&self) {
+        use crate::lang::ResultExt;
+
         assert!(self.c_app_src.is_ok());
         assert!(self.c_app_dst.is_ok());
-        assert!(self.c_app_to_net.is_ok());
-        assert!(self.c_net_to_app.is_ok());
-        assert!(self.s_app_to_net.is_ok());
-        assert!(self.s_net_to_app.is_ok());
+        assert!(self.c_app_to_net.is_success());
+        assert!(self.c_net_to_app.is_success());
+        assert!(self.s_app_to_net.is_success());
+        assert!(self.s_net_to_app.is_success());
         assert!(self.s_app_src.is_ok());
         assert!(self.s_app_dst.is_ok());
     }
@@ -252,14 +254,19 @@ pub async fn io_copy_direct(
     // Note: we MUST moved the streams so they are dropped when the copy completes.
     // Use the `mock::copy()` function. This ensures that when the copy completes,
     // the underlying streams are dropped, and the EOF correctly propagates backwards.
+
     let (app_to_net, net_to_app) = tokio::join!(
         copy_then_shutdown(proxy.app.reader, proxy.net.writer),
         copy_then_shutdown(proxy.net.reader, proxy.app.writer),
     );
     // Discard the count of bytes copied on Ok.
     (
-        app_to_net.map(|_| ()).map_err(|e| e.into()),
-        net_to_app.map(|_| ()).map_err(|e| e.into()),
+        app_to_net
+            .map(|_| ())
+            .map_err(|e| lang::Error::Io(e.into())),
+        net_to_app
+            .map(|_| ())
+            .map_err(|e| lang::Error::Io(e.into())),
     )
 }
 

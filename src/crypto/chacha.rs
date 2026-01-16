@@ -41,6 +41,14 @@ struct CipherInner {
     key: Option<Key>,
 }
 
+#[derive(Debug)]
+pub enum CipherError {
+    Encrypt(chacha20poly1305::aead::Error),
+    Decrypt(chacha20poly1305::aead::Error),
+    MacMismatch,
+    LengthMismatch,
+}
+
 impl Cipher {
     pub fn new(secret_key: [u8; 32], kind: CipherKind) -> Self {
         Self {
@@ -50,7 +58,7 @@ impl Cipher {
     }
 
     #[cfg(test)]
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Payload, Mac), CipherError> {
         self.encryptor.encrypt(plaintext)
     }
 
@@ -60,7 +68,7 @@ impl Cipher {
     }
 
     #[cfg(test)]
-    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
+    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Result<Vec<u8>, CipherError> {
         self.decryptor.decrypt(ciphertext, mac)
     }
 
@@ -133,7 +141,7 @@ impl EncryptionCipher {
             .init_key(key_bytes, &Self::fixed_nonce(self.kind));
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> (Payload, Mac) {
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Payload, Mac), CipherError> {
         self.inner.n_bytes_ciphered += plaintext.len();
 
         let nonce = self.inner.generate_nonce();
@@ -142,16 +150,19 @@ impl EncryptionCipher {
             .inner
             .cipher
             .encrypt(&nonce.into(), plaintext)
-            .expect("encryption failure");
+            .map_err(|e| CipherError::Encrypt(e))?;
 
         let mac: Mac = ciphertext
             .drain(ciphertext.len() - 16..ciphertext.len())
             .collect::<Vec<_>>()
             .try_into()
-            .unwrap();
-        assert!(plaintext.len() == ciphertext.len());
+            .map_err(|_| CipherError::MacMismatch)?;
 
-        (ciphertext, mac)
+        if plaintext.len() == ciphertext.len() {
+            Ok((ciphertext, mac))
+        } else {
+            Err(CipherError::LengthMismatch)
+        }
     }
 
     pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> Vec<u8> {
@@ -181,7 +192,7 @@ impl DecryptionCipher {
             .init_key(key_bytes, &Self::fixed_nonce(self.kind));
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Vec<u8> {
+    pub fn decrypt(&mut self, ciphertext: &[u8], mac: &Mac) -> Result<Vec<u8>, CipherError> {
         let ctext_and_mac: Vec<u8> = ciphertext.iter().chain(mac.iter()).copied().collect();
 
         self.inner.n_bytes_ciphered += ciphertext.len();
@@ -191,7 +202,7 @@ impl DecryptionCipher {
         self.inner
             .cipher
             .decrypt(&nonce.into(), &ctext_and_mac[..])
-            .expect("decryption failure")
+            .map_err(|e| CipherError::Decrypt(e))
     }
 
     pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> Vec<u8> {
@@ -221,8 +232,8 @@ pub mod tests {
 
         let original_plain_text: Vec<u8> = b"hello world".to_vec();
 
-        let (ctext, mac) = send_cipher.encrypt(&original_plain_text[..]);
-        let recovered_plain_text = recv_cipher.decrypt(&ctext[..], &mac);
+        let (ctext, mac) = send_cipher.encrypt(&original_plain_text[..]).unwrap();
+        let recovered_plain_text = recv_cipher.decrypt(&ctext[..], &mac).unwrap();
 
         assert_eq!(original_plain_text, recovered_plain_text);
     }
@@ -237,12 +248,12 @@ pub mod tests {
 
         let original_plain_text: Vec<u8> = b"hello world".to_vec();
 
-        let (ctext, mac) = send_enc.encrypt(&original_plain_text[..]);
-        let recovered_plain_text = recv_dec.decrypt(&ctext[..], &mac);
+        let (ctext, mac) = send_enc.encrypt(&original_plain_text[..]).unwrap();
+        let recovered_plain_text = recv_dec.decrypt(&ctext[..], &mac).unwrap();
         assert_eq!(original_plain_text, recovered_plain_text);
 
-        let (ctext, mac) = recv_enc.encrypt(&original_plain_text[..]);
-        let recovered_plain_text = send_dec.decrypt(&ctext[..], &mac);
+        let (ctext, mac) = recv_enc.encrypt(&original_plain_text[..]).unwrap();
+        let recovered_plain_text = send_dec.decrypt(&ctext[..], &mac).unwrap();
         assert_eq!(original_plain_text, recovered_plain_text);
     }
 

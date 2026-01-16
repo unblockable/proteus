@@ -7,16 +7,34 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use crate::net::CHUNK_SIZE;
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("A normal end of file was reached on an io reader")]
+    ReadEof,
+    #[error(transparent)]
+    Standard(#[from] std::io::Error),
+}
+
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            Self::ReadEof => Self::ReadEof,
+            Self::Standard(e) => Self::Standard(io::Error::from(e.kind())),
+        }
+    }
+}
+
 pub struct IoStream<R, W>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     src: R,
-    src_err: Option<io::Error>,
     n_recv_src: usize,
+    src_error: Option<self::Error>,
     dst: W,
     n_sent_dst: usize,
+    dst_error: Option<self::Error>,
 }
 
 impl<R, W> IoStream<R, W>
@@ -27,10 +45,11 @@ where
     pub fn new(src: R, dst: W) -> Self {
         Self {
             src,
-            src_err: None,
             n_recv_src: 0,
+            src_error: None,
             dst,
             n_sent_dst: 0,
+            dst_error: None,
         }
     }
 
@@ -38,13 +57,22 @@ where
         (self.src, self.dst)
     }
 
-    pub async fn send(&mut self, mut bytes: Bytes) -> io::Result<usize> {
+    pub async fn send(&mut self, mut bytes: Bytes) -> Result<usize, self::Error> {
         log::trace!("Entering io::send({})", bytes.len());
+
+        if let Some(e) = self.dst_error.as_ref() {
+            return Err(e.clone());
+        }
 
         let num_written = bytes.len();
 
-        self.dst.write_all_buf(&mut bytes).await?;
-        self.dst.flush().await?;
+        if let Err(e) = self.dst.write_all_buf(&mut bytes).await {
+            return Err(self.dst_err(e));
+        }
+
+        if let Err(e) = self.dst.flush().await {
+            return Err(self.dst_err(e));
+        }
 
         self.n_sent_dst += num_written;
         log::trace!("Sent {num_written} bytes to dst");
@@ -52,20 +80,34 @@ where
         Ok(num_written)
     }
 
-    pub async fn flush(&mut self) -> io::Result<()> {
-        self.dst.flush().await
+    pub async fn flush(&mut self) -> Result<(), self::Error> {
+        if let Some(e) = self.dst_error.as_ref() {
+            return Err(e.clone());
+        }
+
+        if let Err(e) = self.dst.flush().await {
+            return Err(self.dst_err(e));
+        }
+        Ok(())
     }
 
-    pub async fn shutdown(&mut self) -> io::Result<()> {
-        self.dst.shutdown().await
+    pub async fn shutdown(&mut self) -> Result<(), self::Error> {
+        if let Some(e) = self.dst_error.as_ref() {
+            return Err(e.clone());
+        }
+
+        if let Err(e) = self.dst.shutdown().await {
+            return Err(self.dst_err(e));
+        }
+        Ok(())
     }
 
     /// Reads up to len bytes. May read less than len if fewer bytes are available.
-    pub async fn read(&mut self, len: usize) -> io::Result<Bytes> {
+    pub async fn read(&mut self, len: usize) -> Result<Bytes, self::Error> {
         log::trace!("Entering io::read({len})");
 
-        if let Some(e) = self.src_err() {
-            return Err(e);
+        if let Some(e) = self.src_error.as_ref() {
+            return Err(e.clone());
         }
 
         // To avoid large pre-allocation, we
@@ -75,7 +117,7 @@ where
         let mut limited_buf = BytesMut::with_capacity(limit).limit(limit);
 
         match self.src.read_buf(&mut limited_buf).await {
-            Ok(0) => Err(self.read_err(io::ErrorKind::UnexpectedEof.into())),
+            Ok(0) => Err(self.read_eof()),
             Ok(n_bytes) => {
                 let mut buf = limited_buf.into_inner();
                 if n_bytes == limit && n_bytes < len {
@@ -86,22 +128,21 @@ where
                 }
                 Ok(self.read_ok(buf))
             }
-            Err(e) => Err(self.read_err(e)),
+            Err(e) => Err(self.src_err(e)),
         }
     }
 
     /// Like read, but returns immediately even if no bytes are available.
-    pub fn try_read(&mut self, len: usize) -> io::Result<Option<Bytes>> {
+    pub fn try_read(&mut self, len: usize) -> Result<Option<Bytes>, self::Error> {
         log::trace!("Entering io::try_read({len})");
 
-        if let Some(e) = self.src_err() {
-            return Err(e);
+        if let Some(e) = self.src_error.as_ref() {
+            return Err(e.clone());
         }
 
         // We sync-read in chunks to avoid large allocations.
         let mut buf = BytesMut::new();
         let mut ctx = Context::from_waker(Waker::noop());
-        let mut maybe_err = None;
 
         while buf.len() < len {
             let limit = CHUNK_SIZE.min(len - buf.len());
@@ -118,33 +159,31 @@ where
                         buf.extend_from_slice(&chunk);
                         continue;
                     }
-                    maybe_err = Some(io::ErrorKind::UnexpectedEof.into())
+                    self.read_eof();
                 }
-                Poll::Ready(Err(e)) => maybe_err = Some(e),
+                Poll::Ready(Err(e)) => {
+                    self.src_err(e);
+                }
                 Poll::Pending => {}
             };
             break;
         }
 
-        if let Some(e) = maybe_err {
-            maybe_err = Some(self.read_err(e));
-        }
-
         if !buf.is_empty() {
             Ok(Some(self.read_ok(buf)))
-        } else if let Some(e) = maybe_err {
-            Err(e)
+        } else if let Some(e) = self.src_error.as_ref() {
+            Err(e.clone())
         } else {
             Ok(None)
         }
     }
 
     /// Reads exactly len bytes, waiting until len bytes are available.
-    pub async fn read_exact(&mut self, len: usize) -> io::Result<Bytes> {
+    pub async fn read_exact(&mut self, len: usize) -> Result<Bytes, self::Error> {
         log::trace!("Entering io::read_exact({len})");
 
-        if let Some(e) = self.src_err() {
-            return Err(e);
+        if let Some(e) = self.src_error.as_ref() {
+            return Err(e.clone());
         }
 
         // Here we need to pre-allocate with the exactly requested len.
@@ -152,8 +191,26 @@ where
         buf.resize(len, 0);
         match self.src.read_exact(&mut buf).await {
             Ok(_) => Ok(self.read_ok(buf)),
-            Err(e) => Err(self.read_err(e)),
+            Err(e) => match e.kind() {
+                // If we are trying to read the len field of the next message,
+                // but the other end doesn't want to send any more messages, we
+                // consider that an expected eof.
+                io::ErrorKind::UnexpectedEof => Err(self.read_eof()),
+                _ => Err(self.src_err(e)),
+            },
         }
+    }
+
+    fn dst_err(&mut self, error: std::io::Error) -> self::Error {
+        let err = self::Error::from(error);
+        self.dst_error = Some(err.clone());
+        err
+    }
+
+    fn src_err(&mut self, error: std::io::Error) -> self::Error {
+        let err = self::Error::from(error);
+        self.src_error = Some(err.clone());
+        err
     }
 
     fn read_ok(&mut self, buf: BytesMut) -> Bytes {
@@ -162,15 +219,9 @@ where
         buf.freeze()
     }
 
-    fn read_err(&mut self, error: io::Error) -> io::Error {
-        if self.src_err.is_none() {
-            self.src_err = Some(io::Error::from(error.kind()));
-        }
-        error
-    }
-
-    fn src_err(&self) -> Option<io::Error> {
-        self.src_err.as_ref().map(|e| io::Error::from(e.kind()))
+    fn read_eof(&mut self) -> self::Error {
+        self.src_error = Some(self::Error::ReadEof);
+        self::Error::ReadEof
     }
 }
 
