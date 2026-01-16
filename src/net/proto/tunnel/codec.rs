@@ -2,6 +2,7 @@ use std::io::{self, Cursor};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::net::proto::socks;
 use crate::net::proto::socks::address::Socks5Target;
@@ -18,6 +19,9 @@ impl Encoder<TunnelMessage> for TunnelCodec {
         // If we return early, the dst buffer is unmodified.
         self.encode_id(msg.session_id, &mut buf)?;
         self.encode_kind(msg.kind, &mut buf)?;
+
+        let checksum = xxh3_64(&buf);
+        self.encode_id(checksum, &mut buf)?;
 
         // Success, store the encoded bytes in dst.
         let bytes = buf.freeze();
@@ -44,11 +48,28 @@ impl Decoder for TunnelCodec {
             return Ok(None);
         };
 
-        // Success, mark the src bytes as consumed.
+        // Save the number of bytes used for the checksum.
+        let num_checksum = reader.position() as usize;
+
+        // Get the checksum the src computed.
+        let Some(checksum_src) = self.decode_id(&mut reader)? else {
+            return Ok(None);
+        };
+
+        // Success, mark all src bytes as consumed.
         let num_consumed = reader.position() as usize;
+
+        // Compute the checksum on our side.
+        let checksum_dst = xxh3_64(&src[..num_checksum]);
+
+        // Now we can advance.
         src.advance(num_consumed);
 
-        Ok(Some(TunnelMessage { session_id, kind }))
+        if checksum_src == checksum_dst {
+            Ok(Some(TunnelMessage { session_id, kind }))
+        } else {
+            Err(std::io::ErrorKind::InvalidData.into())
+        }
     }
 }
 
@@ -240,5 +261,37 @@ mod tests {
             TunnelMessageKind::Open(Socks5Target::new(Socks5Address::Unknown, 0)),
             8,
         );
+    }
+
+    #[test]
+    fn invalid_payload_bytes() {
+        // Max supported payload length.
+        let bytes = BytesMut::zeroed(u16::MAX as usize).freeze();
+
+        // If we stomp a payload byte, the checksum should fail.
+        test_invalid(TunnelMessageKind::Encapsulated(bytes), 10_000);
+    }
+
+    #[test]
+    fn valid_checksum() {
+        let bytes = mock::payload(u16::MAX as usize);
+        let checksum_src = xxh3_64(&bytes);
+        let checksum_dst = xxh3_64(&bytes);
+        assert_eq!(checksum_src, checksum_dst);
+    }
+
+    #[test]
+    fn invalid_checksum() {
+        let bytes = mock::payload(u16::MAX as usize);
+        let mut buf = BytesMut::from(bytes);
+        let n = buf.len();
+
+        buf[n-1] = 1;
+        let checksum_src = xxh3_64(&buf);
+
+        buf[n-1] = 0;
+        let checksum_dst = xxh3_64(&buf);
+
+        assert_ne!(checksum_src, checksum_dst);
     }
 }
