@@ -8,7 +8,7 @@ use futures::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::io::{poll_read_buf, poll_write_buf};
 
-use crate::net::CHUNK_SIZE;
+use crate::net::proto::tunnel::codec::TunnelCodec;
 use crate::net::proto::tunnel::message::{TunnelMessage, TunnelMessageKind};
 use crate::net::session::SessionBuilder;
 
@@ -49,7 +49,7 @@ impl<R: AsyncRead + Send + Unpin> Stream for BytesStream<R> {
     type Item = TunnelMessage;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut buf = BytesMut::with_capacity(CHUNK_SIZE);
+        let mut buf = BytesMut::with_capacity(TunnelCodec::encapsulated_bytes_max_len());
         match poll_read_buf(Pin::new(&mut self.io), cx, &mut buf) {
             Poll::Ready(Ok(0)) => Poll::Ready(None),
             Poll::Ready(Ok(_len)) => {

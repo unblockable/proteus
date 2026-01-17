@@ -8,7 +8,6 @@ use tokio_util::codec::Encoder;
 use tokio_util::io::poll_read_buf;
 
 use crate::common::sync::PollMutex;
-use crate::net::CHUNK_SIZE;
 use crate::net::proto::tunnel::message::TunnelMessage;
 use crate::net::proto::turbo::codec::TurboCodec;
 use crate::net::proto::turbo::message::TurboMessage;
@@ -36,7 +35,7 @@ impl<R: AsyncRead + Send + Unpin> TurboStream<R> {
             id,
             state,
             reader: Some(reader),
-            buf: BytesMut::with_capacity(CHUNK_SIZE),
+            buf: BytesMut::with_capacity(TurboCodec::payload_max_len()),
             mode: Mode::Idle,
         }
     }

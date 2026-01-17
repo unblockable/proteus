@@ -14,19 +14,28 @@ impl Encoder<TunnelMessage> for TunnelCodec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: TunnelMessage, dst: &mut BytesMut) -> io::Result<()> {
+        // If we return early, we want the dst buffer to be unmodified.
         let mut buf = BytesMut::new();
-
-        // If we return early, the dst buffer is unmodified.
         self.encode_id(msg.session_id, &mut buf)?;
         self.encode_kind(msg.kind, &mut buf)?;
+        let data = buf.freeze();
 
-        let checksum = xxh3_64(&buf);
-        self.encode_id(checksum, &mut buf)?;
+        let len = 2 + 8 + data.len() + 8;
+
+        if len > u16::MAX as usize {
+            return Err(io::Error::from(io::ErrorKind::FileTooLarge));
+        }
 
         // Success, store the encoded bytes in dst.
-        let bytes = buf.freeze();
-        dst.reserve(bytes.len());
-        dst.extend_from_slice(&bytes);
+        // The encoded buf will be: len, len_crc, data, data_crc
+        dst.reserve(len);
+
+        let len = len as u16;
+
+        dst.put_u16(len);
+        dst.put_u64(xxh3_64(&len.to_be_bytes()));
+        dst.extend_from_slice(&data);
+        dst.put_u64(xxh3_64(&data));
 
         Ok(())
     }
@@ -38,49 +47,72 @@ impl Decoder for TunnelCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
+        // If we return early, we want the src buffer to be unmodified.
         let mut reader = Cursor::new(src as &BytesMut);
 
-        // If we return early, the src buffer is unmodified.
-        let Some(session_id) = self.decode_id(&mut reader)? else {
+        // We first need the len (2 bytes) and len_crc (8 bytes)
+        if reader.remaining() < 10 {
+            return Ok(None);
+        }
+
+        let len = reader.get_u16();
+        let len_crc_src = reader.get_u64();
+
+        // Ensure the len checksum matches.
+        let len_crc_dst = xxh3_64(&len.to_be_bytes());
+        if len_crc_src != len_crc_dst {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+
+        let remaining = (len as usize).saturating_sub(10);
+
+        // No need to decode the rest if we don't have everything yet.
+        if reader.remaining() < remaining.max(8) {
+            return Ok(None);
+        }
+
+        // Next we have the data (? bytes) and data_crc (8 bytes)
+        let data_len = remaining.saturating_sub(8);
+        let data = reader.copy_to_bytes(data_len);
+        let data_crc_src = reader.get_u64();
+
+        // Ensure the data checksum matches.
+        let data_crc_dst = xxh3_64(&data);
+        if data_crc_src != data_crc_dst {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+
+        // Now that we know the data is valid, decode it.
+        let mut data_cursor = Cursor::new(&data);
+        let Some(session_id) = self.decode_id(&mut data_cursor)? else {
             return Ok(None);
         };
-        let Some(kind) = self.decode_kind(&mut reader)? else {
-            return Ok(None);
-        };
-
-        // Save the number of bytes used for the checksum.
-        let num_checksum = reader.position() as usize;
-
-        // Get the checksum the src computed.
-        let Some(checksum_src) = self.decode_id(&mut reader)? else {
+        let Some(kind) = self.decode_kind(&mut data_cursor)? else {
             return Ok(None);
         };
 
         // Success, mark all src bytes as consumed.
         let num_consumed = reader.position() as usize;
-
-        // Compute the checksum on our side.
-        let checksum_dst = xxh3_64(&src[..num_checksum]);
-
-        // Now we can advance.
         src.advance(num_consumed);
-
-        if checksum_src == checksum_dst {
-            Ok(Some(TunnelMessage { session_id, kind }))
-        } else {
-            Err(std::io::ErrorKind::InvalidData.into())
-        }
+        Ok(Some(TunnelMessage { session_id, kind }))
     }
 }
 
 impl TunnelCodec {
+    pub const fn encapsulated_bytes_max_len() -> usize {
+        // This *must* be kept synchronized with our encoding scheme.
+        // We want the total length of an encoded TunnelMessage to fit in a u16.
+        // overhead = len (2) + len_crc (8) + [id (8) + kind (1) + bytes_len (2)] + bytes_crc (8)
+        (u16::MAX as usize) - 29
+    }
+
     fn encode_id(&mut self, id: u64, dst: &mut BytesMut) -> io::Result<()> {
         dst.reserve(8);
         dst.put_u64(id);
         Ok(())
     }
 
-    fn decode_id(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<u64>> {
+    fn decode_id(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<u64>> {
         if src.remaining() >= 8 {
             Ok(Some(src.get_u64()))
         } else {
@@ -104,10 +136,7 @@ impl TunnelCodec {
         }
     }
 
-    fn decode_kind(
-        &mut self,
-        src: &mut Cursor<&BytesMut>,
-    ) -> io::Result<Option<TunnelMessageKind>> {
+    fn decode_kind(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<TunnelMessageKind>> {
         if src.remaining() >= 1 {
             let encoded_kind = src.get_u8();
             let command = match encoded_kind {
@@ -136,12 +165,12 @@ impl TunnelCodec {
         socks::codec::encode_target(target, dst)
     }
 
-    fn decode_target(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Socks5Target>> {
+    fn decode_target(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<Socks5Target>> {
         socks::codec::decode_target(src)
     }
 
     fn encode_bytes(&mut self, bytes: Bytes, dst: &mut BytesMut) -> io::Result<()> {
-        if bytes.len() > u16::MAX as usize {
+        if bytes.len() > TunnelCodec::encapsulated_bytes_max_len() {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
 
@@ -152,7 +181,7 @@ impl TunnelCodec {
         Ok(())
     }
 
-    fn decode_bytes(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Bytes>> {
+    fn decode_bytes(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<Bytes>> {
         if src.remaining() >= 2 {
             let len = src.get_u16() as usize;
             if src.remaining() >= len {
@@ -230,11 +259,12 @@ mod tests {
     #[test]
     fn invalid_payload_length() {
         // Max supported payload length.
-        let bytes = mock::payload(u16::MAX as usize);
+        let max_len = TunnelCodec::encapsulated_bytes_max_len();
+        let bytes = mock::payload(max_len);
         test_valid_command(TunnelMessageKind::Encapsulated(bytes));
 
         // This payload is larger than supported.
-        let bytes = mock::payload(u16::MAX as usize + 1);
+        let bytes = mock::payload(max_len + 1);
         let msg = message(TunnelMessageKind::Encapsulated(bytes));
 
         // Should get encode error.
@@ -266,7 +296,8 @@ mod tests {
     #[test]
     fn invalid_payload_bytes() {
         // Max supported payload length.
-        let bytes = BytesMut::zeroed(u16::MAX as usize).freeze();
+        let max_len = TunnelCodec::encapsulated_bytes_max_len();
+        let bytes = BytesMut::zeroed(max_len).freeze();
 
         // If we stomp a payload byte, the checksum should fail.
         test_invalid(TunnelMessageKind::Encapsulated(bytes), 10_000);
@@ -274,7 +305,8 @@ mod tests {
 
     #[test]
     fn valid_checksum() {
-        let bytes = mock::payload(u16::MAX as usize);
+        let max_len = TunnelCodec::encapsulated_bytes_max_len();
+        let bytes = mock::payload(max_len);
         let checksum_src = xxh3_64(&bytes);
         let checksum_dst = xxh3_64(&bytes);
         assert_eq!(checksum_src, checksum_dst);
@@ -282,14 +314,15 @@ mod tests {
 
     #[test]
     fn invalid_checksum() {
-        let bytes = mock::payload(u16::MAX as usize);
+        let max_len = TunnelCodec::encapsulated_bytes_max_len();
+        let bytes = mock::payload(max_len);
         let mut buf = BytesMut::from(bytes);
         let n = buf.len();
 
-        buf[n-1] = 1;
+        buf[n - 1] = 1;
         let checksum_src = xxh3_64(&buf);
 
-        buf[n-1] = 0;
+        buf[n - 1] = 0;
         let checksum_dst = xxh3_64(&buf);
 
         assert_ne!(checksum_src, checksum_dst);

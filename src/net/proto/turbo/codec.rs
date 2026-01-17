@@ -1,8 +1,9 @@
 use std::io::{self, Cursor};
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::net::proto::tunnel::codec::TunnelCodec;
 use crate::net::proto::turbo::message::{Command, DataCursor, Payload, TurboMessage};
 
 pub struct TurboCodec;
@@ -33,7 +34,8 @@ impl Decoder for TurboCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
-        let mut reader = Cursor::new(src as &BytesMut);
+        let frozen = src.clone().freeze();
+        let mut reader = Cursor::new(&frozen);
 
         // If we return early, the src buffer is unmodified.
         let Some(write) = self.decode_cursor(&mut reader)? else {
@@ -59,13 +61,19 @@ impl Decoder for TurboCodec {
 }
 
 impl TurboCodec {
+    pub const fn payload_max_len() -> usize {
+        // This *must* be kept synchronized with our encoding scheme.
+        // overhead = write (8) + read (8) + cmd (1) + payload_len (2)
+        TunnelCodec::encapsulated_bytes_max_len() - 19
+    }
+
     fn encode_cursor(&mut self, cursor: DataCursor, dst: &mut BytesMut) -> io::Result<()> {
         dst.reserve(8);
         dst.put_u64(cursor);
         Ok(())
     }
 
-    fn decode_cursor(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<DataCursor>> {
+    fn decode_cursor(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<DataCursor>> {
         if src.remaining() >= 8 {
             Ok(Some(src.get_u64()))
         } else {
@@ -92,7 +100,7 @@ impl TurboCodec {
         }
     }
 
-    fn decode_command(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Command>> {
+    fn decode_command(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<Command>> {
         if src.remaining() >= 1 {
             let command_type = src.get_u8();
             let command = match command_type {
@@ -128,7 +136,7 @@ impl TurboCodec {
         Ok(())
     }
 
-    fn decode_payload(&mut self, src: &mut Cursor<&BytesMut>) -> io::Result<Option<Payload>> {
+    fn decode_payload(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<Payload>> {
         if src.remaining() >= 2 {
             let data_len = src.get_u16() as usize;
             if src.remaining() >= data_len {
