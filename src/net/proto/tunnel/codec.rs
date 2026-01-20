@@ -47,7 +47,7 @@ impl Decoder for TunnelCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
-        // If we return early, we want the src buffer to be unmodified.
+        // If we return Ok(None), we want the src buffer to be unmodified.
         let mut reader = Cursor::new(src as &BytesMut);
 
         // We first need the len (2 bytes) and len_crc (8 bytes)
@@ -64,36 +64,43 @@ impl Decoder for TunnelCodec {
             return Err(std::io::ErrorKind::InvalidData.into());
         }
 
-        let remaining = (len as usize).saturating_sub(10);
+        // Validate that len is in the correct range. We expect at least 18 bytes
+        // (2 for len, 8 for len_crc, 8 for data_crc) and at most u16::MAX.
+        if len < 18 {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        }
 
         // No need to decode the rest if we don't have everything yet.
-        if reader.remaining() < remaining.max(8) {
+        let msg_len = len as usize;
+        if src.len() < msg_len {
             return Ok(None);
         }
 
-        // Next we have the data (? bytes) and data_crc (8 bytes)
-        let data_len = remaining.saturating_sub(8);
-        let data = reader.copy_to_bytes(data_len);
-        let data_crc_src = reader.get_u64();
+        // OK, we have the entire message. Let's take it from src and avoid copying.
+        let mut msg_bytes = src.split_to(msg_len);
 
-        // Ensure the data checksum matches.
+        // Cut the len and len_crc from the front, we already processed those.
+        msg_bytes.advance(10);
+
+        // The remaining is the data and data_crc.
+        let data = msg_bytes.split_to(msg_bytes.len() - 8).freeze();
+        let data_crc_src = msg_bytes.get_u64();
+        
         let data_crc_dst = xxh3_64(&data);
         if data_crc_src != data_crc_dst {
             return Err(std::io::ErrorKind::InvalidData.into());
         }
 
         // Now that we know the data is valid, decode it.
-        let mut data_cursor = Cursor::new(&data);
-        let Some(session_id) = self.decode_id(&mut data_cursor)? else {
-            return Ok(None);
+        let mut reader = Cursor::new(&data);
+        let Some(session_id) = self.decode_id(&mut reader)? else {
+            return Err(std::io::ErrorKind::InvalidInput.into());
         };
-        let Some(kind) = self.decode_kind(&mut data_cursor)? else {
-            return Ok(None);
+        let Some(kind) = self.decode_kind(&mut reader)? else {
+            return Err(std::io::ErrorKind::InvalidInput.into());
         };
 
-        // Success, mark all src bytes as consumed.
-        let num_consumed = reader.position() as usize;
-        src.advance(num_consumed);
+        // Success.
         Ok(Some(TunnelMessage { session_id, kind }))
     }
 }
@@ -136,7 +143,10 @@ impl TunnelCodec {
         }
     }
 
-    fn decode_kind(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<TunnelMessageKind>> {
+    fn decode_kind(
+        &mut self,
+        src: &mut Cursor<&Bytes>,
+    ) -> io::Result<Option<TunnelMessageKind>> {
         if src.remaining() >= 1 {
             let encoded_kind = src.get_u8();
             let command = match encoded_kind {
@@ -166,7 +176,14 @@ impl TunnelCodec {
     }
 
     fn decode_target(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<Socks5Target>> {
-        socks::codec::decode_target(src)
+        let target_data = BytesMut::from(src.get_mut().clone());
+        let mut target_cursor = Cursor::new(&target_data as &BytesMut);
+        target_cursor.set_position(src.position());
+
+        let result = socks::codec::decode_target(&mut target_cursor);
+        
+        src.set_position(target_cursor.position());
+        result
     }
 
     fn encode_bytes(&mut self, bytes: Bytes, dst: &mut BytesMut) -> io::Result<()> {
@@ -185,6 +202,7 @@ impl TunnelCodec {
         if src.remaining() >= 2 {
             let len = src.get_u16() as usize;
             if src.remaining() >= len {
+                // `copy_to_bytes()` is a deep copy on a `BytesMut`, but a shallow copy on a `Bytes`.
                 let bytes = src.copy_to_bytes(len);
                 Ok(Some(bytes))
             } else {

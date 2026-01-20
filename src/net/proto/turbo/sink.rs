@@ -2,10 +2,9 @@ use std::io::{self, Cursor};
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker, ready};
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, Bytes};
 use futures::Sink;
 use tokio::io::AsyncWrite;
-use tokio_util::codec::Decoder;
 use tokio_util::io::poll_write_buf;
 
 use crate::common::sync::PollMutex;
@@ -129,11 +128,8 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for TurboSink<W> {
         // We handle encapsulated messages and drop the others.
         match item.kind {
             TunnelMessageKind::Open(_) => {} // Drop.
-            TunnelMessageKind::Encapsulated(bytes) => {
-                let mut buf = BytesMut::with_capacity(bytes.len());
-                buf.extend_from_slice(&bytes);
-
-                match TurboCodec.decode(&mut buf) {
+            TunnelMessageKind::Encapsulated(mut bytes) => {
+                match TurboCodec.decode_nocopy(&mut bytes) {
                     Ok(Some(msg)) => {
                         self.mode = Mode::Send(msg);
 

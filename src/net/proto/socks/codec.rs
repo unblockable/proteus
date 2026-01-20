@@ -1,7 +1,7 @@
 use std::io::{self, Cursor};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
@@ -64,8 +64,7 @@ impl Decoder for Socks5Codec {
             return Err(io::Error::from(io::ErrorKind::Other));
         };
 
-        let frozen = src.clone().freeze();
-        let mut reader = Cursor::new(&frozen);
+        let mut reader = Cursor::new(src as &BytesMut);
 
         let maybe_msg = match expected_msg_kind {
             MessageKind::Greeting => Socks5Codec::decode_greeting(&mut reader)?.map(Message::from),
@@ -108,7 +107,7 @@ impl Socks5Codec {
         Ok(())
     }
 
-    fn decode_greeting(src: &mut Cursor<&Bytes>) -> io::Result<Option<Greeting>> {
+    fn decode_greeting(src: &mut Cursor<&BytesMut>) -> io::Result<Option<Greeting>> {
         if src.remaining() < 2 {
             return Ok(None);
         }
@@ -136,7 +135,7 @@ impl Socks5Codec {
         Ok(())
     }
 
-    fn decode_choice(src: &mut Cursor<&Bytes>) -> io::Result<Option<Choice>> {
+    fn decode_choice(src: &mut Cursor<&BytesMut>) -> io::Result<Option<Choice>> {
         if src.remaining() < 2 {
             return Ok(None);
         }
@@ -167,7 +166,7 @@ impl Socks5Codec {
     }
 
     fn decode_user_pass_auth_request(
-        src: &mut Cursor<&Bytes>,
+        src: &mut Cursor<&BytesMut>,
     ) -> io::Result<Option<UserPassAuthRequest>> {
         if src.remaining() < 2 {
             return Ok(None);
@@ -209,7 +208,7 @@ impl Socks5Codec {
     }
 
     fn decode_user_pass_auth_response(
-        src: &mut Cursor<&Bytes>,
+        src: &mut Cursor<&BytesMut>,
     ) -> io::Result<Option<UserPassAuthResponse>> {
         if src.remaining() < 2 {
             return Ok(None);
@@ -235,7 +234,7 @@ impl Socks5Codec {
         Ok(())
     }
 
-    fn decode_connect_request(src: &mut Cursor<&Bytes>) -> io::Result<Option<ConnectRequest>> {
+    fn decode_connect_request(src: &mut Cursor<&BytesMut>) -> io::Result<Option<ConnectRequest>> {
         if src.remaining() < 3 {
             return Ok(None);
         }
@@ -276,7 +275,7 @@ impl Socks5Codec {
         Ok(())
     }
 
-    fn decode_connect_response(src: &mut Cursor<&Bytes>) -> io::Result<Option<ConnectResponse>> {
+    fn decode_connect_response(src: &mut Cursor<&BytesMut>) -> io::Result<Option<ConnectResponse>> {
         if src.remaining() < 3 {
             return Ok(None);
         }
@@ -310,7 +309,7 @@ impl Socks5Codec {
         Ok(())
     }
 
-    fn decode_target(src: &mut Cursor<&Bytes>) -> io::Result<Option<Socks5Target>> {
+    fn decode_target(src: &mut Cursor<&BytesMut>) -> io::Result<Option<Socks5Target>> {
         let Some(addr) = Socks5Codec::decode_address(src)? else {
             return Ok(None);
         };
@@ -351,7 +350,7 @@ impl Socks5Codec {
         Ok(())
     }
 
-    fn decode_address(src: &mut Cursor<&Bytes>) -> io::Result<Option<Socks5Address>> {
+    fn decode_address(src: &mut Cursor<&BytesMut>) -> io::Result<Option<Socks5Address>> {
         if src.remaining() < 1 {
             return Ok(None);
         }
@@ -416,7 +415,7 @@ pub fn encode_target(target: Socks5Target, dst: &mut BytesMut) -> io::Result<()>
     Ok(())
 }
 
-pub fn decode_target(src: &mut Cursor<&Bytes>) -> io::Result<Option<Socks5Target>> {
+pub fn decode_target(src: &mut Cursor<&BytesMut>) -> io::Result<Option<Socks5Target>> {
     Socks5Codec::decode_target(src)
 }
 
@@ -436,7 +435,7 @@ mod tests {
 
         let mut buf = BytesMut::new();
         Socks5Codec::encode_greeting(frame.clone(), &mut buf).unwrap();
-        let result = Socks5Codec::decode_greeting(&mut Cursor::new(&buf.freeze()));
+        let result = Socks5Codec::decode_greeting(&mut Cursor::new(&buf));
 
         assert!(matches!(result, Ok(Some(_))));
         assert_eq!(frame, result.unwrap().unwrap());
@@ -451,7 +450,7 @@ mod tests {
 
         let mut buf = BytesMut::new();
         Socks5Codec::encode_choice(frame.clone(), &mut buf).unwrap();
-        let result = Socks5Codec::decode_choice(&mut Cursor::new(&buf.freeze()));
+        let result = Socks5Codec::decode_choice(&mut Cursor::new(&buf));
 
         assert!(matches!(result, Ok(Some(_))));
         assert_eq!(frame, result.unwrap().unwrap());
@@ -467,7 +466,7 @@ mod tests {
 
         let mut buf = BytesMut::new();
         Socks5Codec::encode_user_pass_auth_request(frame.clone(), &mut buf).unwrap();
-        let result = Socks5Codec::decode_user_pass_auth_request(&mut Cursor::new(&buf.freeze()));
+        let result = Socks5Codec::decode_user_pass_auth_request(&mut Cursor::new(&buf));
 
         assert!(matches!(result, Ok(Some(_))));
         assert_eq!(frame, result.unwrap().unwrap());
@@ -482,7 +481,7 @@ mod tests {
 
         let mut buf = BytesMut::new();
         Socks5Codec::encode_user_pass_auth_response(frame.clone(), &mut buf).unwrap();
-        let result = Socks5Codec::decode_user_pass_auth_response(&mut Cursor::new(&buf.freeze()));
+        let result = Socks5Codec::decode_user_pass_auth_response(&mut Cursor::new(&buf));
 
         assert!(matches!(result, Ok(Some(_))));
         assert_eq!(frame, result.unwrap().unwrap());
@@ -507,7 +506,7 @@ mod tests {
 
             let mut buf = BytesMut::new();
             Socks5Codec::encode_connect_request(frame.clone(), &mut buf).unwrap();
-            let result = Socks5Codec::decode_connect_request(&mut Cursor::new(&buf.freeze()));
+            let result = Socks5Codec::decode_connect_request(&mut Cursor::new(&buf));
 
             assert!(matches!(result, Ok(Some(_))));
             assert_eq!(frame, result.unwrap().unwrap());
@@ -533,7 +532,7 @@ mod tests {
 
             let mut buf = BytesMut::new();
             Socks5Codec::encode_connect_response(frame.clone(), &mut buf).unwrap();
-            let result = Socks5Codec::decode_connect_response(&mut Cursor::new(&buf.freeze()));
+            let result = Socks5Codec::decode_connect_response(&mut Cursor::new(&buf));
 
             assert!(matches!(result, Ok(Some(_))));
             assert_eq!(frame, result.unwrap().unwrap());
@@ -553,7 +552,7 @@ mod tests {
 
             let mut buf = BytesMut::new();
             Socks5Codec::encode_target(target.clone(), &mut buf).unwrap();
-            let result = Socks5Codec::decode_target(&mut Cursor::new(&buf.freeze()));
+            let result = Socks5Codec::decode_target(&mut Cursor::new(&buf));
 
             assert!(matches!(result, Ok(Some(_))));
             assert_eq!(target, result.unwrap().unwrap());
@@ -568,7 +567,7 @@ mod tests {
 
             let mut buf = BytesMut::new();
             Socks5Codec::encode_address(addr.clone(), &mut buf).unwrap();
-            let result = Socks5Codec::decode_address(&mut Cursor::new(&buf.freeze()));
+            let result = Socks5Codec::decode_address(&mut Cursor::new(&buf));
 
             assert!(matches!(result, Ok(Some(_))));
             assert_eq!(addr, result.unwrap().unwrap());

@@ -34,8 +34,13 @@ impl Decoder for TurboCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
-        let frozen = src.clone().freeze();
-        let mut reader = Cursor::new(&frozen);
+        self.decode_nocopy(&mut src.clone().freeze())
+    }
+}
+
+impl TurboCodec {
+    pub fn decode_nocopy(&mut self, src: &mut Bytes) -> io::Result<Option<TurboMessage>> {
+        let mut reader = Cursor::new(src as &Bytes);
 
         // If we return early, the src buffer is unmodified.
         let Some(write) = self.decode_cursor(&mut reader)? else {
@@ -58,9 +63,7 @@ impl Decoder for TurboCodec {
             command,
         }))
     }
-}
 
-impl TurboCodec {
     pub const fn payload_max_len() -> usize {
         // This *must* be kept synchronized with our encoding scheme.
         // overhead = write (8) + read (8) + cmd (1) + payload_len (2)
@@ -140,6 +143,7 @@ impl TurboCodec {
         if src.remaining() >= 2 {
             let data_len = src.get_u16() as usize;
             if src.remaining() >= data_len {
+                // `copy_to_bytes()` is a deep copy on a `BytesMut`, but a shallow copy on a `Bytes`.
                 let data = src.copy_to_bytes(data_len);
                 Ok(Some(Payload { data }))
             } else {
