@@ -1,80 +1,52 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use test_each_file::test_each_path;
+mod direct;
+mod turbo;
 
-// Run a tgen test in shadow for each psf in the fixtures directory.
-test_each_path! {
-    // The test can only be run if our dependencies are satisfied.
-    #[ignore, cfg(all(target_os = "linux", have_shadow, have_tgen, have_python3))]
-    for ["psf"] in "tests/fixtures" => run_test
-}
-
-fn run_test([psf_filepath]: [&Path; 1]) {
-    let test_name = psf_filepath.file_stem().unwrap();
-    let run_dir = initialize_test_directory(test_name, psf_filepath);
-    let run_dir_str = run_dir.to_string_lossy();
-
-    // We disable CPU pinning because we are running many Shadow sims at the same time and we
-    // don't want them all to pin to the same set of CPUs.
-    assert!(
-        super::super::run_shadow(
-            &run_dir,
-            ["--parallelism=4", "--use-cpu-pinning=false", "shadow.yaml"]
-        )
-        .success()
-    );
-
-    let client = PathBuf::from(format!(
-        "{run_dir_str}/shadow.data/hosts/client/tgen.1003.stdout",
-    ));
-    let server = PathBuf::from(format!(
-        "{run_dir_str}/shadow.data/hosts/server/tgen.1000.stdout",
-    ));
-
-    assert_eq!(super::super::count_tgen_stream_successes(client), 5);
-    assert_eq!(super::super::count_tgen_stream_successes(server), 5);
-}
-
-fn initialize_test_directory(test_name: &OsStr, psf_filepath: &Path) -> PathBuf {
+fn initialize_test_directory(rel_test_src: &PathBuf, psf_filepath: &Path, turbo: &str) -> PathBuf {
     // Set up our paths
-    let in_dir_path = PathBuf::from("tests/system/linux/shadow/tgen/pt");
-    let out_dir_path = PathBuf::from("target").join(&in_dir_path).join(test_name);
+    let test_name = psf_filepath.file_stem().unwrap();
+    let rel_test_src_parent = PathBuf::from(rel_test_src.parent().unwrap());
+    let rel_test_src_gparent = rel_test_src_parent.parent().unwrap();
+    let rel_test_dst = PathBuf::from("target").join(rel_test_src).join(test_name);
 
     // We need to write the proteus bin and PSF paths into the config files.
-    let bin_path = PathBuf::from(test_bin::get_test_bin!("proteus").get_program());
-    let psf_path = fs::canonicalize(psf_filepath).expect("Canonicalize path");
+    let abs_bin = PathBuf::from(test_bin::get_test_bin!("proteus").get_program());
+    let abs_psf = fs::canonicalize(psf_filepath).expect("Canonicalize path");
 
-    // The tgen server conf does not change, so just use the one from test_dir_in.
-    let server_conf_path = in_dir_path.parent().unwrap().display();
-    let server_path = fs::canonicalize(format!("{server_conf_path}/tgen-server.graphml"))
+    // The tgen server conf does not change, so just use the static one.
+    let abs_tgen_server_conf = fs::canonicalize(rel_test_src_gparent.join("tgen-server.graphml"))
         .expect("Canonicalize path");
 
     // Shadow needs a clear working directory.
-    super::super::remove_and_create_all(out_dir_path.clone());
+    super::super::remove_and_create_all(&rel_test_dst);
 
     // Copy the tgen client config. We keep the template suffix because we only
     // partially instantiate it here and the rest happens during the sim.
     {
         let conf = "tgen-client.graphml.template";
-        let in_path = PathBuf::from(format!("{}/{conf}", in_dir_path.display()));
-        let out_path = PathBuf::from(format!("{}/{conf}", out_dir_path.display()));
-        let replacements = vec![("${PSFPATH}", psf_path.to_str().unwrap())];
-        super::super::copy_test_file_with_replace(&in_path, &out_path, replacements);
+        let src = rel_test_src_parent.join(conf);
+        let dst = rel_test_dst.join(conf);
+        let replacements = vec![
+            ("${PSFPATH}", abs_psf.to_str().unwrap()),
+            ("${TURBO}", turbo),
+        ];
+        super::super::copy_test_file_with_replace(&src, &dst, replacements);
     }
 
     // Copy the shadow config, instantiating the template variables.
     {
-        let in_path = PathBuf::from(format!("{}/shadow.yaml.template", in_dir_path.display()));
-        let out_path = PathBuf::from(format!("{}/shadow.yaml", out_dir_path.display()));
+        let src = rel_test_src_parent.join("shadow.yaml.template");
+        let dst = rel_test_dst.join("shadow.yaml");
         let replacements = vec![
-            ("${TGENSERVERCONF}", server_path.to_str().unwrap()),
-            ("${PSFPATH}", psf_path.to_str().unwrap()),
-            ("${PROTEUSBINPATH}", bin_path.to_str().unwrap()),
+            ("${TGENSERVERCONF}", abs_tgen_server_conf.to_str().unwrap()),
+            ("${PSFPATH}", abs_psf.to_str().unwrap()),
+            ("${PROTEUSBINPATH}", abs_bin.to_str().unwrap()),
+            ("${TURBO}", turbo),
         ];
-        super::super::copy_test_file_with_replace(&in_path, &out_path, replacements);
+        super::super::copy_test_file_with_replace(&src, &dst, replacements);
     }
 
-    out_dir_path
+    rel_test_dst
 }

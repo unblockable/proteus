@@ -34,14 +34,14 @@ hosts:
     ip_addr: 100.0.0.2
     processes:
     - path: ${PROTEUSBINPATH}
-      args: --log-level trace server --listen 100.0.0.2:443 ${PSFPATH}
+      args: --log-level trace server --listen 100.0.0.2:443 --turbo ${TURBO} ${PSFPATH}
       start_time: 60
       expected_final_state: running
   client:
     network_node_id: 0
     processes:
     - path: ${PROTEUSBINPATH}
-      args: --log-level trace client --listen 127.0.0.1:1080 --connect 100.0.0.2:443 --mode tunnel ${PSFPATH}
+      args: --log-level trace client --listen 127.0.0.1:1080 --connect 100.0.0.2:443 --mode ${MODE} --turbo ${TURBO} ${PSFPATH}
       start_time: 60
       expected_final_state: running
     - path: tgen

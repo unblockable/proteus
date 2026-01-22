@@ -11,7 +11,7 @@
     <node id="start">
       <data key="d5">100.0.0.3:443</data>
       <data key="d7">localhost:${SOCKS5LISTENPORT}</data>
-      <data key="d8">psf=${PSFPATH}</data>
+      <data key="d8">turbo=${TURBO};psf=${PSFPATH}</data>
       <data key="d9">debug</data>
     </node>
     <node id="stream">
