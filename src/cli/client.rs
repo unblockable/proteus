@@ -62,7 +62,7 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
 
 async fn run_stream_client<S>(args: ClientArgs, psf_path: String) -> anyhow::Result<()>
 where
-    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW>,
+    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW> + 'static,
 {
     // Clients listen for app connections and create proteus tunnels to a server.
     let protocol_spec = super::parse_protocol_spec(psf_path.clone(), Role::Client)?;
@@ -141,7 +141,7 @@ async fn add_stream_to_tunnel<S>(
     mut tunnel: TunnelClient<S>,
 ) -> anyhow::Result<()>
 where
-    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW>,
+    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW> + 'static,
 {
     let peer_name = fmt_stream_name(&app_stream);
     log::debug!("Accepted new connection from client application {peer_name}");

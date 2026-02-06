@@ -92,7 +92,7 @@ async fn handle_connection<S>(
 
     // If the client might try to resume the tunnel, wait for a bit.
     if let Some(map) = maybe_map
-        && let Some(id) = app.get_id().await
+        && let Some(id) = app.id().await
     {
         super::remove_after_countdown(map, id).await;
     }

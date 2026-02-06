@@ -293,7 +293,7 @@ async fn handle_server_connection<T>(
         let (mut app, _app) = (result.app_to_net.src, result.net_to_app.dst);
 
         // If the client might try to resume the tunnel, wait for a bit.
-        if let Some(id) = app.get_id().await {
+        if let Some(id) = app.id().await {
             super::remove_after_countdown(map, id).await;
         }
     } else {

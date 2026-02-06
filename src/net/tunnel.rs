@@ -9,7 +9,7 @@ use futures::stream::{SelectAll, StreamExt};
 use futures::{Sink, SinkExt, Stream};
 use rand::RngCore;
 use rand::rngs::ThreadRng;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::common::sync::{AsyncMap, PollMutex, PollTaskChannel, PollTaskReceiver, PollTaskSender};
@@ -40,17 +40,55 @@ where
 {
     shared_reader: PollMutex<TunnelReader<S::StreamHalf>>,
     shared_writer: PollMutex<TunnelWriter<S::SinkHalf>>,
+    tunnel_id: PollMutex<Option<u64>>,
 }
 
 impl<S> TunnelClient<S>
 where
-    S: SessionBuilder<Message = TunnelMessage>,
+    S: SessionBuilder<Message = TunnelMessage> + 'static,
 {
     pub fn new(eof_method: TunnelEofMethod) -> Self {
-        Self {
-            shared_reader: PollMutex::new(TunnelReader::new(eof_method)),
-            shared_writer: PollMutex::new(TunnelWriter::new(None)),
-        }
+        let (task_tx, task_rx) = PollTaskChannel::channel::<TunnelMessage>(1_000);
+
+        let mut reader = TunnelReader::new(eof_method);
+        reader.put_buf(TunnelMessage::open(0));
+
+        let client = Self {
+            shared_reader: PollMutex::new(reader),
+            shared_writer: PollMutex::new(TunnelWriter::new(task_tx)),
+            tunnel_id: PollMutex::new(None),
+        };
+
+        client.clone().into_background_task_manager(task_rx);
+
+        client
+    }
+
+    // Asynchronously handle tasks that require communication across our inner
+    // reader and writer, such as messages from the server side.
+    fn into_background_task_manager(mut self, mut task_chan: PollTaskReceiver<TunnelMessage>) {
+        tokio::spawn(async move {
+            while let Some(task) = task_chan.recv().await {
+                let msg = &*task;
+                match &msg.kind {
+                    TunnelMessageKind::Open => {}
+                    TunnelMessageKind::Opened => {
+                        if msg.id > 0 {
+                            *self.tunnel_id.lock().await = Some(msg.id);
+                        }
+                    }
+                    TunnelMessageKind::Close => {
+                        self.close_writer().await;
+                        self.close_reader(TunnelMessage::closed()).await;
+                    }
+                    TunnelMessageKind::Closed => {
+                        self.close_writer().await;
+                    }
+                    TunnelMessageKind::Connect(_) => {}
+                    TunnelMessageKind::Encapsulate(_) => unreachable!(),
+                }
+            }
+        });
     }
 
     /// Adds a new tunnel session from a client that is already connected to its
@@ -103,12 +141,15 @@ where
     /// Gracefully shut down the tunnel by queuing a close message to the server,
     /// and arrange for an EOF to be raised after the message is sent.
     pub async fn _close(&mut self) {
-        let tunnel_id = { self.shared_writer.lock().await.tunnel_id.unwrap_or(0) };
-        let mut reader = self.shared_reader.lock().await;
-        reader.put_buf(TunnelMessage::close(tunnel_id));
-        reader.streams.clear();
-        reader.set_eof();
-        reader.wake();
+        self.close_reader(TunnelMessage::close()).await
+    }
+
+    async fn close_reader(&mut self, last_msg: TunnelMessage) {
+        self.shared_reader.lock().await.close(last_msg);
+    }
+
+    async fn close_writer(&mut self) {
+        let _ = self.shutdown().await;
     }
 }
 
@@ -120,6 +161,7 @@ where
         Self {
             shared_reader: self.shared_reader.clone(),
             shared_writer: self.shared_writer.clone(),
+            tunnel_id: self.tunnel_id.clone(),
         }
     }
 }
@@ -187,6 +229,7 @@ where
 {
     shared_reader: PollMutex<TunnelReader<S::StreamHalf>>,
     shared_writer: PollMutex<TunnelWriter<S::SinkHalf>>,
+    tunnel_id: PollMutex<Option<u64>>,
     connector: C,
 }
 
@@ -201,43 +244,54 @@ where
         connector: C,
         resume_map: Option<AsyncMap<Self>>,
     ) -> Self {
-        let (task_tx, task_rx) = PollTaskChannel::channel::<AsyncTask>(1_000);
+        let (task_tx, task_rx) = PollTaskChannel::channel::<TunnelMessage>(1_000);
 
         let server = Self {
             shared_reader: PollMutex::new(TunnelReader::new(eof_method)),
-            shared_writer: PollMutex::new(TunnelWriter::new(Some(task_tx))),
+            shared_writer: PollMutex::new(TunnelWriter::new(task_tx)),
+            tunnel_id: PollMutex::new(None),
             connector,
         };
 
         server
             .clone()
             .into_background_task_manager(task_rx, resume_map);
+
         server
     }
 
-    pub async fn get_id(&mut self) -> Option<u64> {
-        self.shared_writer.lock().await.tunnel_id
+    pub async fn id(&mut self) -> Option<u64> {
+        *self.tunnel_id.lock().await
     }
 
     async fn set_id(&mut self, id: Option<u64>) {
-        self.shared_writer.lock().await.tunnel_id = id;
+        *self.tunnel_id.lock().await = id;
     }
 
     // Asynchronously handle tasks that require communication across our inner
     // reader and writer, such as open and close tasks from the client side.
     fn into_background_task_manager(
         mut self,
-        mut task_chan: PollTaskReceiver<AsyncTask>,
+        mut task_chan: PollTaskReceiver<TunnelMessage>,
         mut map: Option<AsyncMap<Self>>,
     ) {
         tokio::spawn(async move {
             while let Some(task) = task_chan.recv().await {
-                match &*task {
-                    AsyncTask::Open(id) => self.open(*id, map.as_mut()).await,
-                    AsyncTask::Connect((id, target)) => self.connect(*id, target.clone()).await,
-                    // TODO: I think we also need a writer.shutdown() here
-                    // but how does the client execute that part?
-                    AsyncTask::Close => self.close().await,
+                let msg = &*task;
+                match &msg.kind {
+                    TunnelMessageKind::Open => self.open(msg.id, map.as_mut()).await,
+                    TunnelMessageKind::Opened => {}
+                    TunnelMessageKind::Close => {
+                        self.close_writer().await;
+                        self.close_reader(TunnelMessage::closed()).await;
+                    }
+                    TunnelMessageKind::Closed => {
+                        self.close_writer().await;
+                    }
+                    TunnelMessageKind::Connect(target) => {
+                        self.connect(msg.id, target.clone()).await
+                    }
+                    TunnelMessageKind::Encapsulate(_) => unreachable!(),
                 }
             }
         });
@@ -258,7 +312,7 @@ where
     }
 
     async fn open_resumable(&mut self, map: &mut AsyncMap<Self>) {
-        match self.get_id().await {
+        match self.id().await {
             Some(current_id) => self.open_inner(current_id).await,
             None => {
                 let new_id = map.insert(self.clone()).await;
@@ -274,12 +328,12 @@ where
 
     async fn open_inner(&mut self, tunnel_id: u64) {
         let mut reader = self.shared_reader.lock().await;
-        reader.put_buf(TunnelMessage::open(tunnel_id));
+        reader.put_buf(TunnelMessage::opened(tunnel_id));
         reader.wake();
     }
 
     async fn resume(&mut self, map: &mut AsyncMap<Self>, prev_id: u64) {
-        match self.get_id().await {
+        match self.id().await {
             Some(_current_id) => self.close().await,
             None => match map.remove(prev_id).await {
                 Some(other) => {
@@ -301,9 +355,11 @@ where
             )
         };
         let other_writer = {
+            let (task_tx, mut task_rx) = PollTaskChannel::channel::<TunnelMessage>(1);
+            task_rx.close();
             std::mem::replace(
                 &mut *other.shared_writer.lock().await,
-                TunnelWriter::new(None),
+                TunnelWriter::new(task_tx),
             )
         };
 
@@ -324,13 +380,16 @@ where
         }
     }
 
-    async fn close(&mut self) {
-        let tunnel_id = { self.shared_writer.lock().await.tunnel_id.unwrap_or(0) };
-        let mut reader = self.shared_reader.lock().await;
-        reader.put_buf(TunnelMessage::close(tunnel_id));
-        reader.streams.clear();
-        reader.set_eof();
-        reader.wake();
+    pub async fn close(&mut self) {
+        self.close_reader(TunnelMessage::close()).await;
+    }
+
+    async fn close_reader(&mut self, last_msg: TunnelMessage) {
+        self.shared_reader.lock().await.close(last_msg);
+    }
+
+    async fn close_writer(&mut self) {
+        let _ = self.shutdown().await;
     }
 
     async fn connect(&mut self, session_id: u64, target: Socks5Target) {
@@ -364,6 +423,7 @@ where
         Self {
             shared_reader: self.shared_reader.clone(),
             shared_writer: self.shared_writer.clone(),
+            tunnel_id: self.tunnel_id.clone(),
             connector: self.connector.clone(),
         }
     }
@@ -529,6 +589,13 @@ where
             Poll::Pending
         }
     }
+
+    fn close(&mut self, last_msg: TunnelMessage) {
+        self.streams.clear();
+        self.put_buf(last_msg);
+        self.set_eof();
+        self.wake();
+    }
 }
 
 struct TunnelWriter<T>
@@ -540,15 +607,14 @@ where
     waker: Option<Waker>,
     buffer: BytesMut,
     tasks: VecDeque<Task>,
-    task_channel: Option<PollTaskSender<AsyncTask>>,
-    tunnel_id: Option<u64>,
+    task_channel: PollTaskSender<TunnelMessage>,
 }
 
 impl<T> TunnelWriter<T>
 where
     T: Sink<TunnelMessage, Error = io::Error> + Send + Unpin,
 {
-    fn new(task_channel: Option<PollTaskSender<AsyncTask>>) -> Self {
+    fn new(task_channel: PollTaskSender<TunnelMessage>) -> Self {
         Self {
             sinks: HashMap::new(),
             active: HashSet::new(),
@@ -556,7 +622,6 @@ where
             buffer: BytesMut::new(),
             tasks: VecDeque::new(),
             task_channel,
-            tunnel_id: None,
         }
     }
 
@@ -673,12 +738,7 @@ where
         // to uphold this guarantee to make sure we don't drop a session's
         // messages as we wait for its connection to complete.
         while let Some(mut task) = self.tasks.pop_front() {
-            match task.poll(
-                cx,
-                self.sinks.get_mut(&task.id),
-                self.task_channel.as_mut(),
-                &mut self.tunnel_id,
-            ) {
+            match task.poll(cx, &mut self.task_channel, self.sinks.get_mut(&task.id)) {
                 Poll::Ready(Ok(_)) => {
                     self.active.insert(task.id);
                 }
@@ -702,20 +762,11 @@ struct Task {
 
 enum TaskState {
     Unprocessed(TunnelMessage),
-    ChannelReserve(AsyncTask),
-    ChannelSend(AsyncTask),
+    ChannelReserve(TunnelMessage),
+    ChannelSend(TunnelMessage),
     ChannelWait,
     SinkReady(TunnelMessage),
     SinkSend(TunnelMessage),
-}
-
-#[derive(Debug)]
-enum AsyncTask {
-    /// Tunnel ID.
-    Open(u64),
-    /// Session ID.
-    Connect((u64, Socks5Target)),
-    Close,
 }
 
 impl Task {
@@ -729,72 +780,41 @@ impl Task {
     fn poll<T: Sink<TunnelMessage, Error = io::Error> + Send + Unpin>(
         &mut self,
         cx: &mut Context,
+        channel: &mut PollTaskSender<TunnelMessage>,
         mut sink: Option<&mut SessionHalf<T>>,
-        mut channel: Option<&mut PollTaskSender<AsyncTask>>,
-        tunnel_id: &mut Option<u64>,
     ) -> Poll<Result<(), io::Error>> {
         while let Some(state) = self.state.take() {
             match state {
                 TaskState::Unprocessed(msg) => {
                     match &msg.kind {
-                        TunnelMessageKind::Open => {
-                            if channel.is_some() {
-                                // We are the server, process the request.
-                                let atask = AsyncTask::Open(msg.id);
-                                self.state = Some(TaskState::ChannelReserve(atask));
-                            } else {
-                                // We are the client, store the server's tunnel id.
-                                // If this is the result of a resume, the client is
-                                // willing to update to the freshest server id.
-                                if msg.id > 0 {
-                                    *tunnel_id = Some(msg.id);
-                                }
-                            }
-                        }
-                        TunnelMessageKind::Connect(target) => {
-                            let atask = AsyncTask::Connect((msg.id, target.clone()));
-                            self.state = Some(TaskState::ChannelReserve(atask));
-                        }
-                        TunnelMessageKind::Close => {
-                            let atask = AsyncTask::Close;
-                            self.state = Some(TaskState::ChannelReserve(atask));
-                        }
                         TunnelMessageKind::Encapsulate(_) => {
-                            self.state = Some(TaskState::SinkReady(msg));
+                            self.state = Some(TaskState::SinkReady(msg))
                         }
+                        _ => self.state = Some(TaskState::ChannelReserve(msg)),
                     };
                 }
-                TaskState::ChannelReserve(atask) => match channel.as_mut() {
-                    Some(tx) => match tx.poll_reserve(cx) {
-                        Poll::Pending => {
-                            self.state = Some(TaskState::ChannelReserve(atask));
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Ok(_)) => self.state = Some(TaskState::ChannelSend(atask)),
-                        Poll::Ready(Err(_)) => {
-                            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
-                        }
-                    },
-                    None => log::debug!("Missing channel for async task, dropping"),
+                TaskState::ChannelReserve(msg) => match channel.poll_reserve(cx) {
+                    Poll::Pending => {
+                        self.state = Some(TaskState::ChannelReserve(msg));
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Ok(_)) => self.state = Some(TaskState::ChannelSend(msg)),
+                    Poll::Ready(Err(_)) => {
+                        return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+                    }
                 },
-                TaskState::ChannelSend(atask) => match channel.as_mut() {
-                    Some(tx) => match tx.send(atask) {
-                        Ok(_) => self.state = Some(TaskState::ChannelWait),
-                        Err(_) => {
-                            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
-                        }
-                    },
-                    None => log::debug!("Missing channel for async task, dropping"),
+                TaskState::ChannelSend(msg) => match channel.send(msg) {
+                    Ok(_) => self.state = Some(TaskState::ChannelWait),
+                    Err(_) => {
+                        return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+                    }
                 },
-                TaskState::ChannelWait => match channel.as_mut() {
-                    Some(tx) => match tx.poll_wait(cx) {
-                        Poll::Pending => {
-                            self.state = Some(TaskState::ChannelWait);
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(_) => {}
-                    },
-                    None => log::debug!("Missing channel for async task, dropping"),
+                TaskState::ChannelWait => match channel.poll_wait(cx) {
+                    Poll::Pending => {
+                        self.state = Some(TaskState::ChannelWait);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(_) => {}
                 },
                 TaskState::SinkReady(msg) => match sink.as_mut() {
                     Some(tx) => match tx.poll_ready_unpin(cx) {
@@ -900,7 +920,7 @@ pub mod tests {
         let reply = framed1.next().await.unwrap().unwrap();
 
         // We should get a positive tunnel id assigned by the server.
-        assert_eq!(reply.kind, TunnelMessageKind::Open);
+        assert_eq!(reply.kind, TunnelMessageKind::Opened);
         assert!(reply.id > 0);
         let tunnel1_id = reply.id;
 
@@ -931,7 +951,7 @@ pub mod tests {
         let reply = framed2.next().await.unwrap().unwrap();
 
         // As before, the reply should be a new id assigned to tunnel2.
-        assert_eq!(reply.kind, TunnelMessageKind::Open);
+        assert_eq!(reply.kind, TunnelMessageKind::Opened);
         assert_ne!(reply.id, 0);
         let _tunnel2_id = reply.id;
 

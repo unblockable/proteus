@@ -85,7 +85,7 @@ impl Decoder for TunnelCodec {
         // The remaining is the data and data_crc.
         let data = msg_bytes.split_to(msg_bytes.len() - 8).freeze();
         let data_crc_src = msg_bytes.get_u64();
-        
+
         let data_crc_dst = xxh3_64(&data);
         if data_crc_src != data_crc_dst {
             return Err(std::io::ErrorKind::InvalidData.into());
@@ -130,37 +130,40 @@ impl TunnelCodec {
     fn encode_kind(&mut self, kind: TunnelMessageKind, dst: &mut BytesMut) -> io::Result<()> {
         let encoded_kind = match kind {
             TunnelMessageKind::Open => 0,
-            TunnelMessageKind::Close => 1,
-            TunnelMessageKind::Connect(_) => 2,
-            TunnelMessageKind::Encapsulate(_) => 3,
+            TunnelMessageKind::Opened => 1,
+            TunnelMessageKind::Close => 2,
+            TunnelMessageKind::Closed => 3,
+            TunnelMessageKind::Connect(_) => 4,
+            TunnelMessageKind::Encapsulate(_) => 5,
         };
         dst.reserve(1);
         dst.put_u8(encoded_kind);
 
         match kind {
             TunnelMessageKind::Open => Ok(()),
+            TunnelMessageKind::Opened => Ok(()),
             TunnelMessageKind::Close => Ok(()),
+            TunnelMessageKind::Closed => Ok(()),
             TunnelMessageKind::Connect(target) => self.encode_target(target, dst),
             TunnelMessageKind::Encapsulate(bytes) => self.encode_bytes(bytes, dst),
         }
     }
 
-    fn decode_kind(
-        &mut self,
-        src: &mut Cursor<&Bytes>,
-    ) -> io::Result<Option<TunnelMessageKind>> {
+    fn decode_kind(&mut self, src: &mut Cursor<&Bytes>) -> io::Result<Option<TunnelMessageKind>> {
         if src.remaining() >= 1 {
             let encoded_kind = src.get_u8();
             let command = match encoded_kind {
                 0 => TunnelMessageKind::Open,
-                1 => TunnelMessageKind::Close,
-                2 => {
+                1 => TunnelMessageKind::Opened,
+                2 => TunnelMessageKind::Close,
+                3 => TunnelMessageKind::Closed,
+                4 => {
                     let Some(target) = self.decode_target(src)? else {
                         return Ok(None);
                     };
                     TunnelMessageKind::Connect(target)
                 }
-                3 => {
+                5 => {
                     let Some(bytes) = self.decode_bytes(src)? else {
                         return Ok(None);
                     };
@@ -184,7 +187,7 @@ impl TunnelCodec {
         target_cursor.set_position(src.position());
 
         let result = socks::codec::decode_target(&mut target_cursor);
-        
+
         src.set_position(target_cursor.position());
         result
     }
