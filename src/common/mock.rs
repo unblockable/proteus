@@ -347,6 +347,10 @@ impl Default for MockConnectorState {
 impl MockConnector {
     pub fn new(connect_delay: Option<Duration>) -> Self {
         let (local, remote) = MockIo::new_pair();
+        Self::new_with_io(connect_delay, local, remote)
+    }
+
+    pub fn new_with_io(connect_delay: Option<Duration>, local: MockIo, remote: MockIo) -> Self {
         Self {
             local_socket: Arc::new(Mutex::new(Some(local))),
             remote_socket: Arc::new(Mutex::new(Some(remote))),

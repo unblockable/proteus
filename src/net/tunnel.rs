@@ -338,6 +338,8 @@ where
         let session = Session::<S>::from_connector(session_id, connector, target);
         let (stream, sink) = session.into_split();
 
+        // TODO: What if the connection fails? How do we propagate to the client?
+
         self.shared_reader.lock().await.add(session_id, stream);
         self.shared_writer.lock().await.add(session_id, sink);
     }
@@ -826,14 +828,19 @@ impl Task {
 pub mod tests {
     use std::time::Duration;
 
-    use futures::StreamExt;
+    use bytes::Bytes;
     use futures::stream::{self, SelectAll};
-    use tokio::io::{AsyncRead, AsyncWrite};
+    use futures::{SinkExt, StreamExt};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+    use tokio_util::codec::Framed;
 
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
+    use crate::common::sync::AsyncMap;
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
     use crate::lang::{self, Role};
-    use crate::net::proto::tunnel::message::TunnelMessage;
+    use crate::net::proto::BytesSession;
+    use crate::net::proto::tunnel::codec::TunnelCodec;
+    use crate::net::proto::tunnel::message::{TunnelMessage, TunnelMessageKind};
     use crate::net::session::SessionBuilder;
     use crate::net::tunnel::TunnelEofMethod;
     use crate::net::{AsyncConnect, AsyncConnectExt, TunnelClient, TunnelServer};
@@ -869,6 +876,104 @@ pub mod tests {
         assert_eq!(all_streams.len(), 1);
         assert!(all_streams.next().await.is_none());
         assert_eq!(all_streams.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn valid_server_resume() {
+        // Provides the remote, destination side socket.
+        let mut connector = MockConnector::new(None);
+        let mut remote = connector.remote_socket().unwrap();
+
+        // Test tunnel resumption, sub-protocol is not important.
+        let map = AsyncMap::new();
+        let mut tunnel1 = TunnelServer::<BytesSession<_, _>, _>::new(
+            TunnelEofMethod::OnStreamCount(1),
+            connector,
+            Some(map.clone()),
+        );
+
+        // Get a nicer interface for exchanging messages with the tunnel.
+        let mut framed1 = Framed::new(tunnel1.clone(), TunnelCodec);
+
+        // Mock deliver some message from client side.
+        framed1.send(TunnelMessage::open(0)).await.unwrap();
+        let reply = framed1.next().await.unwrap().unwrap();
+
+        // We should get a positive tunnel id assigned by the server.
+        assert_eq!(reply.kind, TunnelMessageKind::Open);
+        assert!(reply.id > 0);
+        let tunnel1_id = reply.id;
+
+        // Add a new stream to the tunnel, with some payload.
+        let target = MockConnector::default_target();
+        framed1
+            .send(TunnelMessage::connect(TEST_ID, target))
+            .await
+            .unwrap();
+        framed1
+            .send(TunnelMessage::encapsulate(TEST_ID, Bytes::from("hello1")))
+            .await
+            .unwrap();
+        assert_eq!(tunnel1.shared_reader.lock().await.streams.len(), 1);
+
+        // Now lets say channel broke, and we want to resume over a new channel.
+        // On the server, this is a new connection so it creates a new tunnel.
+        let mut tunnel2 = TunnelServer::<BytesSession<_, _>, _>::new(
+            TunnelEofMethod::OnStreamCount(1),
+            MockConnector::default(),
+            Some(map.clone()),
+        );
+        assert_eq!(tunnel2.shared_reader.lock().await.streams.len(), 0);
+
+        // Now we can resume by opening with the previous tunnel id.
+        let mut framed2 = Framed::new(tunnel2.clone(), TunnelCodec);
+        framed2.send(TunnelMessage::open(tunnel1_id)).await.unwrap();
+        let reply = framed2.next().await.unwrap().unwrap();
+
+        // As before, the reply should be a new id assigned to tunnel2.
+        assert_eq!(reply.kind, TunnelMessageKind::Open);
+        assert_ne!(reply.id, 0);
+        let _tunnel2_id = reply.id;
+
+        // The stream from tunnel1 should now belong to tunnel2.
+        assert_eq!(tunnel1.shared_reader.lock().await.streams.len(), 0);
+        assert_eq!(tunnel2.shared_reader.lock().await.streams.len(), 1);
+
+        // Tunnel1 is basically dead now. Another read emits an EOF.
+        // Normally, this would be the signal to stop its interpreter.
+        assert_eq!(tunnel1.read(&mut vec![0u8; 1]).await.unwrap(), 0);
+
+        // Now when we send, it should go to the original stream endpoint.
+        framed2
+            .send(TunnelMessage::encapsulate(TEST_ID, Bytes::from("hello2")))
+            .await
+            .unwrap();
+
+        let mut buf = vec![0u8; 64];
+        let len = remote.reader.read(&mut buf).await.unwrap();
+        assert_eq!(len, 12);
+        assert_eq!(&buf[0..12], b"hello1hello2");
+    }
+
+    #[tokio::test]
+    async fn invalid_server_resume() {
+        for maybe_map in [Some(AsyncMap::new()), None] {
+            let tunnel = TunnelServer::<BytesSession<_, _>, _>::new(
+                TunnelEofMethod::OnStreamCount(1),
+                MockConnector::default(),
+                maybe_map.clone(),
+            );
+
+            // If we request to open a non-zero tunnel id that does not exist,
+            // the tunnel should try to close.
+            let mut framed = Framed::new(tunnel.clone(), TunnelCodec);
+            let resume_id = TEST_ID;
+            framed.send(TunnelMessage::open(resume_id)).await.unwrap();
+            let reply = framed.next().await.unwrap().unwrap();
+
+            assert_eq!(reply.kind, TunnelMessageKind::Close);
+            assert_eq!(reply.id, 0);
+        }
     }
 
     fn wrapped_client_proxy<R, W, S>(app_io: TunnelClient<S>, net_io: MockIo) -> MockProxy
