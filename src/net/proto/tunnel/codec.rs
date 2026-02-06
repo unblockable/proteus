@@ -16,7 +16,7 @@ impl Encoder<TunnelMessage> for TunnelCodec {
     fn encode(&mut self, msg: TunnelMessage, dst: &mut BytesMut) -> io::Result<()> {
         // If we return early, we want the dst buffer to be unmodified.
         let mut buf = BytesMut::new();
-        self.encode_id(msg.session_id, &mut buf)?;
+        self.encode_id(msg.id, &mut buf)?;
         self.encode_kind(msg.kind, &mut buf)?;
         let data = buf.freeze();
 
@@ -93,7 +93,7 @@ impl Decoder for TunnelCodec {
 
         // Now that we know the data is valid, decode it.
         let mut reader = Cursor::new(&data);
-        let Some(session_id) = self.decode_id(&mut reader)? else {
+        let Some(id) = self.decode_id(&mut reader)? else {
             return Err(std::io::ErrorKind::InvalidInput.into());
         };
         let Some(kind) = self.decode_kind(&mut reader)? else {
@@ -101,7 +101,7 @@ impl Decoder for TunnelCodec {
         };
 
         // Success.
-        Ok(Some(TunnelMessage { session_id, kind }))
+        Ok(Some(TunnelMessage { id, kind }))
     }
 }
 
@@ -129,17 +129,19 @@ impl TunnelCodec {
 
     fn encode_kind(&mut self, kind: TunnelMessageKind, dst: &mut BytesMut) -> io::Result<()> {
         let encoded_kind = match kind {
-            TunnelMessageKind::Open(_) => 0,
-            TunnelMessageKind::Encapsulated(_) => 1,
-            TunnelMessageKind::Close => 2,
+            TunnelMessageKind::Open => 0,
+            TunnelMessageKind::Close => 1,
+            TunnelMessageKind::Connect(_) => 2,
+            TunnelMessageKind::Encapsulate(_) => 3,
         };
         dst.reserve(1);
         dst.put_u8(encoded_kind);
 
         match kind {
-            TunnelMessageKind::Open(target) => self.encode_target(target, dst),
-            TunnelMessageKind::Encapsulated(bytes) => self.encode_bytes(bytes, dst),
+            TunnelMessageKind::Open => Ok(()),
             TunnelMessageKind::Close => Ok(()),
+            TunnelMessageKind::Connect(target) => self.encode_target(target, dst),
+            TunnelMessageKind::Encapsulate(bytes) => self.encode_bytes(bytes, dst),
         }
     }
 
@@ -150,19 +152,20 @@ impl TunnelCodec {
         if src.remaining() >= 1 {
             let encoded_kind = src.get_u8();
             let command = match encoded_kind {
-                0 => {
+                0 => TunnelMessageKind::Open,
+                1 => TunnelMessageKind::Close,
+                2 => {
                     let Some(target) = self.decode_target(src)? else {
                         return Ok(None);
                     };
-                    TunnelMessageKind::Open(target)
+                    TunnelMessageKind::Connect(target)
                 }
-                1 => {
+                3 => {
                     let Some(bytes) = self.decode_bytes(src)? else {
                         return Ok(None);
                     };
-                    TunnelMessageKind::Encapsulated(bytes)
+                    TunnelMessageKind::Encapsulate(bytes)
                 }
-                2 => TunnelMessageKind::Close,
                 _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
             };
             Ok(Some(command))
@@ -239,7 +242,7 @@ mod tests {
 
     fn message(kind: TunnelMessageKind) -> TunnelMessage {
         TunnelMessage {
-            session_id: 123456789,
+            id: 123456789,
             kind,
         }
     }
@@ -249,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_open() {
+    fn valid_connect() {
         let addresses = vec![
             Socks5Address::from_name(String::from("test.com")),
             Socks5Address::from_addr(IpAddr::V4(Ipv4Addr::new(4, 3, 2, 1))),
@@ -258,13 +261,13 @@ mod tests {
         ];
 
         for addr in addresses {
-            test_valid_command(TunnelMessageKind::Open(Socks5Target::new(addr, 12345)));
+            test_valid_command(TunnelMessageKind::Connect(Socks5Target::new(addr, 12345)));
         }
     }
 
     #[test]
     fn valid_bytes() {
-        test_valid_command(TunnelMessageKind::Encapsulated(Bytes::from(
+        test_valid_command(TunnelMessageKind::Encapsulate(Bytes::from(
             "This is the payload.",
         )));
     }
@@ -275,15 +278,20 @@ mod tests {
     }
 
     #[test]
+    fn valid_open() {
+        test_valid_command(TunnelMessageKind::Open);
+    }
+
+    #[test]
     fn invalid_payload_length() {
         // Max supported payload length.
         let max_len = TunnelCodec::encapsulated_bytes_max_len();
         let bytes = mock::payload(max_len);
-        test_valid_command(TunnelMessageKind::Encapsulated(bytes));
+        test_valid_command(TunnelMessageKind::Encapsulate(bytes));
 
         // This payload is larger than supported.
         let bytes = mock::payload(max_len + 1);
-        let msg = message(TunnelMessageKind::Encapsulated(bytes));
+        let msg = message(TunnelMessageKind::Encapsulate(bytes));
 
         // Should get encode error.
         let mut buf = BytesMut::new();
@@ -306,7 +314,7 @@ mod tests {
     fn invalid_kind() {
         // The kind is the 9th byte (index 8).
         test_invalid(
-            TunnelMessageKind::Open(Socks5Target::new(Socks5Address::Unknown, 0)),
+            TunnelMessageKind::Connect(Socks5Target::new(Socks5Address::Unknown, 0)),
             8,
         );
     }
@@ -318,7 +326,7 @@ mod tests {
         let bytes = BytesMut::zeroed(max_len).freeze();
 
         // If we stomp a payload byte, the checksum should fail.
-        test_invalid(TunnelMessageKind::Encapsulated(bytes), 10_000);
+        test_invalid(TunnelMessageKind::Encapsulate(bytes), 10_000);
     }
 
     #[test]

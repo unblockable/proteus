@@ -53,7 +53,7 @@ impl<R: AsyncRead + Send + Unpin> Stream for BytesStream<R> {
         match poll_read_buf(Pin::new(&mut self.io), cx, &mut buf) {
             Poll::Ready(Ok(0)) => Poll::Ready(None),
             Poll::Ready(Ok(_len)) => {
-                Poll::Ready(Some(TunnelMessage::encapsulated(self.id, buf.freeze())))
+                Poll::Ready(Some(TunnelMessage::encapsulate(self.id, buf.freeze())))
             }
             Poll::Ready(Err(_e)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -95,7 +95,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for BytesSink<W> {
         if self.buf.is_some() {
             Err(io::ErrorKind::WouldBlock.into())
         } else {
-            if let TunnelMessageKind::Encapsulated(bytes) = item.kind {
+            if let TunnelMessageKind::Encapsulate(bytes) = item.kind {
                 self.buf = Some(Cursor::new(bytes));
                 // This is best-effort, so it's safe to ignore pending signals.
                 let mut cx = Context::from_waker(Waker::noop());

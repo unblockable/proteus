@@ -1,7 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
-use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker, ready};
 
@@ -13,7 +12,7 @@ use rand::rngs::ThreadRng;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::common::sync::{PollMutex, PollTaskChannel, PollTaskReceiver, PollTaskSender};
+use crate::common::sync::{AsyncMap, PollMutex, PollTaskChannel, PollTaskReceiver, PollTaskSender};
 use crate::net::AsyncConnect;
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 use crate::net::proto::tunnel::codec::TunnelCodec;
@@ -95,15 +94,19 @@ where
         // target destination app.
         {
             let mut reader = self.shared_reader.lock().await;
-            reader.add(stream);
-            reader.put_buf(TunnelMessage::open(id, target));
+            reader.add(id, stream);
+            reader.put_buf(TunnelMessage::connect(id, target));
             reader.wake();
         }
     }
 
+    /// Gracefully shut down the tunnel by queuing a close message to the server,
+    /// and arrange for an EOF to be raised after the message is sent.
     pub async fn _close(&mut self) {
+        let tunnel_id = { self.shared_writer.lock().await.tunnel_id.unwrap_or(0) };
         let mut reader = self.shared_reader.lock().await;
-        reader.put_buf(TunnelMessage::close());
+        reader.put_buf(TunnelMessage::close(tunnel_id));
+        reader.streams.clear();
         reader.set_eof();
         reader.wake();
     }
@@ -191,9 +194,13 @@ impl<S, C> TunnelServer<S, C>
 where
     S: SessionBuilder<Message = TunnelMessage> + 'static,
     C: AsyncConnect<ReadHalf = S::ReadHalf, WriteHalf = S::WriteHalf>,
-    C: AsMut<C> + Clone + Send + Unpin + 'static,
+    C: AsMut<C> + Clone + Send + Sync + Unpin + 'static,
 {
-    pub fn new(eof_method: TunnelEofMethod, connector: C) -> Self {
+    pub fn new(
+        eof_method: TunnelEofMethod,
+        connector: C,
+        resume_map: Option<AsyncMap<Self>>,
+    ) -> Self {
         let (task_tx, task_rx) = PollTaskChannel::channel::<AsyncTask>(1_000);
 
         let server = Self {
@@ -202,43 +209,146 @@ where
             connector,
         };
 
-        server.clone().run_background_task_manager(task_rx);
         server
+            .clone()
+            .into_background_task_manager(task_rx, resume_map);
+        server
+    }
+
+    pub async fn get_id(&mut self) -> Option<u64> {
+        self.shared_writer.lock().await.tunnel_id
+    }
+
+    async fn set_id(&mut self, id: Option<u64>) {
+        self.shared_writer.lock().await.tunnel_id = id;
     }
 
     // Asynchronously handle tasks that require communication across our inner
     // reader and writer, such as open and close tasks from the client side.
-    fn run_background_task_manager(mut self, mut task_chan: PollTaskReceiver<AsyncTask>) {
+    fn into_background_task_manager(
+        mut self,
+        mut task_chan: PollTaskReceiver<AsyncTask>,
+        mut map: Option<AsyncMap<Self>>,
+    ) {
         tokio::spawn(async move {
             while let Some(task) = task_chan.recv().await {
-                match task.deref() {
-                    AsyncTask::Open((id, target)) => {
-                        let connector = self.connector.clone();
-                        let session = Session::<S>::from_connector(*id, connector, target.clone());
-                        let (stream, sink) = session.into_split();
-
-                        self.shared_reader.lock().await.add(stream);
-                        self.shared_writer.lock().await.add(*id, sink);
-                    }
+                match &*task {
+                    AsyncTask::Open(id) => self.open(*id, map.as_mut()).await,
+                    AsyncTask::Connect((id, target)) => self.connect(*id, target.clone()).await,
+                    // TODO: I think we also need a writer.shutdown() here
+                    // but how does the client execute that part?
                     AsyncTask::Close => self.close().await,
                 }
             }
         });
     }
 
+    async fn open(&mut self, tunnel_id: u64, map: Option<&mut AsyncMap<Self>>) {
+        if tunnel_id == 0 {
+            match map {
+                Some(map) => self.open_resumable(map).await,
+                None => self.open_oneshot().await,
+            }
+        } else {
+            match map {
+                Some(map) => self.resume(map, tunnel_id).await,
+                None => self.close().await,
+            }
+        }
+    }
+
+    async fn open_resumable(&mut self, map: &mut AsyncMap<Self>) {
+        match self.get_id().await {
+            Some(current_id) => self.open_inner(current_id).await,
+            None => {
+                let new_id = map.insert(self.clone()).await;
+                self.set_id(Some(new_id)).await;
+                self.open_inner(new_id).await
+            }
+        }
+    }
+
+    async fn open_oneshot(&mut self) {
+        self.open_inner(0).await;
+    }
+
+    async fn open_inner(&mut self, tunnel_id: u64) {
+        let mut reader = self.shared_reader.lock().await;
+        reader.put_buf(TunnelMessage::open(tunnel_id));
+        reader.wake();
+    }
+
+    async fn resume(&mut self, map: &mut AsyncMap<Self>, prev_id: u64) {
+        match self.get_id().await {
+            Some(_current_id) => self.close().await,
+            None => match map.remove(prev_id).await {
+                Some(other) => {
+                    self.replace_io(other).await;
+                    self.open_resumable(map).await;
+                }
+                None => self.close().await,
+            },
+        }
+    }
+
+    /// Steal the inner io state from the other instance we want to resume.
+    async fn replace_io(&mut self, mut other: Self) {
+        // Replace the other instance with empty inner io elements.
+        let other_reader = {
+            std::mem::replace(
+                &mut *other.shared_reader.lock().await,
+                TunnelReader::new(TunnelEofMethod::OnStreamCount(0)),
+            )
+        };
+        let other_writer = {
+            std::mem::replace(
+                &mut *other.shared_writer.lock().await,
+                TunnelWriter::new(None),
+            )
+        };
+
+        // Wake to propagate an EOF to close the old interpreter.
+        other_reader.wake();
+
+        // Replace only the session-related io elements.
+        {
+            let mut reader = self.shared_reader.lock().await;
+            reader.streams = other_reader.streams;
+            reader.n_streams = other_reader.n_streams;
+        }
+        {
+            let mut writer = self.shared_writer.lock().await;
+            writer.sinks = other_writer.sinks;
+            writer.active = other_writer.active;
+            writer.tasks = other_writer.tasks;
+        }
+    }
+
+    async fn close(&mut self) {
+        let tunnel_id = { self.shared_writer.lock().await.tunnel_id.unwrap_or(0) };
+        let mut reader = self.shared_reader.lock().await;
+        reader.put_buf(TunnelMessage::close(tunnel_id));
+        reader.streams.clear();
+        reader.set_eof();
+        reader.wake();
+    }
+
+    async fn connect(&mut self, session_id: u64, target: Socks5Target) {
+        let connector = self.connector.clone();
+        let session = Session::<S>::from_connector(session_id, connector, target);
+        let (stream, sink) = session.into_split();
+
+        self.shared_reader.lock().await.add(session_id, stream);
+        self.shared_writer.lock().await.add(session_id, sink);
+    }
+
     /// Add a session that is already connected to its apps io channels.
     #[cfg(test)]
     async fn add_session(&mut self, src: S::ReadHalf, dst: S::WriteHalf, id: u64) {
+        // `id` here is the session id, not the tunnel id.
         let (stream, sink) = Session::<S>::from_io(id, src, dst).into_split();
-        self.shared_reader.lock().await.add(stream);
+        self.shared_reader.lock().await.add(id, stream);
         self.shared_writer.lock().await.add(id, sink);
-    }
-
-    pub async fn close(&mut self) {
-        let mut reader = self.shared_reader.lock().await;
-        reader.put_buf(TunnelMessage::close());
-        reader.set_eof();
-        reader.wake();
     }
 }
 
@@ -341,7 +451,7 @@ where
         }
     }
 
-    fn add(&mut self, stream: SessionHalf<T>) {
+    fn add(&mut self, _id: u64, stream: SessionHalf<T>) {
         self.streams.push(stream);
         self.n_streams += 1;
         self.wake();
@@ -429,6 +539,7 @@ where
     buffer: BytesMut,
     tasks: VecDeque<Task>,
     task_channel: Option<PollTaskSender<AsyncTask>>,
+    tunnel_id: Option<u64>,
 }
 
 impl<T> TunnelWriter<T>
@@ -443,6 +554,7 @@ where
             buffer: BytesMut::new(),
             tasks: VecDeque::new(),
             task_channel,
+            tunnel_id: None,
         }
     }
 
@@ -559,7 +671,12 @@ where
         // to uphold this guarantee to make sure we don't drop a session's
         // messages as we wait for its connection to complete.
         while let Some(mut task) = self.tasks.pop_front() {
-            match task.poll(cx, self.sinks.get_mut(&task.id), self.task_channel.as_mut()) {
+            match task.poll(
+                cx,
+                self.sinks.get_mut(&task.id),
+                self.task_channel.as_mut(),
+                &mut self.tunnel_id,
+            ) {
                 Poll::Ready(Ok(_)) => {
                     self.active.insert(task.id);
                 }
@@ -592,14 +709,17 @@ enum TaskState {
 
 #[derive(Debug)]
 enum AsyncTask {
-    Open((u64, Socks5Target)),
+    /// Tunnel ID.
+    Open(u64),
+    /// Session ID.
+    Connect((u64, Socks5Target)),
     Close,
 }
 
 impl Task {
     fn new(msg: TunnelMessage) -> Self {
         Self {
-            id: msg.session_id,
+            id: msg.id,
             state: Some(TaskState::Unprocessed(msg)),
         }
     }
@@ -609,21 +729,36 @@ impl Task {
         cx: &mut Context,
         mut sink: Option<&mut SessionHalf<T>>,
         mut channel: Option<&mut PollTaskSender<AsyncTask>>,
+        tunnel_id: &mut Option<u64>,
     ) -> Poll<Result<(), io::Error>> {
         while let Some(state) = self.state.take() {
             match state {
                 TaskState::Unprocessed(msg) => {
                     match &msg.kind {
-                        TunnelMessageKind::Open(target) => {
-                            let atask = AsyncTask::Open((msg.session_id, target.clone()));
-                            self.state = Some(TaskState::ChannelReserve(atask));
+                        TunnelMessageKind::Open => {
+                            if channel.is_some() {
+                                // We are the server, process the request.
+                                let atask = AsyncTask::Open(msg.id);
+                                self.state = Some(TaskState::ChannelReserve(atask));
+                            } else {
+                                // We are the client, store the server's tunnel id.
+                                // If this is the result of a resume, the client is
+                                // willing to update to the freshest server id.
+                                if msg.id > 0 {
+                                    *tunnel_id = Some(msg.id);
+                                }
+                            }
                         }
-                        TunnelMessageKind::Encapsulated(_) => {
-                            self.state = Some(TaskState::SinkReady(msg));
+                        TunnelMessageKind::Connect(target) => {
+                            let atask = AsyncTask::Connect((msg.id, target.clone()));
+                            self.state = Some(TaskState::ChannelReserve(atask));
                         }
                         TunnelMessageKind::Close => {
                             let atask = AsyncTask::Close;
                             self.state = Some(TaskState::ChannelReserve(atask));
+                        }
+                        TunnelMessageKind::Encapsulate(_) => {
+                            self.state = Some(TaskState::SinkReady(msg));
                         }
                     };
                 }
@@ -668,20 +803,18 @@ impl Task {
                         Poll::Ready(Ok(_)) => self.state = Some(TaskState::SinkSend(msg)),
                         Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                     },
-                    None => log::debug!(
-                        "Missing sink for message from session {}, dropping",
-                        msg.session_id
-                    ),
+                    None => {
+                        log::debug!("Missing sink for message from session {}, dropping", msg.id)
+                    }
                 },
                 TaskState::SinkSend(msg) => match sink.as_mut() {
                     Some(tx) => match tx.start_send_unpin(msg) {
                         Ok(_) => {}
                         Err(e) => return Poll::Ready(Err(e)),
                     },
-                    None => log::debug!(
-                        "Missing sink for message from session {}, dropping",
-                        msg.session_id
-                    ),
+                    None => {
+                        log::debug!("Missing sink for message from session {}, dropping", msg.id)
+                    }
                 },
             }
         }
@@ -698,8 +831,8 @@ pub mod tests {
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::common::mock::{self, MockConnector, MockIo, MockProxy, MockProxyNetwork};
-    use crate::lang::{self, Role};
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
+    use crate::lang::{self, Role};
     use crate::net::proto::tunnel::message::TunnelMessage;
     use crate::net::session::SessionBuilder;
     use crate::net::tunnel::TunnelEofMethod;
@@ -820,15 +953,18 @@ pub mod tests {
         let tunnel: TunnelServer<S, MockConnector> = match sock_kind {
             MockSocketKind::Connected => {
                 // We are connected and want to end when this connection is done.
-                let mut tunnel =
-                    TunnelServer::new(TunnelEofMethod::OnStreamCount(1), MockConnector::default());
+                let mut tunnel = TunnelServer::new(
+                    TunnelEofMethod::OnStreamCount(1),
+                    MockConnector::default(),
+                    None,
+                );
                 tunnel.add_session(src, dst, TEST_ID).await;
                 tunnel
             }
             MockSocketKind::Disconnected(connector) => {
                 // We are disconnected, we need to hold the tunnel open until
                 // the first stream from the client is complete.
-                TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector)
+                TunnelServer::new(TunnelEofMethod::OnStreamCount(1), connector, None)
             }
         };
 

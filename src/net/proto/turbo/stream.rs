@@ -96,7 +96,7 @@ impl<R: AsyncRead + Send + Unpin> Stream for TurboStream<R> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         match self.as_mut().poll_state_inner(cx) {
             Poll::Ready(Some(msg)) => {
-                let msg = TunnelMessage::encapsulated(self.id, encode(msg));
+                let msg = TunnelMessage::encapsulate(self.id, encode(msg));
                 Poll::Ready(Some(msg))
             }
             Poll::Ready(None) => {

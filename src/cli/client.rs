@@ -8,11 +8,15 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use crate::cli::args::{ClientArgs, ClientMode};
 use crate::lang::Role;
+use crate::lang::interpreter::Interpreter;
 use crate::net::proto::socks::address::Socks5Target;
 use crate::net::proto::{BytesSession, TunnelMessage, TurboSession, socks};
 use crate::net::{
     Channel, SessionBuilder, TcpConnector, TunnelClient, TunnelEofMethod, fmt_stream_name,
 };
+
+type TcpR = Chain<Cursor<Bytes>, OwnedReadHalf>;
+type TcpW = OwnedWriteHalf;
 
 pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
     log::info!("Proteus is running in Client mode.");
@@ -31,18 +35,10 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
 
             if args.session.turbo {
                 log::info!("Tunnels will use the TurboSession session manager.");
-
-                run_stream_client::<
-                    TurboSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
-                >(args, psf_path)
-                .await?
+                run_stream_client::<TurboSession<TcpR, TcpW>>(args, psf_path).await?
             } else {
                 log::info!("Tunnels will use the BytesSession session manager.");
-
-                run_stream_client::<
-                    BytesSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
-                >(args, psf_path)
-                .await?
+                run_stream_client::<BytesSession<TcpR, TcpW>>(args, psf_path).await?
             }
         }
         ClientMode::Tunnel => {
@@ -52,18 +48,10 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
 
             if args.session.turbo {
                 log::info!("Tunnels will use the TurboSession session manager.");
-
-                run_tunnel_client::<
-                    TurboSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
-                >(args, psf_path)
-                .await?
+                run_tunnel_client::<TurboSession<TcpR, TcpW>>(args, psf_path).await?
             } else {
                 log::info!("Tunnels will use the BytesSession session manager.");
-
-                run_tunnel_client::<
-                    BytesSession<Chain<Cursor<Bytes>, OwnedReadHalf>, OwnedWriteHalf>,
-                >(args, psf_path)
-                .await?
+                run_tunnel_client::<BytesSession<TcpR, TcpW>>(args, psf_path).await?
             }
         }
     }
@@ -74,11 +62,7 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
 
 async fn run_stream_client<S>(args: ClientArgs, psf_path: String) -> anyhow::Result<()>
 where
-    S: SessionBuilder<
-            Message = TunnelMessage,
-            ReadHalf = Chain<Cursor<Bytes>, OwnedReadHalf>,
-            WriteHalf = OwnedWriteHalf,
-        >,
+    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW>,
 {
     // Clients listen for app connections and create proteus tunnels to a server.
     let protocol_spec = super::parse_protocol_spec(psf_path.clone(), Role::Client)?;
@@ -98,7 +82,7 @@ where
 
             match add_stream_to_tunnel(app_stream, tunnel.clone()).await {
                 Ok(_) => {
-                    super::run_interpreter(
+                    Interpreter::run(
                         channel.clone(),
                         channel,
                         tunnel.clone(),
@@ -115,11 +99,7 @@ where
 
 async fn run_tunnel_client<S>(args: ClientArgs, psf_path: String) -> anyhow::Result<()>
 where
-    S: SessionBuilder<
-            Message = TunnelMessage,
-            ReadHalf = Chain<Cursor<Bytes>, OwnedReadHalf>,
-            WriteHalf = OwnedWriteHalf,
-        > + 'static,
+    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW> + 'static,
 {
     // Clients listen for app connections and create proteus tunnels to a server.
     let protocol_spec = super::parse_protocol_spec(psf_path.clone(), Role::Client)?;
@@ -138,7 +118,7 @@ where
         let (net_src, net_dst) = (channel.clone(), channel.clone());
         let (app_src, app_dst) = (tunnel.clone(), tunnel.clone());
         tokio::spawn(async move {
-            super::run_interpreter(net_src, net_dst, app_src, app_dst, protocol_spec).await
+            Interpreter::run(net_src, net_dst, app_src, app_dst, protocol_spec).await
         });
     }
 
@@ -161,11 +141,7 @@ async fn add_stream_to_tunnel<S>(
     mut tunnel: TunnelClient<S>,
 ) -> anyhow::Result<()>
 where
-    S: SessionBuilder<
-            Message = TunnelMessage,
-            ReadHalf = Chain<Cursor<Bytes>, OwnedReadHalf>,
-            WriteHalf = OwnedWriteHalf,
-        >,
+    S: SessionBuilder<Message = TunnelMessage, ReadHalf = TcpR, WriteHalf = TcpW>,
 {
     let peer_name = fmt_stream_name(&app_stream);
     log::debug!("Accepted new connection from client application {peer_name}");

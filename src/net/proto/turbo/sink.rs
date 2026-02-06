@@ -127,8 +127,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for TurboSink<W> {
 
         // We handle encapsulated messages and drop the others.
         match item.kind {
-            TunnelMessageKind::Open(_) => {} // Drop.
-            TunnelMessageKind::Encapsulated(mut bytes) => {
+            TunnelMessageKind::Encapsulate(mut bytes) => {
                 match TurboCodec.decode_nocopy(&mut bytes) {
                     Ok(Some(msg)) => {
                         self.mode = Mode::Send(msg);
@@ -145,7 +144,7 @@ impl<W: AsyncWrite + Send + Unpin> Sink<TunnelMessage> for TurboSink<W> {
                     Err(_) => todo!(),          // Encapsulated message is corrupt.
                 }
             }
-            TunnelMessageKind::Close => {} // Drop.
+            _ => {} // Drop tunnel-layer messages.
         }
 
         Ok(())

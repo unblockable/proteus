@@ -1,15 +1,15 @@
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use args::CliArgs;
 use env_logger::{Builder, Target};
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
+use crate::common::sync::AsyncMap;
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
-use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 
 mod args;
@@ -93,13 +93,19 @@ async fn bind_listener(listen: &String, role: Role) -> anyhow::Result<TcpListene
     Ok(listener)
 }
 
-async fn run_interpreter(
-    net_src: impl AsyncRead + Unpin,
-    net_dst: impl AsyncWrite + Unpin,
-    app_src: impl AsyncRead + Unpin,
-    app_dst: impl AsyncWrite + Unpin,
-    protocol_spec: impl TaskProvider + Clone + Send,
-) {
-    let result = Interpreter::run(net_src, net_dst, app_src, app_dst, protocol_spec).await;
-    log::info!("Interpreter completed with result: {result}");
+async fn remove_after_countdown<T>(mut map: AsyncMap<T>, id: u64) {
+    for i in (0..60).rev() {
+        if map.contains(&id).await {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            log::trace!("Tunnel {id} resumption countdown: {i}");
+        } else {
+            break;
+        }
+    }
+
+    if map.remove(id).await.is_some() {
+        log::info!("Resumption timeout expired for tunnel {id}");
+    } else {
+        log::debug!("Tunnel {id} might have been resumed as it is no longer mapped");
+    }
 }

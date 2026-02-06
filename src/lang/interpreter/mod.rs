@@ -88,10 +88,14 @@ impl Interpreter {
         // reconnecting the channel and clearing the tunnel read buffer to make
         // sure we don't have any partial pending reads and to guarantee
         // message alignment.
-        RunResult {
+        let result = RunResult {
             app_to_net: app_to_net_res,
             net_to_app: net_to_app_res,
-        }
+        };
+
+        log::info!("Interpreter completed with result: {result}");
+
+        result
     }
 
     async fn execute<R, W, T>(
