@@ -138,6 +138,39 @@ where
         }
     }
 
+    async fn id(&mut self) -> Option<u64> {
+        if let Some(tunnel_id) = *self.tunnel_id.lock().await
+            && tunnel_id > 0
+        {
+            Some(tunnel_id)
+        } else {
+            None
+        }
+    }
+
+    pub async fn can_resume(&mut self) -> Option<u64> {
+        // TODO, check and make sure we are not in an error state.
+        self.id().await
+    }
+
+    /// Attempt to recover from a network error on the channel to the server by
+    /// asking the server to resume this tunnel from a previous tunnel state.
+    /// This should only be called if using an encapsulated protocol that can
+    /// recover from lost messages (e.g., `TurboSession`).
+    pub async fn initiate_resume(&mut self, tunnel_id: u64) {
+        // Clear the io buffers to guarantee message alignment in case a previous
+        // message was only partially sent, then send the previous tunnel id.
+        {
+            self.shared_writer.lock().await.buffer.clear();
+        }
+        {
+            let mut reader = self.shared_reader.lock().await;
+            reader.buffer.clear();
+            reader.put_buf(TunnelMessage::open(tunnel_id));
+            reader.wake();
+        }
+    }
+
     /// Gracefully shut down the tunnel by queuing a close message to the server,
     /// and arrange for an EOF to be raised after the message is sent.
     pub async fn _close(&mut self) {
@@ -366,7 +399,10 @@ where
         // Wake to propagate an EOF to close the old interpreter.
         other_reader.wake();
 
-        // Replace only the session-related io elements.
+        // Replace only the session-related io elements. Don't replace the
+        // buffers because previous messages may have been only partially
+        // sent/received before connection failure and we want to prevent
+        // possible misalignment of message boundaries.
         {
             let mut reader = self.shared_reader.lock().await;
             reader.streams = other_reader.streams;
@@ -398,6 +434,37 @@ where
         let (stream, sink) = session.into_split();
 
         // TODO: What if the connection fails? How do we propagate to the client?
+        // We should add a unit test.
+        //
+        // We would need to detect that the connection failed. I think that
+        // works on the sink side, because when we try to write we would get an
+        // error back (see TunnelWriter::poll_tasks()). But right now we just
+        // remove the sink on error. Doesn't the client need to know to stop
+        // writing to us?
+        // But on the stream side, the error just turns into a None, and then
+        // the SelectAll instance will drop it. We don't know when that happened,
+        // so we can't tell the client we cannot send anymore even if we wanted.
+        //
+        // I fear we will end up re-implementing a turbo-like protocol, which already
+        // handles shutdowns and half-open connections, etc. We could just rely on
+        // that session protocol to handle connection failures too, but our design
+        // right now only creates that protocol after the connection is already done.
+        //
+        // I think the simplest solution is to make the client wait:
+        // - client sends CONNECT to server, holds session in a prelim connecting map.
+        // - server tries to CONNECT
+        //   - if success, sends CONNECTED
+        //   - if failure, sends DISCONNECTED
+        // - client cannot send or receive app data until it gets the server reply.
+        //
+        // Other notes:
+        // SelectAll is efficient but it does not tell us when streams end. If we want
+        // to know that a stream was dropped, we need something like:
+        //   https://docs.rs/tokio-stream/latest/tokio_stream/struct.StreamNotifyClose.html
+        // We could work a similar concept as a wrapper into our SessionHalf object?
+        // The following seem like they could work too, but are inefficient or mor complex.
+        //   https://docs.rs/tokio-stream/latest/tokio_stream/struct.StreamMap.html
+        //   https://crates.io/crates/mapped_futures
 
         self.shared_reader.lock().await.add(session_id, stream);
         self.shared_writer.lock().await.add(session_id, sink);

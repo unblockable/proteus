@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::time::Duration;
 use std::{io, process};
 
 use control::PtLogLevel;
@@ -166,13 +167,31 @@ async fn handle_client_connection(app_stream: TcpStream, _conf: ClientConfig) {
                 log::debug!("Using the TurboSession session manager.");
 
                 // Wrap the connection in a tunnel using the Turbo protocol.
-                let net = Channel::disconnected(target, TcpConnector::default());
                 let mut app: TunnelClient<TurboSession<_, _>> =
                     TunnelClient::new(TunnelEofMethod::OnStreamCount(1));
 
                 app.add_session(app_src, app_dst, None).await;
 
-                Interpreter::run(net.clone(), net, app.clone(), app, client_spec).await;
+                loop {
+                    let mut net = Channel::disconnected(target.clone(), TcpConnector::default());
+
+                    let (net_src, net_dst) = (net.clone(), net.clone());
+                    let (app_src, app_dst) = (app.clone(), app.clone());
+                    let client_spec = client_spec.clone();
+
+                    Interpreter::run(net_src, net_dst, app_src, app_dst, client_spec).await;
+
+                    // We are running in turbo mode so we can reconnect and resume on net errors.
+                    if net.has_error().await
+                        && let Some(id) = app.can_resume().await
+                    {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        app.initiate_resume(id).await;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
             } else {
                 log::debug!("Using TCP connections as direct i/o.");
 

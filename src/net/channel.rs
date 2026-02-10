@@ -65,6 +65,14 @@ impl<T> ChannelIo<T> {
         }
         result
     }
+
+    fn error(&self) -> Option<io::Error> {
+        match self {
+            ChannelIo::Connected(_) => None,
+            ChannelIo::Disconnected(_) => None,
+            ChannelIo::Error(e) => Some(io::Error::from(e.kind())),
+        }
+    }
 }
 
 impl<T> Debug for ChannelIo<T> {
@@ -134,6 +142,18 @@ where
             ChannelIo::Connected((net_dst, name)),
             is_write_vectored,
         )
+    }
+
+    pub async fn read_error(&mut self) -> Option<io::Error> {
+        self.reader.lock().await.error()
+    }
+
+    pub async fn write_error(&mut self) -> Option<io::Error> {
+        self.writer.lock().await.error()
+    }
+
+    pub async fn has_error(&mut self) -> bool {
+        self.read_error().await.is_some() || self.write_error().await.is_some()
     }
 }
 
