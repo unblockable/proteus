@@ -75,6 +75,7 @@ impl TurboState {
             let msg = TurboMessage::new(self.write_inc(), self.read, command);
             self.retransmit_q.push(Reverse(msg.clone()));
             self.next_ack = false;
+            log::debug!("Streaming next message {msg:?}");
             Poll::Ready(Some(msg))
         } else if self.state == State::LocalShutRemoteShut {
             Poll::Ready(None)
@@ -82,6 +83,7 @@ impl TurboState {
             let ack = TurboMessage::new(self.write_inc(), self.read, Command::ForwardAck);
             self.retransmit_q.push(Reverse(ack.clone()));
             self.next_ack = false;
+            log::debug!("Streaming next message {ack:?}");
             Poll::Ready(Some(ack))
         } else {
             // Handling the case where the last ack is lost.
@@ -161,6 +163,7 @@ impl TurboState {
                 Command::Reset => self.process_reset(),
             }
         } else if msg.write > self.read {
+            log::debug!("Detected lost message");
             if let Command::Rewind = &msg.command {
                 // This queues: RewindAck -> Rewind -> Retransmissions...
                 self.process_rwd();

@@ -1002,6 +1002,7 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!(tunnel1.shared_reader.lock().await.streams.len(), 1);
+        assert!(tunnel1.shared_writer.lock().await.sinks.get(&TEST_ID).is_some());
 
         // Now lets say channel broke, and we want to resume over a new channel.
         // On the server, this is a new connection so it creates a new tunnel.
@@ -1011,6 +1012,7 @@ pub mod tests {
             Some(map.clone()),
         );
         assert_eq!(tunnel2.shared_reader.lock().await.streams.len(), 0);
+        assert!(tunnel2.shared_writer.lock().await.sinks.get(&TEST_ID).is_none());
 
         // Now we can resume by opening with the previous tunnel id.
         let mut framed2 = Framed::new(tunnel2.clone(), TunnelCodec);
@@ -1025,6 +1027,8 @@ pub mod tests {
         // The stream from tunnel1 should now belong to tunnel2.
         assert_eq!(tunnel1.shared_reader.lock().await.streams.len(), 0);
         assert_eq!(tunnel2.shared_reader.lock().await.streams.len(), 1);
+        assert!(tunnel1.shared_writer.lock().await.sinks.get(&TEST_ID).is_none());
+        assert!(tunnel2.shared_writer.lock().await.sinks.get(&TEST_ID).is_some());
 
         // Tunnel1 is basically dead now. Another read emits an EOF.
         // Normally, this would be the signal to stop its interpreter.
