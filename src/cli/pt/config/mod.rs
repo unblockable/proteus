@@ -21,7 +21,7 @@ pub enum Mode {
     Server(ServerConfig),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ForwardProtocol {
     Basic,
     Extended(PathBuf), // holds the auth cookie file location

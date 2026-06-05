@@ -9,15 +9,10 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use crate::net::proto::socks::address::{Socks5Address, Socks5Target};
 
-mod channel;
+pub mod client;
+pub mod common;
 pub mod proto;
-mod session;
-mod tunnel;
-
-// Re-export to make these available in the net namespace.
-pub use channel::Channel;
-pub use session::SessionBuilder;
-pub use tunnel::{TunnelClient, TunnelEofMethod, TunnelServer};
+pub mod server;
 
 pub const CHUNK_SIZE: usize = 2usize.pow(14u32); // 16 KiB
 
@@ -55,18 +50,6 @@ pub trait AsyncConnectExt: AsyncConnect + AsMut<Self> + Send + Unpin {
 
 /// Blanket implementation for all types that satisfy the bounds.
 impl<T: AsyncConnect + AsMut<Self> + Send + Unpin> AsyncConnectExt for T {}
-
-pub fn fmt_stream_name(stream: &TcpStream) -> String {
-    let peer = match stream.peer_addr() {
-        Ok(addr) => format!("{addr}"),
-        Err(_) => "unknown".to_string(),
-    };
-    let local = match stream.local_addr() {
-        Ok(addr) => format!("{addr}"),
-        Err(_) => "unknown".to_string(),
-    };
-    format!("[{local}]->[{peer}]")
-}
 
 /// A connector for TCP sockets.
 #[derive(Default)]
@@ -109,7 +92,7 @@ impl AsyncConnect for TcpConnector {
         let future = self.future.as_mut().unwrap();
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(stream)) => {
-                let name = fmt_stream_name(&stream);
+                let name = common::fmt_stream_name(&stream);
                 log::debug!("TcpStream connected: {name}",);
                 // Dropping the future allows us to do another connect.
                 self.future = None;

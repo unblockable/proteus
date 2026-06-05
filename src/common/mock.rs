@@ -1,8 +1,8 @@
 use std::future::Future;
 use std::io;
 
-use bytes::Bytes;
-use rand::distr::{Alphanumeric, SampleString};
+use bytes::{BufMut, Bytes, BytesMut};
+use rand::distr::{Alphanumeric, Distribution};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(test)]
 use {
@@ -12,11 +12,12 @@ use {
     std::sync::{Arc, Mutex},
     std::task::{Context, Poll},
     std::time::Duration,
+    tokio::io::ReadBuf,
     tokio::time::{Sleep, sleep},
 };
 
 use crate::lang;
-use crate::lang::interpreter::Interpreter;
+use crate::lang::interpreter::{ErrorHandler, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
 use crate::net::CHUNK_SIZE;
 
@@ -39,8 +40,22 @@ pub fn payload_len_iter() -> impl Iterator<Item = usize> {
 
 pub fn payload(len: usize) -> Bytes {
     let mut rng = rand::rng();
-    let s = Alphanumeric.sample_string(&mut rng, len);
-    Bytes::from(s)
+    let mut buf = BytesMut::with_capacity(len);
+    let cutoff = 1_000_000;
+
+    // Slower: every byte is a different random character.
+    for _ in 0..len.min(cutoff) {
+        buf.put_u8(Alphanumeric.sample(&mut rng) as u8);
+    }
+
+    // Faster: all bytes are the same random character.
+    if len > cutoff {
+        buf.put_bytes(Alphanumeric.sample(&mut rng), len - cutoff);
+    }
+
+    assert_eq!(buf.len(), len);
+
+    buf.freeze()
 }
 
 pub struct MockIo {
@@ -116,11 +131,6 @@ impl MockProxyNetwork {
     }
 
     #[cfg(test)]
-    pub fn replace_server_app_io(&mut self, io: MockIo) {
-        self.s_app.io = io;
-    }
-
-    #[cfg(test)]
     async fn run_direct_io(self) -> self::Result {
         self.run_with_forwarder(None::<u8>, &io_copy_direct, None::<u8>, &io_copy_direct)
             .await
@@ -136,8 +146,8 @@ impl MockProxyNetwork {
     where
         FC: Fn(C, MockProxy) -> FutC,
         FS: Fn(S, MockProxy) -> FutS,
-        FutC: Future<Output = (lang::Result<()>, lang::Result<()>)>,
-        FutS: Future<Output = (lang::Result<()>, lang::Result<()>)>,
+        FutC: Future<Output = (lang::Result<usize>, lang::Result<usize>)>,
+        FutS: Future<Output = (lang::Result<usize>, lang::Result<usize>)>,
     {
         let results = tokio::join!(
             // Run the client-side app tasks.
@@ -168,10 +178,10 @@ impl MockProxyNetwork {
 pub struct Result {
     pub c_app_src: io::Result<Bytes>,
     pub c_app_dst: io::Result<Bytes>,
-    pub c_app_to_net: lang::Result<()>,
-    pub c_net_to_app: lang::Result<()>,
-    pub s_app_to_net: lang::Result<()>,
-    pub s_net_to_app: lang::Result<()>,
+    pub c_app_to_net: lang::Result<usize>,
+    pub c_net_to_app: lang::Result<usize>,
+    pub s_app_to_net: lang::Result<usize>,
+    pub s_net_to_app: lang::Result<usize>,
     pub s_app_src: io::Result<Bytes>,
     pub s_app_dst: io::Result<Bytes>,
 }
@@ -250,7 +260,7 @@ where
 pub async fn io_copy_direct(
     _: Option<u8>,
     proxy: MockProxy,
-) -> (lang::Result<()>, lang::Result<()>) {
+) -> (lang::Result<usize>, lang::Result<usize>) {
     // Note: we MUST moved the streams so they are dropped when the copy completes.
     // Use the `mock::copy()` function. This ensures that when the copy completes,
     // the underlying streams are dropped, and the EOF correctly propagates backwards.
@@ -259,30 +269,31 @@ pub async fn io_copy_direct(
         copy_then_shutdown(proxy.app.reader, proxy.net.writer),
         copy_then_shutdown(proxy.net.reader, proxy.app.writer),
     );
-    // Discard the count of bytes copied on Ok.
+
     (
         app_to_net
-            .map(|_| ())
-            .map_err(|e| lang::Error::Io(e.into())),
+            .map_err(|e| lang::Error::Io(lang::interpreter::io::Error::Read(e.into()))),
         net_to_app
-            .map(|_| ())
-            .map_err(|e| lang::Error::Io(e.into())),
+            .map_err(|e| lang::Error::Io(lang::interpreter::io::Error::Read(e.into()))),
     )
 }
 
 pub async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
     protospec: T,
     proxy: MockProxy,
-) -> (lang::Result<()>, lang::Result<()>) {
-    let result = Interpreter::run(
-        proxy.net.reader,
-        proxy.net.writer,
+) -> (lang::Result<usize>, lang::Result<usize>) {
+    let handler = ErrorHandler::builder()
+        .shutdown_net_on_app_eof()
+        .shutdown_app_on_net_eof();
+    let mut interpreter = Interpreter::new(
         proxy.app.reader,
         proxy.app.writer,
+        proxy.net.reader,
+        proxy.net.writer,
         protospec,
-    )
-    .await;
-    (result.app_to_net.result, result.net_to_app.result)
+    );
+    let (r1, r2) = interpreter.run_join(handler).await;
+    (r1.map_err(|e| e.into()), r2.map_err(|e| e.into()))
 }
 
 pub async fn check_protocol_interpretability<T: TaskProvider + Clone + Send>(
@@ -418,6 +429,179 @@ impl AsyncConnect for MockConnector {
                 MockConnectorState::Done => {
                     return Poll::Ready(Err(io::ErrorKind::NetworkDown.into()));
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub use flaky::{MockFlakyConnector, MockFlakyReader, MockIoFlaky};
+
+#[cfg(test)]
+pub mod flaky {
+    use std::collections::VecDeque;
+    use std::task::{Waker, ready};
+
+    use crate::common::sync::PollMutex;
+
+    use super::*;
+
+    pub struct MockIoFlaky {
+        pub reader: Box<dyn AsyncRead + Send + Unpin>,
+        pub writer: Box<dyn AsyncWrite + Send + Unpin>,
+    }
+
+    impl MockIoFlaky {
+        fn new(
+            reader: impl AsyncRead + Send + Unpin + 'static,
+            writer: impl AsyncWrite + Send + Unpin + 'static,
+        ) -> Self {
+            Self {
+                reader: Box::new(MockFlakyReader::new(reader)),
+                writer: Box::new(writer),
+            }
+        }
+
+        pub fn new_pair() -> (Self, Self) {
+            let (rw1, rw2) = duplex(CHUNK_SIZE);
+
+            let (r1, w1) = tokio::io::split(rw1);
+            let (r2, w2) = tokio::io::split(rw2);
+
+            (Self::new(r1, w1), Self::new(r2, w2))
+        }
+    }
+
+    impl From<MockIoFlaky> for MockIo {
+        fn from(io: MockIoFlaky) -> Self {
+            Self {
+                reader: io.reader,
+                writer: io.writer,
+            }
+        }
+    }
+
+    pub struct MockFlakyReader {
+        pub inner: Box<dyn AsyncRead + Send + Unpin>,
+        count: usize,
+    }
+
+    impl MockFlakyReader {
+        fn new(reader: impl AsyncRead + Send + Unpin + 'static) -> Self {
+            Self {
+                inner: Box::new(reader),
+                count: 0,
+            }
+        }
+    }
+
+    impl AsyncRead for MockFlakyReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &mut ReadBuf,
+        ) -> Poll<io::Result<()>> {
+            self.count += 1;
+            if self.count == 100 {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "Flaky reader returned error",
+                )));
+            } else {
+                Pin::new(&mut self.inner).poll_read(cx, buf)
+            }
+        }
+    }
+
+    pub struct MockFlakyConnector {
+        inner: PollMutex<MockFlakyConnectorInner>,
+    }
+
+    struct MockFlakyConnectorInner {
+        connect_delay: Option<Duration>,
+        connector: MockConnector,
+        accept_queue: VecDeque<MockIo>,
+        accept_waker: Option<Waker>,
+    }
+
+    impl MockFlakyConnectorInner {
+        fn new(connect_delay: Option<Duration>) -> Self {
+            let (local, remote) = MockIoFlaky::new_pair();
+            Self {
+                connect_delay: connect_delay.clone(),
+                connector: MockConnector::new_with_io(connect_delay, local.into(), remote.into()),
+                accept_queue: VecDeque::new(),
+                accept_waker: None,
+            }
+        }
+
+        fn reset(&mut self) {
+            let (local, remote) = MockIoFlaky::new_pair();
+            self.connector =
+                MockConnector::new_with_io(self.connect_delay, local.into(), remote.into());
+        }
+    }
+
+    impl MockFlakyConnector {
+        pub fn new(connect_delay: Option<Duration>) -> Self {
+            Self {
+                inner: PollMutex::new(MockFlakyConnectorInner::new(connect_delay)),
+            }
+        }
+
+        pub fn accept(&mut self) -> impl Future<Output = MockIo> {
+            std::future::poll_fn(move |cx| self.poll_accept(cx))
+        }
+
+        pub fn poll_accept(&mut self, cx: &mut Context) -> Poll<MockIo> {
+            let mut inner = ready!(self.inner.poll_lock(cx));
+            if let Some(io) = inner.accept_queue.pop_front() {
+                inner.accept_waker = None;
+                Poll::Ready(io)
+            } else {
+                match inner.accept_waker.as_mut() {
+                    Some(w) => w.clone_from(cx.waker()),
+                    None => inner.accept_waker = Some(cx.waker().clone()),
+                }
+                Poll::Pending
+            }
+        }
+    }
+
+    impl AsyncConnect for MockFlakyConnector {
+        type ReadHalf = Box<dyn AsyncRead + Send + Unpin>;
+        type WriteHalf = Box<dyn AsyncWrite + Send + Unpin>;
+
+        fn poll_connect(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            _target: Socks5Target,
+        ) -> Poll<io::Result<(Self::ReadHalf, Self::WriteHalf, String)>> {
+            let mut inner = ready!(self.as_mut().inner.poll_lock(cx));
+
+            let result = Pin::new(inner.connector.as_mut()).poll_connect(cx, _target);
+
+            if let MockConnectorState::Done = &inner.connector.state {
+                let remote = inner.connector.remote_socket().unwrap();
+                inner.accept_queue.push_back(remote);
+                inner.accept_waker.take().map(|w| w.wake());
+                inner.reset();
+            }
+
+            result
+        }
+    }
+
+    impl AsMut<MockFlakyConnector> for MockFlakyConnector {
+        fn as_mut(&mut self) -> &mut Self {
+            self
+        }
+    }
+
+    impl Clone for MockFlakyConnector {
+        fn clone(&self) -> Self {
+            Self {
+                inner: self.inner.clone(),
             }
         }
     }

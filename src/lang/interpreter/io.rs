@@ -10,16 +10,19 @@ use crate::net::CHUNK_SIZE;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("A normal end of file was reached on an io reader")]
-    ReadEof,
+    Eof,
     #[error(transparent)]
-    Standard(#[from] std::io::Error),
+    Read(std::io::Error),
+    #[error(transparent)]
+    Write(std::io::Error),
 }
 
 impl Clone for Error {
     fn clone(&self) -> Self {
         match self {
-            Self::ReadEof => Self::ReadEof,
-            Self::Standard(e) => Self::Standard(io::Error::from(e.kind())),
+            Self::Eof => Self::Eof,
+            Self::Read(e) => Self::Read(io::Error::from(e.kind())),
+            Self::Write(e) => Self::Write(io::Error::from(e.kind())),
         }
     }
 }
@@ -100,6 +103,10 @@ where
             return Err(self.dst_err(e));
         }
         Ok(())
+    }
+
+    pub fn num_bytes_sent(&self) -> usize {
+        self.n_sent_dst
     }
 
     /// Reads up to len bytes. May read less than len if fewer bytes are available.
@@ -202,13 +209,13 @@ where
     }
 
     fn dst_err(&mut self, error: std::io::Error) -> self::Error {
-        let err = self::Error::from(error);
+        let err = self::Error::Write(error);
         self.dst_error = Some(err.clone());
         err
     }
 
     fn src_err(&mut self, error: std::io::Error) -> self::Error {
-        let err = self::Error::from(error);
+        let err = self::Error::Read(error);
         self.src_error = Some(err.clone());
         err
     }
@@ -220,8 +227,8 @@ where
     }
 
     fn read_eof(&mut self) -> self::Error {
-        self.src_error = Some(self::Error::ReadEof);
-        self::Error::ReadEof
+        self.src_error = Some(self::Error::Eof);
+        self::Error::Eof
     }
 }
 

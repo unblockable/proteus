@@ -36,6 +36,7 @@ trait Runtime {
     async fn read_exact(&mut self, len: usize) -> lang::Result<Bytes>;
     async fn send(&mut self, bytes: Bytes) -> lang::Result<usize>;
     async fn flush(&mut self) -> lang::Result<()>;
+    #[allow(dead_code)]
     async fn shutdown(&mut self) -> lang::Result<()>;
 }
 

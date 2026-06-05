@@ -30,7 +30,7 @@ pub enum Error {
     #[error("An interpreter mem error occurred: {0:?}")]
     Mem(interpreter::mem::Error),
     #[error("An interpreter io error occurred: {0:?}")]
-    Io(interpreter::io::Error),
+    Io(#[from] interpreter::io::Error),
 
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
@@ -39,7 +39,7 @@ pub enum Error {
 impl self::Error {
     pub fn is_eof(&self) -> bool {
         if let self::Error::Io(e) = self {
-            if let interpreter::io::Error::ReadEof = e {
+            if let interpreter::io::Error::Eof = e {
                 return true;
             }
         }
@@ -53,11 +53,11 @@ mod tests {
 
     #[test]
     fn is_eof() {
-        let eof_err = lang::Error::Io(interpreter::io::Error::ReadEof);
+        let eof_err = lang::Error::Io(interpreter::io::Error::Eof);
         assert!(eof_err.is_eof());
 
         let std_err = std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
-        let std_err = lang::Error::Io(std_err.into());
+        let std_err = lang::Error::Io(interpreter::io::Error::Read(std_err));
         assert!(!std_err.is_eof());
     }
 }

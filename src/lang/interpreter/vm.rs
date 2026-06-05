@@ -43,8 +43,12 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
         self.heap.clear();
     }
 
-    pub fn into_inner(self) -> (R, W) {
+    pub fn into_io(self) -> (R, W) {
         self.io.into_inner()
+    }
+    
+    pub fn num_bytes_sent(&self) -> usize {
+        self.io.num_bytes_sent()
     }
 }
 
@@ -380,23 +384,14 @@ impl Execute for ReadArgs {
         // is the one that this runtime was created with, i.e., that we are the
         // correct forwarding direction for the command?
 
-        let io_result = match self.how {
+        let data = match self.how {
             ReadHow::Read => runtime.read(len).await,
             ReadHow::TryRead => runtime.try_read(len).map(|x| x.unwrap_or(Bytes::new())),
             ReadHow::ReadExact => runtime.read_exact(len).await,
-        };
+        }?;
 
-        match io_result {
-            Ok(data) => {
-                runtime.store(self.to_heap_id.clone(), data)?;
-                Ok(())
-            }
-            Err(e) => {
-                // We will stop forwarding data too.
-                let _ = runtime.shutdown().await;
-                Err(e)
-            }
-        }
+        runtime.store(self.to_heap_id.clone(), data)?;
+        Ok(())
     }
 }
 
