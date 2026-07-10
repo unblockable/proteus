@@ -14,7 +14,6 @@ clap = { version = "4.5.0", features = ["derive"] }
 enum-from = { path = "lib/enum-from" }
 env_logger = "0.11.0"
 fast-socks5 = "1.0"
-futures = "0.3.0"
 hex = "0.4.0"
 itertools = "0.14.0"
 log = "0.4.0"
@@ -29,9 +28,8 @@ sha256 = "1.5.0"
 supertunnel = { path = "../supertunnel" }
 thiserror = "2.0.0"
 tokio = { version = "1.49.0", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "sync", "time"] }
-tokio-util = { version = "0.7.0", features = ["codec", "io"] }
+tokio-util = { version = "0.7.0", default-features = false, features = [] }
 x25519-dalek = { version = "2", features = ["getrandom"] } # ephemeral key exchange
-xxhash-rust = { version = "0.8.0", features = ["xxh3"] }
 
 [build-dependencies]
 which = "8.0.0"
