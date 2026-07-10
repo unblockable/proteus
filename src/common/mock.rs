@@ -442,7 +442,7 @@ pub mod flaky {
     use std::collections::VecDeque;
     use std::task::{Waker, ready};
 
-    use crate::common::sync::PollMutex;
+    use supertunnel::sync::PollMutex;
 
     use super::*;
 
