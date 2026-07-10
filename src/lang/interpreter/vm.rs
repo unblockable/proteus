@@ -46,7 +46,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
     pub fn into_io(self) -> (R, W) {
         self.io.into_inner()
     }
-    
+
     pub fn num_bytes_sent(&self) -> usize {
         self.io.num_bytes_sent()
     }
@@ -54,9 +54,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
 
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, W> {
     fn store<T: Into<Data>>(&mut self, addr: Identifier, data: T) -> lang::Result<()> {
-        self.heap
-            .insert(addr, data)
-            .map_err(lang::Error::Mem)
+        self.heap.insert(addr, data).map_err(lang::Error::Mem)
     }
 
     fn load<'a, T: TryFrom<&'a Data>>(&'a self, addr: &Identifier) -> lang::Result<T> {
@@ -79,9 +77,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, 
     }
 
     fn encrypt(&mut self, plaintext: &[u8]) -> lang::Result<(Vec<u8>, [u8; 16])> {
-        self.crypto
-            .encrypt(plaintext)
-            .map_err(lang::Error::Crypto)
+        self.crypto.encrypt(plaintext).map_err(lang::Error::Crypto)
     }
 
     fn encrypt_unauth(&mut self, plaintext: &[u8]) -> lang::Result<Vec<u8>> {
@@ -123,10 +119,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, 
     }
 
     async fn read_exact(&mut self, len: usize) -> lang::Result<Bytes> {
-        self.io
-            .read_exact(len)
-            .await
-            .map_err(lang::Error::Io)
+        self.io.read_exact(len).await.map_err(lang::Error::Io)
     }
 }
 

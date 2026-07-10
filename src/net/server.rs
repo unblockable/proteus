@@ -1,16 +1,14 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crate::lang;
-use crate::lang::interpreter::{ErrorHandler, Interpreter};
-use crate::net;
-
-use supertunnel::{FrameSize, Protocol};
 use supertunnel::proto::*;
 use supertunnel::util::{DecodedSinkWriter, EncodedStreamReader};
+use supertunnel::{FrameSize, Protocol};
 use tokio::net::TcpStream;
 
+use crate::lang::interpreter::{ErrorHandler, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
+use crate::{lang, net};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -14,7 +14,7 @@ test_each_path! {
 
 fn run_test([psf_filepath]: [&Path; 1]) {
     let rel_path = PathBuf::from("tests/system/linux/shadow/tor/direct");
-    
+
     let (rel_test_dst, rel_test_src_parent) =
         super::initialize_test_directory(&rel_path, psf_filepath, "false");
 

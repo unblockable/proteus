@@ -6,8 +6,8 @@ use crate::cli::args::ServerArgs;
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::OldCompile;
-use crate::net::server;
 use crate::net;
+use crate::net::server;
 
 pub async fn run(args: ServerArgs) -> anyhow::Result<()> {
     log::info!("Proteus is running in Server mode.");

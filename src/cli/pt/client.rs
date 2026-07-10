@@ -12,10 +12,9 @@ use crate::cli::pt::config::{ClientConfig, CommonConfig};
 use crate::cli::pt::control;
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
-
 use crate::lang::ir::bridge::OldCompile;
-use crate::net::client;
 use crate::net;
+use crate::net::client;
 
 pub async fn run(_: CommonConfig, conf: ClientConfig) -> anyhow::Result<()> {
     log::info!("Proteus is running in PT Client mode.");

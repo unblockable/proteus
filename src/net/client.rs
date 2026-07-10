@@ -11,10 +11,9 @@ use supertunnel::{FrameSize, Protocol};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::sync::CancellationToken;
 
-use crate::lang;
 use crate::lang::interpreter::{self, ErrorHandler, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net;
+use crate::{lang, net};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

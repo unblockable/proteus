@@ -10,8 +10,8 @@ use crate::cli::args::{ClientArgs, ClientMode};
 use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
-use crate::net::client::{self, Client, ConnectionHandler};
 use crate::net;
+use crate::net::client::{self, Client, ConnectionHandler};
 
 pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
     let is_simplex = match args.mode {

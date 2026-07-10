@@ -39,9 +39,10 @@ pub enum Error {
 impl self::Error {
     pub fn is_eof(&self) -> bool {
         if let self::Error::Io(e) = self
-            && let interpreter::io::Error::Eof = e {
-                return true;
-            }
+            && let interpreter::io::Error::Eof = e
+        {
+            return true;
+        }
         false
     }
 }

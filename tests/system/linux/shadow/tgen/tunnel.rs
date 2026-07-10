@@ -13,6 +13,7 @@ test_each_path! {
 
 fn run_test([psf_filepath]: [&Path; 1]) {
     let rel_test_src = PathBuf::from("tests/system/linux/shadow/tgen/tunnel");
-    let rel_test_dst = super::initialize_test_directory(&rel_test_src, psf_filepath, "false", "tunnel");
+    let rel_test_dst =
+        super::initialize_test_directory(&rel_test_src, psf_filepath, "false", "tunnel");
     run_shadow_and_assert_result(&rel_test_dst, None, 1000, 1002);
 }
