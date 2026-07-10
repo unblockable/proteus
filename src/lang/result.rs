@@ -16,12 +16,12 @@ impl<T> ResultExt<T> for Result<T> {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Cannot get bytes from field {field_id:?}: {err:?}")]
-    GetFieldError {
+    GetField {
         field_id: Identifier,
         err: message::GetFieldError,
     },
     #[error("Cannot set bytes to field {field_id:?}: {err:?}")]
-    SetFieldError {
+    SetField {
         field_id: Identifier,
         err: message::SetFieldError,
     },
@@ -38,11 +38,10 @@ pub enum Error {
 
 impl self::Error {
     pub fn is_eof(&self) -> bool {
-        if let self::Error::Io(e) = self {
-            if let interpreter::io::Error::Eof = e {
+        if let self::Error::Io(e) = self
+            && let interpreter::io::Error::Eof = e {
                 return true;
             }
-        }
         false
     }
 }

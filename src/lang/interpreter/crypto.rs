@@ -114,7 +114,7 @@ impl CryptoStream {
         crypt
             .encryptor
             .take()
-            .ok_or_else(|| self::Error::SharedEncryptorMissing)
+            .ok_or(self::Error::SharedEncryptorMissing)
     }
 
     fn load_owned_encryptor(&mut self) -> Result<&mut EncryptionCipher, self::Error> {
@@ -125,13 +125,13 @@ impl CryptoStream {
         self.state_owned
             .encryptor
             .as_mut()
-            .ok_or_else(|| self::Error::OwnedEncryptorMissing)
+            .ok_or(self::Error::OwnedEncryptorMissing)
     }
 
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 16]), self::Error> {
         self.load_owned_encryptor()?
             .encrypt(plaintext)
-            .map_err(|e| self::Error::Encrypt(e))
+            .map_err(self::Error::Encrypt)
     }
 
     pub fn encrypt_unauth(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, self::Error> {
@@ -149,7 +149,7 @@ impl CryptoStream {
         crypt
             .decryptor
             .take()
-            .ok_or_else(|| self::Error::SharedDecryptorMissing)
+            .ok_or(self::Error::SharedDecryptorMissing)
     }
 
     fn load_owned_decryptor(&mut self) -> Result<&mut DecryptionCipher, self::Error> {
@@ -160,13 +160,13 @@ impl CryptoStream {
         self.state_owned
             .decryptor
             .as_mut()
-            .ok_or_else(|| self::Error::OwnedDecryptorMissing)
+            .ok_or(self::Error::OwnedDecryptorMissing)
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> Result<Vec<u8>, self::Error> {
         self.load_owned_decryptor()?
             .decrypt(ciphertext, mac)
-            .map_err(|e| self::Error::Decrypt(e))
+            .map_err(self::Error::Decrypt)
     }
 
     pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, self::Error> {

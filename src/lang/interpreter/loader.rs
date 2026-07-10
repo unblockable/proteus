@@ -88,7 +88,7 @@ impl<T: TaskProvider + Send> Loader<T> {
                     };
                 }
             }
-            Err(e) => bail!("Loader mutex was poisoned during load: {}", e.to_string()),
+            Err(e) => bail!("Loader mutex was poisoned during load: {}", e),
         };
         Ok(())
     }
@@ -112,7 +112,7 @@ impl<T: TaskProvider + Send> Loader<T> {
                 ForwardingDirection::AppToNet => state.out_loaded.take(),
                 ForwardingDirection::NetToApp => state.in_loaded.take(),
             },
-            Err(e) => bail!("Loader mutex was poisoned during wait: {}", e.to_string()),
+            Err(e) => bail!("Loader mutex was poisoned during wait: {}", e),
         })
     }
 
@@ -130,7 +130,7 @@ impl<T: TaskProvider + Send> Loader<T> {
                 self.in_notify.notify_one();
                 self.out_notify.notify_one();
             }
-            Err(e) => bail!("Loader mutex was poisoned during unload: {}", e.to_string()),
+            Err(e) => bail!("Loader mutex was poisoned during unload: {}", e),
         };
         Ok(())
     }

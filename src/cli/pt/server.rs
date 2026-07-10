@@ -53,7 +53,7 @@ pub async fn run(_: CommonConfig, conf: ServerConfig) -> anyhow::Result<()> {
     if conf
         .options
         .get("turbo")
-        .map_or(false, |v| v.to_ascii_lowercase().eq("true"))
+        .is_some_and(|v| v.to_ascii_lowercase().eq("true"))
     {
         // Shared global state for session resumption. This allows a client to
         // reconnect when a connection fails and resume a previously established

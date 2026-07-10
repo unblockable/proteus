@@ -56,15 +56,15 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, 
     fn store<T: Into<Data>>(&mut self, addr: Identifier, data: T) -> lang::Result<()> {
         self.heap
             .insert(addr, data)
-            .map_err(|e| lang::Error::Mem(e))
+            .map_err(lang::Error::Mem)
     }
 
     fn load<'a, T: TryFrom<&'a Data>>(&'a self, addr: &Identifier) -> lang::Result<T> {
-        self.heap.get(addr).map_err(|e| lang::Error::Mem(e))
+        self.heap.get(addr).map_err(lang::Error::Mem)
     }
 
     fn drop<T: TryFrom<Data>>(&mut self, addr: &Identifier) -> lang::Result<T> {
-        self.heap.remove(addr).map_err(|e| lang::Error::Mem(e))
+        self.heap.remove(addr).map_err(lang::Error::Mem)
     }
 
     fn init_key(&mut self, key: &[u8]) -> lang::Result<()> {
@@ -75,58 +75,58 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Runtime for VirtualMachine<R, 
     fn create_cipher(&mut self, secret_key: [u8; 32], kind: CipherKind) -> lang::Result<()> {
         self.crypto
             .create_cipher(secret_key, kind)
-            .map_err(|e| lang::Error::Crypto(e))
+            .map_err(lang::Error::Crypto)
     }
 
     fn encrypt(&mut self, plaintext: &[u8]) -> lang::Result<(Vec<u8>, [u8; 16])> {
         self.crypto
             .encrypt(plaintext)
-            .map_err(|e| lang::Error::Crypto(e))
+            .map_err(lang::Error::Crypto)
     }
 
     fn encrypt_unauth(&mut self, plaintext: &[u8]) -> lang::Result<Vec<u8>> {
         self.crypto
             .encrypt_unauth(plaintext)
-            .map_err(|e| lang::Error::Crypto(e))
+            .map_err(lang::Error::Crypto)
     }
 
     fn decrypt(&mut self, ciphertext: &[u8], mac: &[u8; 16]) -> lang::Result<Vec<u8>> {
         self.crypto
             .decrypt(ciphertext, mac)
-            .map_err(|e| lang::Error::Crypto(e))
+            .map_err(lang::Error::Crypto)
     }
 
     fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> lang::Result<Vec<u8>> {
         self.crypto
             .decrypt_unauth(ciphertext)
-            .map_err(|e| lang::Error::Crypto(e))
+            .map_err(lang::Error::Crypto)
     }
 
     async fn send(&mut self, bytes: Bytes) -> lang::Result<usize> {
-        self.io.send(bytes).await.map_err(|e| lang::Error::Io(e))
+        self.io.send(bytes).await.map_err(lang::Error::Io)
     }
 
     async fn flush(&mut self) -> lang::Result<()> {
-        self.io.flush().await.map_err(|e| lang::Error::Io(e))
+        self.io.flush().await.map_err(lang::Error::Io)
     }
 
     async fn shutdown(&mut self) -> lang::Result<()> {
-        self.io.shutdown().await.map_err(|e| lang::Error::Io(e))
+        self.io.shutdown().await.map_err(lang::Error::Io)
     }
 
     async fn read(&mut self, len: usize) -> lang::Result<Bytes> {
-        self.io.read(len).await.map_err(|e| lang::Error::Io(e))
+        self.io.read(len).await.map_err(lang::Error::Io)
     }
 
     fn try_read(&mut self, len: usize) -> lang::Result<Option<Bytes>> {
-        self.io.try_read(len).map_err(|e| lang::Error::Io(e))
+        self.io.try_read(len).map_err(lang::Error::Io)
     }
 
     async fn read_exact(&mut self, len: usize) -> lang::Result<Bytes> {
         self.io
             .read_exact(len)
             .await
-            .map_err(|e| lang::Error::Io(e))
+            .map_err(lang::Error::Io)
     }
 }
 
@@ -249,7 +249,7 @@ impl Execute for DecryptFieldArgs {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let ciphertext = msg
             .get_field_bytes(&self.from_ciphertext_field_id)
-            .map_err(|e| lang::Error::GetFieldError {
+            .map_err(|e| lang::Error::GetField {
                 field_id: self.from_ciphertext_field_id.clone(),
                 err: e,
             })?;
@@ -259,7 +259,7 @@ impl Execute for DecryptFieldArgs {
             // We are doing authenticated encryption.
             let mac = msg
                 .get_field_bytes(fid)
-                .map_err(|e| lang::Error::GetFieldError {
+                .map_err(|e| lang::Error::GetField {
                     field_id: fid.clone(),
                     err: e,
                 })?;
@@ -286,7 +286,7 @@ impl Execute for EncryptFieldArgs {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let plaintext =
             msg.get_field_bytes(&self.from_field_id)
-                .map_err(|e| lang::Error::GetFieldError {
+                .map_err(|e| lang::Error::GetField {
                     field_id: self.from_field_id.clone(),
                     err: e,
                 })?;
@@ -320,7 +320,7 @@ impl Execute for GetArrayBytesArgs {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let bytes =
             msg.get_field_bytes(&self.from_field_id)
-                .map_err(|e| lang::Error::GetFieldError {
+                .map_err(|e| lang::Error::GetField {
                     field_id: self.from_field_id.clone(),
                     err: e,
                 })?;
@@ -335,7 +335,7 @@ impl Execute for GetNumericValueArgs {
         let msg: &Message = runtime.load(&self.from_msg_heap_id)?;
         let num = msg
             .get_field_unsigned_numeric(&self.from_field_id)
-            .map_err(|e| lang::Error::GetFieldError {
+            .map_err(|e| lang::Error::GetField {
                 field_id: self.from_field_id.clone(),
                 err: e,
             })?;
@@ -400,7 +400,7 @@ impl Execute for SetArrayBytesArgs {
         let mut msg: Message = runtime.drop(&self.to_msg_heap_id)?;
         let bytes = runtime.load(&self.from_heap_id)?;
         msg.set_field_bytes(&self.to_field_id, bytes)
-            .map_err(|e| lang::Error::SetFieldError {
+            .map_err(|e| lang::Error::SetField {
                 field_id: self.to_field_id.clone(),
                 err: e,
             })?;
@@ -415,7 +415,7 @@ impl Execute for SetNumericValueArgs {
         let mut msg: Message = runtime.drop(&self.to_msg_heap_id)?;
         let val: &u128 = runtime.load(&self.from_heap_id)?;
         msg.set_field_unsigned_numeric(&self.to_field_id, *val)
-            .map_err(|e| lang::Error::SetFieldError {
+            .map_err(|e| lang::Error::SetField {
                 field_id: self.to_field_id.clone(),
                 err: e,
             })?;
@@ -430,7 +430,7 @@ impl Execute for WriteAppArgs {
         let msg: Message = runtime.drop(&self.from_msg_heap_id)?;
         let data =
             msg.into_inner_field(&self.from_field_id)
-                .map_err(|e| lang::Error::GetFieldError {
+                .map_err(|e| lang::Error::GetField {
                     field_id: self.from_field_id.clone(),
                     err: e,
                 })?;
@@ -479,7 +479,7 @@ impl Execute for SaveKeyArgs {
 
         let bytes =
             msg.get_field_bytes(&self.from_field_id)
-                .map_err(|e| lang::Error::GetFieldError {
+                .map_err(|e| lang::Error::GetField {
                     field_id: self.from_field_id.clone(),
                     err: e,
                 })?;

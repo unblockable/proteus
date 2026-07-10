@@ -210,6 +210,7 @@ where
 
 async fn should_try_to_recover(err: &interpreter::Error, handle: &mut ReliabilityHandle) -> bool {
     // Check if this error is caused by the network-side connection.
+    #[allow(clippy::match_like_matches_macro)]
     let is_caused_by_net = match err {
         interpreter::Error::NetToApp(lang::Error::Io(interpreter::io::Error::Eof)) => true,
         interpreter::Error::NetToApp(lang::Error::Io(interpreter::io::Error::Read(_))) => true,

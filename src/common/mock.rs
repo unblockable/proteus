@@ -260,8 +260,8 @@ pub async fn io_copy_direct(
     );
 
     (
-        app_to_net.map_err(|e| lang::Error::Io(lang::interpreter::io::Error::Read(e.into()))),
-        net_to_app.map_err(|e| lang::Error::Io(lang::interpreter::io::Error::Read(e.into()))),
+        app_to_net.map_err(|e| lang::Error::Io(lang::interpreter::io::Error::Read(e))),
+        net_to_app.map_err(|e| lang::Error::Io(lang::interpreter::io::Error::Read(e))),
     )
 }
 

@@ -150,7 +150,7 @@ impl EncryptionCipher {
             .inner
             .cipher
             .encrypt(&nonce.into(), plaintext)
-            .map_err(|e| CipherError::Encrypt(e))?;
+            .map_err(CipherError::Encrypt)?;
 
         let mac: Mac = ciphertext
             .drain(ciphertext.len() - 16..ciphertext.len())
@@ -202,7 +202,7 @@ impl DecryptionCipher {
         self.inner
             .cipher
             .decrypt(&nonce.into(), &ctext_and_mac[..])
-            .map_err(|e| CipherError::Decrypt(e))
+            .map_err(CipherError::Decrypt)
     }
 
     pub fn decrypt_unauth(&mut self, ciphertext: &[u8]) -> Vec<u8> {

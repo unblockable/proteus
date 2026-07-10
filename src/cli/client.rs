@@ -105,7 +105,7 @@ where
         }
         Err(e) => {
             socks.reply_error(&socks_reply_error(&e)).await?;
-            return Err(e);
+            Err(e)
         }
     }
 }

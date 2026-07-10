@@ -112,7 +112,7 @@ async fn socks_then_transfer(inbound: TcpStream) -> Result<TargetAddr, client::E
 
     if options
         .get("turbo")
-        .map_or(false, |v| v.to_ascii_lowercase().eq("true"))
+        .is_some_and(|v| v.to_ascii_lowercase().eq("true"))
     {
         client::drive_io_resumable(inbound, outbound, proto, target.clone()).await?;
         log::info!("Super transfer succeeded");
@@ -121,7 +121,7 @@ async fn socks_then_transfer(inbound: TcpStream) -> Result<TargetAddr, client::E
         log::info!("Direct transfer succeeded");
     }
 
-    Ok(target.into())
+    Ok(target)
 }
 
 fn parse_socks_username(username: String, _password: String) -> Option<HashMap<String, String>> {
