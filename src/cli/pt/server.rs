@@ -8,7 +8,7 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::OldCompile;
 use crate::net::server;
-use crate::net::common as net;
+use crate::net;
 
 pub async fn run(_: CommonConfig, conf: ServerConfig) -> anyhow::Result<()> {
     log::info!("Proteus is running in PT Server mode.");

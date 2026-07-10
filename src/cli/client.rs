@@ -11,7 +11,7 @@ use crate::lang::Role;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::{OldCompile, TaskProvider};
 use crate::net::client::{self, Client, ConnectionHandler};
-use crate::net::common as net;
+use crate::net;
 
 pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
     let is_simplex = match args.mode {

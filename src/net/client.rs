@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::lang;
 use crate::lang::interpreter::{self, ErrorHandler, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
-use crate::net::common as net;
+use crate::net;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

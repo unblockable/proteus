@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::lang;
 use crate::lang::interpreter::{ErrorHandler, Interpreter};
-use crate::net::common as net;
+use crate::net;
 
 use supertunnel::{FrameSize, Protocol};
 use supertunnel::proto::*;
