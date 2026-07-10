@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use anyhow::{anyhow, bail};
 use fast_socks5::server::Socks5ServerProtocol;
+use fast_socks5::util::target_addr::TargetAddr;
 use fast_socks5::{ReplyError, Socks5Command};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -64,8 +65,8 @@ where
         let (client, proto) = (client.clone(), proto.clone());
         tokio::spawn(async move {
             match handle_connection(inbound, client, connect_addr, proto).await {
-                Ok(_) => log::info!("Successfully added new stream to proxy tunnel"),
-                Err(e) => log::debug!("Failed to add new stream to proxy tunnel: {e:?}"),
+                Ok(target) => log::info!("Tunneled new stream to {target}"),
+                Err(e) => log::debug!("New stream failed: {e:?}"),
             };
         });
     }
@@ -79,7 +80,7 @@ async fn handle_connection<T, U>(
     mut client: T,
     server: SocketAddr,
     proto: U,
-) -> Result<(), client::Error>
+) -> Result<TargetAddr, client::Error>
 where
     T: ConnectionHandler + Clone + Send + 'static,
     U: TaskProvider + Clone + Send + 'static,
@@ -97,11 +98,12 @@ where
         return Err(client::Error::SocksCommandNotSupported);
     };
 
-    match client.connect(server, proto, target).await {
+    match client.connect(server, proto, target.clone()).await {
         Ok(id) => {
             let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
             let inbound = socks.reply_success(bind_addr).await?;
-            client.add(inbound, id).await
+            client.add(inbound, id).await?;
+            Ok(target)
         }
         Err(e) => {
             socks.reply_error(&socks_reply_error(&e)).await?;
