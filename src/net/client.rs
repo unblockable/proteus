@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use fast_socks5::server::SocksServerError;
@@ -9,6 +10,7 @@ use supertunnel::proto::*;
 use supertunnel::util::{DecodedSinkWriter, EncodedStreamReader, EndMethod};
 use supertunnel::{FrameSize, Protocol};
 use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::lang::interpreter::{self, ErrorHandler, Interpreter};
@@ -280,18 +282,76 @@ pub trait ConnectionHandler {
 }
 
 pub struct Client {
-    router: Option<RoutingHandle<TcpPayload>>,
+    state: ConnectionState,
     simplex: bool,
     resume: bool,
 }
 
+enum ConnectionState {
+    Simplex,
+    Multiplex(Arc<Mutex<Option<RoutingHandle<TcpPayload>>>>),
+    Connected(RoutingHandle<TcpPayload>),
+}
+
 impl Client {
     pub fn new(simplex: bool, resume: bool) -> Self {
+        let state = if simplex {
+            ConnectionState::Simplex
+        } else {
+            ConnectionState::Multiplex(Arc::new(Mutex::new(None)))
+        };
         Self {
-            router: None,
+            state,
             simplex,
             resume,
         }
+    }
+}
+
+async fn start_tunnel<T>(
+    server: SocketAddr,
+    proto: T,
+    target: TargetAddr,
+    resume: bool,
+) -> Result<RoutingHandle<TcpPayload>, Error>
+where
+    T: TaskProvider + Clone + Send + 'static,
+{
+    // Connect to the Proteus server.
+    let outbound = connect(server).await?;
+
+    // Setup the stack for this connection.
+    if resume {
+        type _Stack = Framing<ResumptionClient<Reliability<RoutingClient<TcpPayload>>>>;
+
+        let router = RoutingClient::<TcpPayload>::new();
+        let router_handle = router.handle().clone();
+        let rely = Reliability::new(router);
+        let rely_handle = rely.handle().clone();
+        let resume = ResumptionClient::new(rely);
+        let resume_handle = resume.handle().clone();
+        let stack = Framing::new(resume);
+
+        tokio::spawn(reconnecting_client(
+            stack,
+            outbound,
+            proto,
+            rely_handle,
+            resume_handle,
+            target,
+        ));
+
+        Ok(router_handle)
+    } else {
+        type _Stack = Framing<RoutingClient<TcpPayload>>;
+
+        let router = RoutingClient::<TcpPayload>::new();
+        let router_handle = router.handle().clone();
+        let stack = Framing::new(router);
+
+        tokio::spawn(oneshot_client(stack, outbound, proto));
+
+        Ok(router_handle)
     }
 }
 
@@ -305,54 +365,37 @@ impl ConnectionHandler for Client {
     where
         T: TaskProvider + Clone + Send + 'static,
     {
-        if self.simplex && self.router.is_some() {
-            return Err(Error::RouterExists);
-        } else if self.router.is_none() {
-            // Connect to the Proteus server.
-            let outbound = connect(server).await?;
+        let router = match &self.state {
+            ConnectionState::Simplex => {
+                start_tunnel(server, proto, target.clone(), self.resume).await?
+            }
+            ConnectionState::Multiplex(mutex) => {
+                let mut guard = mutex.lock().await;
 
-            // Setup the stack for this connection.
-            let router_handle = if self.resume {
-                type _Stack = Framing<ResumptionClient<Reliability<RoutingClient<TcpPayload>>>>;
+                if let Some(router) = guard.as_mut() {
+                    router.clone()
+                } else {
+                    let router = start_tunnel(server, proto, target.clone(), self.resume).await?;
+                    guard.insert(router).clone()
+                }
+            }
+            ConnectionState::Connected(router) => {
+                if self.simplex {
+                    return Err(Error::RouterExists);
+                }
+                router.clone()
+            }
+        };
 
-                let router = RoutingClient::<TcpPayload>::new();
-                let router_handle = router.handle().clone();
-                let rely = Reliability::new(router);
-                let rely_handle = rely.handle().clone();
-                let resume = ResumptionClient::new(rely);
-                let resume_handle = resume.handle().clone();
-                let stack = Framing::new(resume);
+        // In all cases, if we get here we have a connected tunnel.
+        self.state = ConnectionState::Connected(router);
 
-                tokio::spawn(reconnecting_client(
-                    stack,
-                    outbound,
-                    proto,
-                    rely_handle,
-                    resume_handle,
-                    target.clone(),
-                ));
-
-                router_handle
-            } else {
-                type _Stack = Framing<RoutingClient<TcpPayload>>;
-
-                let router = RoutingClient::<TcpPayload>::new();
-                let router_handle = router.handle().clone();
-                let stack = Framing::new(router);
-
-                tokio::spawn(oneshot_client(stack, outbound, proto));
-
-                router_handle
-            };
-
-            self.router = Some(router_handle);
-        }
-
-        let Some(router) = self.router.as_mut() else {
+        // Get a mutable reference to the router.
+        let ConnectionState::Connected(router) = &mut self.state else {
             return Err(Error::RouterDoesNotExist);
         };
 
-        // Now ask the server to connect to the target.
+        // Ask the server-side of the tunnel to connect to the target.
         router
             .connect_session(network_target(target), Some(Duration::from_secs(30)))
             .await
@@ -360,7 +403,8 @@ impl ConnectionHandler for Client {
     }
 
     async fn add(&mut self, inbound: TcpStream, id: u64) -> Result<(), Error> {
-        let Some(handle) = self.router.as_mut() else {
+        // Get a mutable reference to the router.
+        let ConnectionState::Connected(router) = &mut self.state else {
             return Err(Error::RouterDoesNotExist);
         };
 
@@ -377,14 +421,14 @@ impl ConnectionHandler for Client {
         let payload = Payload::new(id, app_src, app_dst, stack_mss);
 
         // Add the session.
-        handle
+        router
             .add_session(id, payload)
             .await
             .map_err(Error::RoutingFailed)?;
 
         // In simplex mode, the tunnel should stop after this session ends.
         if self.simplex {
-            handle
+            router
                 .set_end_method(EndMethod::Empty)
                 .await
                 .map_err(Error::RoutingFailed)?;
@@ -396,16 +440,36 @@ impl ConnectionHandler for Client {
 
 impl Clone for Client {
     fn clone(&self) -> Self {
-        // In multiplex mode, persist the tunnel. In simplex mode, drop the
-        // router so we create a new tunnel on the next connection attempt.
-        let router = if self.simplex {
-            None
-        } else {
-            self.router.clone()
+        let state = match &self.state {
+            ConnectionState::Simplex => ConnectionState::Simplex,
+            ConnectionState::Multiplex(mutex) => {
+                if let Ok(mut guard) = mutex.try_lock()
+                    && let Some(router) = guard.as_mut()
+                {
+                    // Transition the clone to the connected state so we can
+                    // prevent unnecessary locking going forward.
+                    ConnectionState::Connected(router.clone())
+                } else {
+                    // If the lock is held elsewhere, or we have not yet made
+                    // the tunnel, persist the mutex. Note, we try to move to
+                    // the connected state quickly, so lock contention should be
+                    // low in practice.
+                    ConnectionState::Multiplex(mutex.clone())
+                }
+            }
+            ConnectionState::Connected(router) => {
+                // In simplex mode, drop the router so we create a new tunnel on
+                // the next socks stream. In multiplex mode, persist the tunnel.
+                if self.simplex {
+                    ConnectionState::Simplex
+                } else {
+                    ConnectionState::Connected(router.clone())
+                }
+            }
         };
 
         Self {
-            router,
+            state,
             simplex: self.simplex,
             resume: self.resume,
         }
