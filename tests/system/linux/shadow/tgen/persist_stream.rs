@@ -12,7 +12,7 @@ test_each_path! {
 }
 
 fn run_test([psf_filepath]: [&Path; 1]) {
-    let rel_test_src = PathBuf::from("tests/system/linux/shadow/tgen/turbo_stream");
+    let rel_test_src = PathBuf::from("tests/system/linux/shadow/tgen/persist_stream");
     let rel_test_dst =
         super::initialize_test_directory(&rel_test_src, psf_filepath, "true", "stream");
     run_shadow_and_assert_result(&rel_test_dst, None, 1000, 1002);

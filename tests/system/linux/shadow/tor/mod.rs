@@ -2,12 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod direct;
-mod turbo;
+mod persist;
 
 fn initialize_test_directory(
     rel_test_src: &PathBuf,
     psf_filepath: &Path,
-    turbo: &str,
+    persist: &str,
 ) -> (PathBuf, PathBuf) {
     // Set up the dir from which we will run the test.
     let test_name = psf_filepath.file_stem().unwrap();
@@ -29,7 +29,7 @@ fn initialize_test_directory(
         let dst = rel_test_dst.join(conf);
         let replacements = vec![
             ("${PSFPATH}", abs_psf.to_str().unwrap()),
-            ("${TURBO}", turbo),
+            ("${PERSIST}", persist),
         ];
         super::copy_test_file_with_replace(&src, &dst, replacements);
     }
@@ -41,7 +41,7 @@ fn initialize_test_directory(
         let replacements = vec![
             ("${PSFPATH}", abs_psf.to_str().unwrap()),
             ("${PROTEUSBINPATH}", abs_bin.to_str().unwrap()),
-            ("${TURBO}", turbo),
+            ("${PERSIST}", persist),
         ];
         super::copy_test_file_with_replace(&src, &dst, replacements);
     }

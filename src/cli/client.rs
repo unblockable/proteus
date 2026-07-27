@@ -19,7 +19,7 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
         ClientMode::Stream => true,
         ClientMode::Tunnel => false,
     };
-    let is_resumable = args.session.turbo;
+    let is_resumable = args.session.persist;
     run_inner(args, Client::new(is_simplex, is_resumable)).await
 }
 

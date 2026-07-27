@@ -52,7 +52,7 @@ pub async fn run(_: CommonConfig, conf: ServerConfig) -> anyhow::Result<()> {
     // active even if any individual connection fails.
     if conf
         .options
-        .get("turbo")
+        .get("persist")
         .is_some_and(|v| v.to_ascii_lowercase().eq("true"))
     {
         // Shared global state for session resumption. This allows a client to

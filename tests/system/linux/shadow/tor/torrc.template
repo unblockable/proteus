@@ -5,4 +5,4 @@ SocksPort 127.0.0.1:9000
 
 ClientTransportPlugin proteus socks5 127.0.0.1:${SOCKS5LISTENPORT}
 UseBridges 1
-Bridge proteus 100.0.0.1:443 turbo=${TURBO} psf=${PSFPATH}
+Bridge proteus 100.0.0.1:443 persist=${PERSIST} psf=${PSFPATH}

@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod direct;
-mod turbo;
+mod persist;
 
-fn initialize_test_directory(rel_test_src: &PathBuf, psf_filepath: &Path, turbo: &str) -> PathBuf {
+fn initialize_test_directory(rel_test_src: &PathBuf, psf_filepath: &Path, persist: &str) -> PathBuf {
     // Set up our paths
     let test_name = psf_filepath.file_stem().unwrap();
     let rel_test_src_parent = PathBuf::from(rel_test_src.parent().unwrap());
@@ -30,7 +30,7 @@ fn initialize_test_directory(rel_test_src: &PathBuf, psf_filepath: &Path, turbo:
         let dst = rel_test_dst.join(conf);
         let replacements = vec![
             ("${PSFPATH}", abs_psf.to_str().unwrap()),
-            ("${TURBO}", turbo),
+            ("${PERSIST}", persist),
         ];
         super::super::copy_test_file_with_replace(&src, &dst, replacements);
     }
@@ -43,7 +43,7 @@ fn initialize_test_directory(rel_test_src: &PathBuf, psf_filepath: &Path, turbo:
             ("${TGENSERVERCONF}", abs_tgen_server_conf.to_str().unwrap()),
             ("${PSFPATH}", abs_psf.to_str().unwrap()),
             ("${PROTEUSBINPATH}", abs_bin.to_str().unwrap()),
-            ("${TURBO}", turbo),
+            ("${PERSIST}", persist),
         ];
         super::super::copy_test_file_with_replace(&src, &dst, replacements);
     }

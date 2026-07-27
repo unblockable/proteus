@@ -37,7 +37,7 @@ hosts:
       environment: { TOR_PT_MANAGED_TRANSPORT_VER: "1",
                      TOR_PT_STATE_LOCATION: "/tmp/proteus_server", 
                      TOR_PT_SERVER_TRANSPORTS: "proteus",
-                     TOR_PT_SERVER_TRANSPORT_OPTIONS: "proteus:turbo=${TURBO};proteus:psf=${PSFPATH}",
+                     TOR_PT_SERVER_TRANSPORT_OPTIONS: "proteus:persist=${PERSIST};proteus:psf=${PSFPATH}",
                      TOR_PT_SERVER_BINDADDR: "proteus-100.0.0.3:443",
                      TOR_PT_ORPORT: "100.0.0.1:80",
                      RUST_BACKTRACE: "1" }

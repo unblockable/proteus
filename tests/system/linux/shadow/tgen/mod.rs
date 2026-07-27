@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 mod pt;
 mod stream;
 mod tunnel;
-mod turbo_stream;
-mod turbo_tunnel;
+mod persist_stream;
+mod persist_tunnel;
 
 fn initialize_test_directory(
     rel_test_src: &PathBuf,
     psf_filepath: &Path,
-    turbo: &str,
+    persist: &str,
     mode: &str,
 ) -> PathBuf {
     // Set up the dir from which we will run the test.
@@ -40,7 +40,7 @@ fn initialize_test_directory(
             ("${TGENCLIENTCONF}", abs_tgen_client_conf.to_str().unwrap()),
             ("${PSFPATH}", abs_psf.to_str().unwrap()),
             ("${PROTEUSBINPATH}", abs_bin.to_str().unwrap()),
-            ("${TURBO}", turbo),
+            ("${PERSIST}", persist),
             ("${MODE}", mode),
         ];
         super::copy_test_file_with_replace(&src, &dst, replacements);

@@ -58,7 +58,7 @@ pub struct SessionArgs {
     /// Use a session-management protocol to recover from broken tunnels.
     #[arg(short, long, value_name = "BOOL", default_value_t = false)]
     // Using the full bool path to stop clap from treating this as a simple flag.
-    pub turbo: std::primitive::bool,
+    pub persist: std::primitive::bool,
 }
 
 /// Holds the supported subcommands and their args.

@@ -110,7 +110,7 @@ async fn socks_then_transfer(inbound: TcpStream) -> Result<TargetAddr, client::E
     log::info!("Connection to bridge succeeded: {target}");
 
     if options
-        .get("turbo")
+        .get("persist")
         .is_some_and(|v| v.to_ascii_lowercase().eq("true"))
     {
         client::drive_io_resumable(inbound, outbound, proto, target.clone()).await?;

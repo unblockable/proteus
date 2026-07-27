@@ -31,7 +31,7 @@ pub async fn run(args: ServerArgs) -> anyhow::Result<()> {
         net::fmt_listener_name(&listener)
     );
 
-    if args.session.turbo {
+    if args.session.persist {
         let map = ResumptionMap::new();
         loop {
             let (inbound, _) = listener.accept().await?;
