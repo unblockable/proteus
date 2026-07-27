@@ -308,7 +308,7 @@ where
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::common::mock;
+    use crate::util;
 
     async fn test_simple_pair(client: MockIo, server: MockIo, len: usize) {
         let client = MockApplication::new(len, client);
@@ -322,8 +322,8 @@ pub mod tests {
             sink_until_eof(server.io.reader),
         );
 
-        mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
-        mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+        util::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+        util::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
     }
 
     #[tokio::test]
@@ -354,8 +354,8 @@ pub mod tests {
                 copy_then_shutdown(proxy.net.reader, proxy.app.writer),
             );
 
-            mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
-            mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+            util::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+            util::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
         }
     }
 
@@ -384,8 +384,8 @@ pub mod tests {
                 copy_then_shutdown(s_proxy.net.reader, s_proxy.app.writer),
             );
 
-            mock::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
-            mock::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
+            util::Result::assert_payload(&results.0.unwrap(), &results.3.unwrap(), len);
+            util::Result::assert_payload(&results.1.unwrap(), &results.2.unwrap(), len);
         }
     }
 

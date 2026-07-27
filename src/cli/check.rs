@@ -3,10 +3,10 @@ use std::fs;
 use anyhow::{Context, bail};
 
 use super::args::CheckArgs;
-use crate::common::mock;
 use crate::lang::compiler::Compiler;
 use crate::lang::ir::bridge::OldCompile;
 use crate::lang::{ResultExt, Role};
+use crate::util;
 
 pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
     log::info!("Running in check mode");
@@ -37,7 +37,7 @@ pub async fn run(args: CheckArgs) -> anyhow::Result<()> {
         args.num_bytes
     );
 
-    let res = mock::check_protocol_interpretability(client_spec, server_spec, args.num_bytes).await;
+    let res = util::check_protocol_interpretability(client_spec, server_spec, args.num_bytes).await;
 
     log::info!("Protocol check complete, inspecting results...");
 

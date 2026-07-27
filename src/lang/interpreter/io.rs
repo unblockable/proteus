@@ -241,12 +241,12 @@ pub mod tests {
     use tokio::time::timeout;
     use tokio_test::io::Builder;
 
-    use crate::common::mock;
     use crate::lang::interpreter::io::IoStream;
+    use crate::util;
 
     async fn bytes_mut_read_buf_limit(payload_len: usize, buf_limit: usize) {
-        let (mut reader, mut writer) = mock::simplex(payload_len);
-        let payload = mock::payload(payload_len);
+        let (mut reader, mut writer) = util::simplex(payload_len);
+        let payload = util::payload(payload_len);
 
         assert!(writer.write_all(&payload).await.is_ok());
 
@@ -289,8 +289,8 @@ pub mod tests {
     async fn bytes_mut_read_exact(payload_len: usize, buf_limit: usize) {
         assert!(buf_limit <= payload_len);
 
-        let (mut reader, mut writer) = mock::simplex(payload_len);
-        let payload = mock::payload(payload_len);
+        let (mut reader, mut writer) = util::simplex(payload_len);
+        let payload = util::payload(payload_len);
 
         assert!(writer.write_all(&payload).await.is_ok());
 
@@ -324,7 +324,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn try_read_empty() {
-        let (reader, writer) = mock::simplex(64);
+        let (reader, writer) = util::simplex(64);
         let mut io = IoStream::new(reader, writer);
         let result = io.try_read(16).unwrap();
         assert_eq!(result, None);
@@ -333,9 +333,9 @@ pub mod tests {
     async fn new_readable_io(
         payload_len: usize,
     ) -> (IoStream<impl AsyncRead, impl AsyncWrite>, Bytes) {
-        let (reader, mut writer) = mock::simplex(payload_len);
+        let (reader, mut writer) = util::simplex(payload_len);
 
-        let payload = mock::payload(payload_len);
+        let payload = util::payload(payload_len);
         if payload_len > 0 {
             assert!(writer.write_all(&payload).await.is_ok());
         }
@@ -384,7 +384,7 @@ pub mod tests {
     #[tokio::test]
     async fn read_empty() {
         async fn this_should_block() {
-            let (reader, writer) = mock::simplex(64);
+            let (reader, writer) = util::simplex(64);
             let mut io = IoStream::new(reader, writer);
             let _ = io.read(16).await;
         }
@@ -435,7 +435,7 @@ pub mod tests {
     #[tokio::test]
     async fn read_exact_empty() {
         async fn this_should_block() {
-            let (reader, writer) = mock::simplex(64);
+            let (reader, writer) = util::simplex(64);
             let mut io = IoStream::new(reader, writer);
             let _ = io.read_exact(16).await;
         }
@@ -489,7 +489,7 @@ pub mod tests {
     #[tokio::test]
     async fn large_reads() {
         // If source has full payload available, we expect to receive it all.
-        for len in mock::payload_len_iter() {
+        for len in util::payload_len_iter() {
             let (mut io, payload) = new_readable_io(len).await;
 
             let bytes = io.read(len).await.unwrap();

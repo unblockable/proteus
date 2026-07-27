@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod persist_stream;
+mod persist_tunnel;
 mod pt;
 mod stream;
 mod tunnel;
-mod persist_stream;
-mod persist_tunnel;
 
 fn initialize_test_directory(
     rel_test_src: &PathBuf,

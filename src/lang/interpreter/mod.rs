@@ -277,15 +277,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::common::mock::{self};
     use crate::lang::Role;
     use crate::lang::ir::test::basic::LengthPayloadSpec;
     use crate::lang::ir::test::basic_enc::EncryptedLengthPayloadSpec;
+    use crate::util;
 
     #[tokio::test]
     async fn length_payload_unencrypted() {
         // let _ = env_logger::try_init();
-        mock::test_protocol_interpretability(
+        util::test_protocol_interpretability(
             LengthPayloadSpec::new(Role::Client),
             LengthPayloadSpec::new(Role::Server),
         )
@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn length_payload_encrypted() {
         // let _ = env_logger::try_init();
-        mock::test_protocol_interpretability(
+        util::test_protocol_interpretability(
             EncryptedLengthPayloadSpec::new(Role::Client),
             EncryptedLengthPayloadSpec::new(Role::Server),
         )

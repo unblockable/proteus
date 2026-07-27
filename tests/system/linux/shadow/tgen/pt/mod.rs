@@ -4,7 +4,11 @@ use std::path::{Path, PathBuf};
 mod direct;
 mod persist;
 
-fn initialize_test_directory(rel_test_src: &PathBuf, psf_filepath: &Path, persist: &str) -> PathBuf {
+fn initialize_test_directory(
+    rel_test_src: &PathBuf,
+    psf_filepath: &Path,
+    persist: &str,
+) -> PathBuf {
     // Set up our paths
     let test_name = psf_filepath.file_stem().unwrap();
     let rel_test_src_parent = PathBuf::from(rel_test_src.parent().unwrap());
