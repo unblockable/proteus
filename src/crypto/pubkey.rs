@@ -3,6 +3,7 @@ use asn1::{Asn1Read, Asn1Write};
 // PEM Length: 115 bytes
 // DER length: 44  bytes
 
+#[allow(clippy::result_large_err)]
 #[derive(Asn1Read, Asn1Write)]
 struct X25519KeyASN<'a> {
     algorithm: asn1::ObjectIdentifier,
