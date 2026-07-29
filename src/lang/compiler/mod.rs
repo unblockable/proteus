@@ -232,12 +232,8 @@ fn generate_dynamic_payload_hints(
         dynamic_suffix.split_into_dynamic_prefix_and_fixed_suffix();
     let suffix_fixed_size = dynamic_suffix_fixed_part.fixed_fields_size();
 
-    let static_prefix_last_field: Identifier;
-    if let Some(last_field) = static_prefix.fields.last() {
-        static_prefix_last_field = last_field.name.clone();
-    } else {
-        return None;
-    }
+    let last_field = static_prefix.fields.last()?;
+    let static_prefix_last_field = last_field.name.clone();
 
     let len_field_max: usize;
     let length_field_id: Identifier;

@@ -714,7 +714,7 @@ pub mod tests {
 
     #[test]
     fn test_parse_field_semantic() {
-        let test_cases = vec![
+        let test_cases = [
             ("PAYLOAD", FieldSemantic::Payload),
             ("PADDING", FieldSemantic::Padding),
             ("PADDING_LENGTH", FieldSemantic::PaddingLength),

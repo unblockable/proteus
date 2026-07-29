@@ -59,9 +59,9 @@ impl X25519PubKey {
     }
 
     pub fn from_der(value: Vec<u8>) -> Self {
-        let result: asn1::ParseResult<_> = asn1::parse(&value, |d| {
+        let result: Result<X25519KeyASN, Box<asn1::ParseError>> = asn1::parse(&value, |d| {
             d.read_element::<asn1::Sequence>()?.parse(|d| {
-                let k = d.read_element::<X25519KeyASN>()?;
+                let k = d.read_element::<X25519KeyASN>().map_err(Box::new)?;
                 Ok(k)
             })
         });

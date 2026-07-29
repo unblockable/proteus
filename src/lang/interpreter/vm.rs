@@ -285,7 +285,7 @@ impl Execute for EncryptFieldArgs {
                 })?;
 
         // TODO Should auth and unauth encrypt be separate instructions?
-        if self.to_mac_heap_id.is_some() {
+        if let Some(id) = &self.to_mac_heap_id {
             // We are doing authenticated encryption.
             let (ciphertext, mac) = runtime.encrypt(&plaintext).unwrap();
 
@@ -295,7 +295,7 @@ impl Execute for EncryptFieldArgs {
 
             let mut buf = BytesMut::with_capacity(mac.len());
             buf.put_slice(&mac);
-            runtime.store(self.to_mac_heap_id.as_ref().unwrap().clone(), buf.freeze())?;
+            runtime.store(id.clone(), buf.freeze())?;
         } else {
             // We are doing unauthenticated encryption.
             let ciphertext = runtime.encrypt_unauth(&plaintext).unwrap();
