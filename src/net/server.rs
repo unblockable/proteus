@@ -4,10 +4,10 @@ use std::time::Duration;
 use supertunnel::proto::*;
 use supertunnel::util::{DecodedSinkWriter, EncodedStreamReader};
 use supertunnel::{FrameSize, Protocol};
-use tokio::net::TcpStream;
 
 use crate::lang::interpreter::{ErrorHandler, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
+use crate::net::{NetPayload, NetPayloadFactory, NetStream};
 use crate::{lang, net};
 
 #[derive(Debug, thiserror::Error)]
@@ -26,18 +26,19 @@ pub enum Error {
     InterpreterFailed(#[from] lang::interpreter::Error),
 }
 
-pub async fn connect(target: SocketAddr) -> Result<TcpStream, Error> {
+pub async fn connect<S: NetStream + Send>(target: SocketAddr) -> Result<S, Error> {
     net::connect_timeout(target, Duration::from_secs(15))
         .await
         .map_err(Error::ConnectFailed)
 }
 
-pub async fn drive_io_direct<T>(
-    inbound: TcpStream,
-    outbound: TcpStream,
+pub async fn drive_io_direct<S, T>(
+    inbound: S,
+    outbound: S,
     proto: T,
 ) -> Result<(usize, usize), Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send,
 {
     log::debug!("Forwarding without extensions");
@@ -54,13 +55,14 @@ where
     result.map_err(Error::InterpreterFailed)
 }
 
-pub async fn drive_io_resumable<T>(
-    inbound: TcpStream,
-    outbound: TcpStream,
+pub async fn drive_io_resumable<S, T>(
+    inbound: S,
+    outbound: S,
     proto: T,
-    map: ResumptionMap<Reliability<TcpPayload>>,
+    map: ResumptionMap<Reliability<NetPayload<S>>>,
 ) -> Result<(usize, usize), Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send,
 {
     log::debug!("Forwarding with extensions: framing, resumption, reliability");
@@ -71,7 +73,7 @@ where
     let (app_src, app_dst) = outbound.into_split();
 
     // Use a super tunnel stack of extensions.
-    type Stack = Framing<ResumptionServer<Reliability<TcpPayload>>>;
+    type Stack<S> = Framing<ResumptionServer<Reliability<NetPayload<S>>>>;
 
     // Compute the max payload chunk size for our stack.
     let stack_mss = PayloadCodec::mss(ReliabilityCodec::mss(ResumptionCodec::mss(
@@ -85,8 +87,8 @@ where
     let stack = Framing::new(resume);
 
     let (stream, sink) = stack.into_split();
-    let stack_reader = EncodedStreamReader::<Stack>::new(stream, Stack::codec());
-    let stack_writer = DecodedSinkWriter::<Stack>::new(sink, Stack::codec());
+    let stack_reader = EncodedStreamReader::<Stack<S>>::new(stream, Stack::<S>::codec());
+    let stack_writer = DecodedSinkWriter::<Stack<S>>::new(sink, Stack::<S>::codec());
 
     // Run the interpreter to forward data.
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
@@ -109,9 +111,11 @@ where
     }
 }
 
-pub async fn drive_io_routable<T>(inbound: TcpStream, proto: T) -> Result<(usize, usize), Error>
+pub async fn drive_io_routable<S, T, F>(inbound: S, proto: T) -> Result<(usize, usize), Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send,
+    F: NetPayloadFactory<Stream = S>,
 {
     log::debug!("Forwarding with extensions: framing, routing");
 
@@ -120,19 +124,19 @@ where
     let (net_src, net_dst) = inbound.into_split();
 
     // Use a super tunnel stack of extensions.
-    type Stack = Framing<RoutingServer<TcpPayload, TcpPayloadFactory>>;
+    type Stack<S, F> = Framing<RoutingServer<NetPayload<S>, F>>;
 
     // Compute the max payload chunk size for our stack.
     let stack_mss = PayloadCodec::mss(RoutingCodec::mss(FramingCodec::mss(FramingCodec::mtu())));
 
     // The router server connects new applications using tcp.
-    let connector = TcpPayloadFactory::new(stack_mss);
+    let connector = NetPayloadFactory::new(stack_mss);
     let router = RoutingServer::new(connector).await;
     let stack = Framing::new(router);
 
     let (stream, sink) = stack.into_split();
-    let stack_reader = EncodedStreamReader::<Stack>::new(stream, Stack::codec());
-    let stack_writer = DecodedSinkWriter::<Stack>::new(sink, Stack::codec());
+    let stack_reader = EncodedStreamReader::<Stack<S, F>>::new(stream, Stack::<S, F>::codec());
+    let stack_writer = DecodedSinkWriter::<Stack<S, F>>::new(sink, Stack::<S, F>::codec());
 
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
 
@@ -144,13 +148,15 @@ where
     result.map_err(Error::InterpreterFailed)
 }
 
-pub async fn drive_io_routable_resumable<T>(
-    inbound: TcpStream,
+pub async fn drive_io_routable_resumable<S, T, F>(
+    inbound: S,
     proto: T,
-    map: ResumptionMap<Reliability<RoutingServer<TcpPayload, TcpPayloadFactory>>>,
+    map: ResumptionMap<Reliability<RoutingServer<NetPayload<S>, F>>>,
 ) -> Result<(usize, usize), Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send,
+    F: NetPayloadFactory<Stream = S>,
 {
     log::debug!("Forwarding with extensions: framing, resumption, reliability, routing");
 
@@ -159,8 +165,7 @@ where
     let (net_src, net_dst) = inbound.into_split();
 
     // Use a super tunnel stack of extensions.
-    type Stack =
-        Framing<ResumptionServer<Reliability<RoutingServer<TcpPayload, TcpPayloadFactory>>>>;
+    type Stack<S, F> = Framing<ResumptionServer<Reliability<RoutingServer<NetPayload<S>, F>>>>;
 
     // Compute the max payload chunk size for our stack.
     let stack_mss = PayloadCodec::mss(RoutingCodec::mss(ReliabilityCodec::mss(
@@ -168,7 +173,7 @@ where
     )));
 
     // The router server connects new applications using tcp.
-    let connector = TcpPayloadFactory::new(stack_mss);
+    let connector = NetPayloadFactory::new(stack_mss);
     let router = RoutingServer::new(connector).await;
     let rely = Reliability::new(router);
     let mut rely_handle = rely.handle().clone();
@@ -176,8 +181,8 @@ where
     let stack = Framing::new(resume);
 
     let (stream, sink) = stack.into_split();
-    let stack_reader = EncodedStreamReader::<Stack>::new(stream, Stack::codec());
-    let stack_writer = DecodedSinkWriter::<Stack>::new(sink, Stack::codec());
+    let stack_reader = EncodedStreamReader::<Stack<S, F>>::new(stream, Stack::<S, F>::codec());
+    let stack_writer = DecodedSinkWriter::<Stack<S, F>>::new(sink, Stack::<S, F>::codec());
 
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
 

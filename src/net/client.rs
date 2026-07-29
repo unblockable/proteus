@@ -9,12 +9,13 @@ use supertunnel::net::NetworkTarget;
 use supertunnel::proto::*;
 use supertunnel::util::{DecodedSinkWriter, EncodedStreamReader, EndMethod};
 use supertunnel::{FrameSize, Protocol};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::ToSocketAddrs;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::lang::interpreter::{self, ErrorHandler, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
+use crate::net::{NetPayload, NetStream};
 use crate::{lang, net};
 
 #[derive(Debug, thiserror::Error)]
@@ -45,27 +46,29 @@ pub enum Error {
     RouterDoesNotExist,
 }
 
-pub async fn connect<A>(target: A) -> Result<TcpStream, Error>
+pub async fn connect<A, S>(target: A) -> Result<S, Error>
 where
-    A: ToSocketAddrs + Clone + Debug,
+    A: ToSocketAddrs + Clone + Send + Debug + 'static,
+    S: NetStream + Send,
 {
     net::connect_timeout(target, Duration::from_secs(15))
         .await
         .map_err(Error::ConnectFailed)
 }
 
-pub async fn drive_io_direct<T>(
-    inbound: TcpStream,
-    outbound: TcpStream,
+pub async fn drive_io_direct<S, T>(
+    inbound: S,
+    outbound: S,
     proto: T,
 ) -> Result<(usize, usize), Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send,
 {
     log::debug!(
         "Transferring between {} and {} using direct i/o.",
-        net::fmt_stream_name(&inbound),
-        net::fmt_stream_name(&outbound)
+        inbound.name(),
+        outbound.name()
     );
 
     let (app_src, app_dst) = inbound.into_split();
@@ -80,19 +83,20 @@ where
     result.map_err(Error::InterpreterFailed)
 }
 
-pub async fn drive_io_resumable<T>(
-    inbound: TcpStream,
-    outbound: TcpStream,
+pub async fn drive_io_resumable<S, T>(
+    inbound: S,
+    outbound: S,
     proto: T,
     reconnect_addr: TargetAddr,
 ) -> Result<(usize, usize), Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send,
 {
     log::debug!(
         "Transferring between {} and {} using resumable super tunnel.",
-        net::fmt_stream_name(&inbound),
-        net::fmt_stream_name(&outbound)
+        inbound.name(),
+        outbound.name()
     );
 
     let (app_src, app_dst) = inbound.into_split();
@@ -120,25 +124,26 @@ where
     .await
 }
 
-async fn reconnecting_client<S, T>(
-    stack: S,
-    tunnel: TcpStream,
+async fn reconnecting_client<P, S, T>(
+    stack: P,
+    tunnel: S,
     proto: T,
     mut rely_handle: ReliabilityHandle,
     resume_handle: ResumptionHandle,
     target: TargetAddr,
 ) -> Result<(usize, usize), Error>
 where
-    S: Protocol,
-    <S as Protocol>::Codec: Send,
-    <S as Protocol>::Message: Send,
-    <S as Protocol>::StreamHalf: Unpin + Send,
-    <S as Protocol>::SinkHalf: Unpin + Send,
+    P: Protocol,
+    <P as Protocol>::Codec: Send,
+    <P as Protocol>::Message: Send,
+    <P as Protocol>::StreamHalf: Unpin + Send,
+    <P as Protocol>::SinkHalf: Unpin + Send,
+    S: NetStream,
     T: TaskProvider + Clone + Send,
 {
     let (stream, sink) = stack.into_split();
-    let mut stack_reader = EncodedStreamReader::<S>::new(stream, S::codec());
-    let mut stack_writer = DecodedSinkWriter::<S>::new(sink, S::codec());
+    let mut stack_reader = EncodedStreamReader::<P>::new(stream, P::codec());
+    let mut stack_writer = DecodedSinkWriter::<P>::new(sink, P::codec());
 
     let (mut net_reader, mut net_writer) = tunnel.into_split();
 
@@ -176,7 +181,7 @@ where
 
         (stack_reader, stack_writer, _, _) = interpreter.into_inner();
 
-        let reconnected_stream = TcpStream::connect(target.to_string())
+        let reconnected_stream = S::connect(target.to_string())
             .await
             .map_err(Error::ConnectFailed)?;
         (net_reader, net_writer) = reconnected_stream.into_split();
@@ -230,25 +235,22 @@ fn network_target(target: TargetAddr) -> NetworkTarget {
     }
 }
 
-async fn oneshot_client<S, T>(
-    stack: S,
-    outbound: TcpStream,
-    proto: T,
-) -> Result<(usize, usize), Error>
+async fn oneshot_client<P, S, T>(stack: P, outbound: S, proto: T) -> Result<(usize, usize), Error>
 where
-    S: Protocol + 'static,
-    <S as Protocol>::Codec: Send,
-    <S as Protocol>::Message: Send,
-    <S as Protocol>::StreamHalf: Unpin + Send,
-    <S as Protocol>::SinkHalf: Unpin + Send,
+    P: Protocol + 'static,
+    <P as Protocol>::Codec: Send,
+    <P as Protocol>::Message: Send,
+    <P as Protocol>::StreamHalf: Unpin + Send,
+    <P as Protocol>::SinkHalf: Unpin + Send,
+    S: NetStream,
     T: TaskProvider + Clone + Send + 'static,
 {
     let (net_reader, net_writer) = outbound.into_split();
 
     // Prepare the stack adapters.
     let (stream, sink) = stack.into_split();
-    let stack_reader = EncodedStreamReader::<S>::new(stream, S::codec());
-    let stack_writer = DecodedSinkWriter::<S>::new(sink, S::codec());
+    let stack_reader = EncodedStreamReader::<P>::new(stream, P::codec());
+    let stack_writer = DecodedSinkWriter::<P>::new(sink, P::codec());
 
     // Prepare the interpreter to transfer between the stack and network connection.
     let mut interpreter =
@@ -264,7 +266,7 @@ where
         .map_err(Error::InterpreterFailed)
 }
 
-pub trait ConnectionHandler {
+pub trait ConnectionHandler<S: NetStream> {
     fn connect<T>(
         &mut self,
         server: SocketAddr,
@@ -274,26 +276,24 @@ pub trait ConnectionHandler {
     where
         T: TaskProvider + Clone + Send + 'static;
 
-    fn add(
-        &mut self,
-        inbound: TcpStream,
-        id: u64,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    fn add(&mut self, inbound: S, id: u64) -> impl Future<Output = Result<(), Error>> + Send
+    where
+        S: NetStream;
 }
 
-pub struct Client {
-    state: ConnectionState,
+pub struct Client<S: NetStream> {
+    state: ConnectionState<S>,
     simplex: bool,
     resume: bool,
 }
 
-enum ConnectionState {
+enum ConnectionState<S: NetStream> {
     Simplex,
-    Multiplex(Arc<Mutex<Option<RoutingHandle<TcpPayload>>>>),
-    Connected(RoutingHandle<TcpPayload>),
+    Multiplex(Arc<Mutex<Option<RoutingHandle<NetPayload<S>>>>>),
+    Connected(RoutingHandle<NetPayload<S>>),
 }
 
-impl Client {
+impl<S: NetStream> Client<S> {
     pub fn new(simplex: bool, resume: bool) -> Self {
         let state = if simplex {
             ConnectionState::Simplex
@@ -308,23 +308,24 @@ impl Client {
     }
 }
 
-async fn start_tunnel<T>(
+async fn start_tunnel<S, T>(
     server: SocketAddr,
     proto: T,
     target: TargetAddr,
     resume: bool,
-) -> Result<RoutingHandle<TcpPayload>, Error>
+) -> Result<RoutingHandle<NetPayload<S>>, Error>
 where
+    S: NetStream,
     T: TaskProvider + Clone + Send + 'static,
 {
     // Connect to the Proteus server.
-    let outbound = connect(server).await?;
+    let outbound = connect::<_, S>(server).await?;
 
     // Setup the stack for this connection.
     if resume {
-        type _Stack = Framing<ResumptionClient<Reliability<RoutingClient<TcpPayload>>>>;
+        type _Stack<S> = Framing<ResumptionClient<Reliability<RoutingClient<NetPayload<S>>>>>;
 
-        let router = RoutingClient::<TcpPayload>::new();
+        let router = RoutingClient::<NetPayload<S>>::new();
         let router_handle = router.handle().clone();
         let rely = Reliability::new(router);
         let rely_handle = rely.handle().clone();
@@ -343,9 +344,9 @@ where
 
         Ok(router_handle)
     } else {
-        type _Stack = Framing<RoutingClient<TcpPayload>>;
+        type _Stack<S> = Framing<RoutingClient<NetPayload<S>>>;
 
-        let router = RoutingClient::<TcpPayload>::new();
+        let router = RoutingClient::<NetPayload<S>>::new();
         let router_handle = router.handle().clone();
         let stack = Framing::new(router);
 
@@ -355,7 +356,7 @@ where
     }
 }
 
-impl ConnectionHandler for Client {
+impl<S: NetStream> ConnectionHandler<S> for Client<S> {
     async fn connect<T>(
         &mut self,
         server: SocketAddr,
@@ -367,7 +368,7 @@ impl ConnectionHandler for Client {
     {
         let router = match &self.state {
             ConnectionState::Simplex => {
-                start_tunnel(server, proto, target.clone(), self.resume).await?
+                start_tunnel::<S, T>(server, proto, target.clone(), self.resume).await?
             }
             ConnectionState::Multiplex(mutex) => {
                 let mut guard = mutex.lock().await;
@@ -375,7 +376,8 @@ impl ConnectionHandler for Client {
                 if let Some(router) = guard.as_mut() {
                     router.clone()
                 } else {
-                    let router = start_tunnel(server, proto, target.clone(), self.resume).await?;
+                    let router =
+                        start_tunnel::<S, T>(server, proto, target.clone(), self.resume).await?;
                     guard.insert(router).clone()
                 }
             }
@@ -402,7 +404,7 @@ impl ConnectionHandler for Client {
             .map_err(Error::RoutingFailed)
     }
 
-    async fn add(&mut self, inbound: TcpStream, id: u64) -> Result<(), Error> {
+    async fn add(&mut self, inbound: S, id: u64) -> Result<(), Error> {
         // Get a mutable reference to the router.
         let ConnectionState::Connected(router) = &mut self.state else {
             return Err(Error::RouterDoesNotExist);
@@ -438,7 +440,7 @@ impl ConnectionHandler for Client {
     }
 }
 
-impl Clone for Client {
+impl<S: NetStream> Clone for Client<S> {
     fn clone(&self) -> Self {
         let state = match &self.state {
             ConnectionState::Simplex => ConnectionState::Simplex,

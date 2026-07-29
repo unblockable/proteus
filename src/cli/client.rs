@@ -25,7 +25,7 @@ pub async fn run(args: ClientArgs) -> anyhow::Result<()> {
 
 async fn run_inner<T>(args: ClientArgs, client: T) -> anyhow::Result<()>
 where
-    T: ConnectionHandler + Clone + Send + 'static,
+    T: ConnectionHandler<TcpStream> + Clone + Send + 'static,
 {
     let msg = match args.mode {
         ClientMode::Stream => {
@@ -82,7 +82,7 @@ async fn handle_connection<T, U>(
     proto: U,
 ) -> Result<TargetAddr, client::Error>
 where
-    T: ConnectionHandler + Clone + Send + 'static,
+    T: ConnectionHandler<TcpStream> + Clone + Send + 'static,
     U: TaskProvider + Clone + Send + 'static,
 {
     log::debug!(

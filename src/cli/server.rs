@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail};
-use supertunnel::proto::ResumptionMap;
-use tokio::net::TcpListener;
+use supertunnel::proto::{ResumptionMap, TcpPayloadFactory};
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::cli::args::ServerArgs;
 use crate::lang::Role;
@@ -31,17 +31,22 @@ pub async fn run(args: ServerArgs) -> anyhow::Result<()> {
         net::fmt_listener_name(&listener)
     );
 
+    type S = TcpStream;
+    type F = TcpPayloadFactory;
+
     if args.session.persist {
         let map = ResumptionMap::new();
         loop {
             let (inbound, _) = listener.accept().await?;
             let (proto, map) = (proto.clone(), map.clone());
-            tokio::spawn(server::drive_io_routable_resumable(inbound, proto, map));
+            tokio::spawn(server::drive_io_routable_resumable::<S, _, F>(
+                inbound, proto, map,
+            ));
         }
     } else {
         loop {
             let (inbound, _) = listener.accept().await?;
-            tokio::spawn(server::drive_io_routable(inbound, proto.clone()));
+            tokio::spawn(server::drive_io_routable::<S, _, F>(inbound, proto.clone()));
         }
     }
 }
