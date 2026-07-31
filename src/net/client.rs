@@ -48,7 +48,7 @@ pub enum Error {
 
 pub async fn connect<A, S>(target: A) -> Result<S, Error>
 where
-    A: ToSocketAddrs + Clone + Send + Debug + 'static,
+    A: ToSocketAddrs + Clone + Send + Debug,
     S: NetStream + Send,
 {
     net::connect_timeout(target, Duration::from_secs(15))
@@ -237,13 +237,13 @@ fn network_target(target: TargetAddr) -> NetworkTarget {
 
 async fn oneshot_client<P, S, T>(stack: P, outbound: S, proto: T) -> Result<(usize, usize), Error>
 where
-    P: Protocol + 'static,
+    P: Protocol,
     <P as Protocol>::Codec: Send,
     <P as Protocol>::Message: Send,
     <P as Protocol>::StreamHalf: Unpin + Send,
     <P as Protocol>::SinkHalf: Unpin + Send,
     S: NetStream,
-    T: TaskProvider + Clone + Send + 'static,
+    T: TaskProvider + Clone + Send,
 {
     let (net_reader, net_writer) = outbound.into_split();
 

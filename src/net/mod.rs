@@ -15,15 +15,14 @@ pub const CHUNK_SIZE: usize = 2usize.pow(14u32); // 16 KiB
 type NetPayload<S> = Payload<<S as NetStream>::ReadHalf, <S as NetStream>::WriteHalf>;
 
 pub trait NetStream: AsyncRead + AsyncWrite + Send + Unpin + 'static {
-    type ReadHalf: AsyncRead + Send + Unpin + 'static;
-    type WriteHalf: AsyncWrite + Send + Unpin + 'static;
+    type ReadHalf: AsyncRead + Send + Unpin;
+    type WriteHalf: AsyncWrite + Send + Unpin;
 
     fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf);
 
-    fn connect<A: ToSocketAddrs + Send + 'static>(
-        addr: A,
-    ) -> impl Future<Output = std::io::Result<Self>> + Send + 'static
+    fn connect<A>(addr: A) -> impl Future<Output = std::io::Result<Self>> + Send
     where
+        A: ToSocketAddrs + Send,
         Self: Sized;
 
     fn name(&self) -> String;
@@ -67,7 +66,7 @@ impl NetPayloadFactory for TcpPayloadFactory {
 
 pub async fn connect_timeout<A, S>(target: A, timeout: Duration) -> std::io::Result<S>
 where
-    A: ToSocketAddrs + Send + Clone + Debug + 'static,
+    A: ToSocketAddrs + Send + Clone + Debug,
     S: NetStream + Send,
 {
     match tokio::time::timeout(timeout, S::connect(target.clone())).await {
