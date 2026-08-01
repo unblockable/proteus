@@ -180,10 +180,7 @@ where
             )
         );
 
-        match &result {
-            Ok(_) => log::info!("Interpreter result: Ok"),
-            Err(e) => log::info!("Interpreter result: {e}"),
-        }
+        log::info!("Interpreter result: {:?}", result);
 
         result
     }
