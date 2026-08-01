@@ -151,7 +151,7 @@ where
             ),
             self.fwd_net_to_app.run(
                 handler.raise_err_on_net_eof,
-                handler.shutdown_net_on_app_eof
+                handler.shutdown_app_on_net_eof
             )
         );
 
@@ -176,7 +176,7 @@ where
             ),
             self.fwd_net_to_app.run(
                 handler.raise_err_on_net_eof,
-                handler.shutdown_net_on_app_eof
+                handler.shutdown_app_on_net_eof
             )
         );
 
