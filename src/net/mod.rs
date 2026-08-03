@@ -122,8 +122,14 @@ mod tests {
     use crate::net::{NetPayload, NetStream, client, server};
     use crate::util::{self, MockIo, MockProxy, MockProxyNetwork};
 
-    pub struct MockReadHalf(pub Box<dyn AsyncRead + Send + Unpin>);
-    pub struct MockWriteHalf(pub Option<Box<dyn AsyncWrite + Send + Unpin>>);
+    pub struct MockReadHalf {
+        inner: Box<dyn AsyncRead + Send + Unpin>,
+        count: usize,
+        flaky: Option<usize>,
+    }
+    pub struct MockWriteHalf {
+        inner: Box<dyn AsyncWrite + Send + Unpin>,
+    }
 
     impl AsyncRead for MockReadHalf {
         fn poll_read(
@@ -131,7 +137,20 @@ mod tests {
             cx: &mut Context,
             buf: &mut ReadBuf,
         ) -> Poll<std::io::Result<()>> {
-            Pin::new(&mut *self.0).poll_read(cx, buf)
+            if let Some(limit) = self.flaky
+                && self.count >= limit
+            {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "Mocking a network connection error",
+                )));
+            }
+
+            let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+            if matches!(result, Poll::Ready(Ok(_))) {
+                self.count += 1;
+            }
+            result
         }
     }
 
@@ -141,19 +160,19 @@ mod tests {
             cx: &mut Context,
             buf: &[u8],
         ) -> Poll<Result<usize, std::io::Error>> {
-            Pin::new(&mut *self.0.as_mut().unwrap()).poll_write(cx, buf)
+            Pin::new(&mut *self.inner.as_mut()).poll_write(cx, buf)
         }
         fn poll_flush(
             mut self: Pin<&mut Self>,
             cx: &mut Context,
         ) -> Poll<Result<(), std::io::Error>> {
-            Pin::new(&mut *self.0.as_mut().unwrap()).poll_flush(cx)
+            Pin::new(&mut *self.inner.as_mut()).poll_flush(cx)
         }
         fn poll_shutdown(
             mut self: Pin<&mut Self>,
             cx: &mut Context,
         ) -> Poll<Result<(), std::io::Error>> {
-            Pin::new(&mut *self.0.as_mut().unwrap()).poll_shutdown(cx)
+            Pin::new(&mut *self.inner.as_mut()).poll_shutdown(cx)
         }
     }
 
@@ -164,10 +183,14 @@ mod tests {
     }
 
     impl MockNetStream {
-        pub fn new(io: MockIo, name: impl Into<String>) -> Self {
+        pub fn new(io: MockIo, name: impl Into<String>, flaky: Option<usize>) -> Self {
             Self {
-                reader: Some(MockReadHalf(io.reader)),
-                writer: Some(MockWriteHalf(Some(io.writer))),
+                reader: Some(MockReadHalf {
+                    inner: io.reader,
+                    count: 0,
+                    flaky,
+                }),
+                writer: Some(MockWriteHalf { inner: io.writer }),
                 name: name.into(),
             }
         }
@@ -247,8 +270,8 @@ mod tests {
     async fn io_direct() {
         for len in util::payload_len_iter() {
             let client_fwd = |proto, proxy: MockProxy| async move {
-                let inbound = MockNetStream::new(proxy.app, "client_app");
-                let outbound = MockNetStream::new(proxy.net, "client_net");
+                let inbound = MockNetStream::new(proxy.app, "client_app", None);
+                let outbound = MockNetStream::new(proxy.net, "client_net", None);
 
                 match client::drive_io_direct(inbound, outbound, proto).await {
                     Ok((tx, rx)) => (Ok(tx), Ok(rx)),
@@ -257,8 +280,8 @@ mod tests {
             };
 
             let server_fwd = |proto, proxy: MockProxy| async move {
-                let inbound = MockNetStream::new(proxy.net, "server_net");
-                let outbound = MockNetStream::new(proxy.app, "server_app");
+                let inbound = MockNetStream::new(proxy.net, "server_net", None);
+                let outbound = MockNetStream::new(proxy.app, "server_app", None);
 
                 match server::drive_io_direct(inbound, outbound, proto).await {
                     Ok((tx, rx)) => (Ok(tx), Ok(rx)),
@@ -288,8 +311,8 @@ mod tests {
             let client_fwd = |proto, proxy: MockProxy| {
                 let reconn_addr = addr.clone();
                 async move {
-                    let inbound = MockNetStream::new(proxy.app, "client_app");
-                    let outbound = MockNetStream::new(proxy.net, "client_net");
+                    let inbound = MockNetStream::new(proxy.app, "client_app", None);
+                    let outbound = MockNetStream::new(proxy.net, "client_net", None);
 
                     match client::drive_io_resumable(inbound, outbound, proto, reconn_addr).await {
                         Ok((tx, rx)) => (Ok(tx), Ok(rx)),
@@ -301,8 +324,8 @@ mod tests {
             let server_fwd = |proto, proxy: MockProxy| {
                 let resume_map = map.clone();
                 async move {
-                    let inbound = MockNetStream::new(proxy.net, "server_net");
-                    let outbound = MockNetStream::new(proxy.app, "server_app");
+                    let inbound = MockNetStream::new(proxy.net, "server_net", None);
+                    let outbound = MockNetStream::new(proxy.app, "server_app", None);
 
                     match server::drive_io_resumable(inbound, outbound, proto, resume_map).await {
                         Ok((tx, rx)) => (Ok(tx), Ok(rx)),
