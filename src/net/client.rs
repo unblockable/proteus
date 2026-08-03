@@ -13,7 +13,7 @@ use tokio::net::ToSocketAddrs;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::lang::interpreter::{self, ErrorHandler, Interpreter};
+use crate::lang::interpreter::{self, Interpreter};
 use crate::lang::ir::bridge::TaskProvider;
 use crate::net::{NetPayload, NetStream};
 use crate::{lang, net};
@@ -75,11 +75,7 @@ where
     let (net_src, net_dst) = outbound.into_split();
 
     let mut interpreter = Interpreter::new(app_src, app_dst, net_src, net_dst, proto);
-    let handler = ErrorHandler::builder()
-        .shutdown_app_on_net_eof()
-        .shutdown_net_on_app_eof();
-    let result = interpreter.run_try_join(handler).await;
-
+    let result = interpreter.run_try_join(None).await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -157,12 +153,9 @@ where
             net_writer,
             proto.clone(),
         );
-        let handler = ErrorHandler::builder()
-            .raise_err_on_net_eof()
-            .raise_err_on_app_eof();
 
         let result = tokio::select! {
-            result = interpreter.run_try_join(handler) => {
+            result = interpreter.run_try_join(Some(rely_handle.clone())) => {
                 result
             }
             _ = cancel_token.cancelled() => {
@@ -255,15 +248,8 @@ where
     // Prepare the interpreter to transfer between the stack and network connection.
     let mut interpreter =
         Interpreter::new(stack_reader, stack_writer, net_reader, net_writer, proto);
-
-    let handler = ErrorHandler::builder()
-        .shutdown_app_on_net_eof()
-        .shutdown_net_on_app_eof();
-
-    interpreter
-        .run_try_join(handler)
-        .await
-        .map_err(Error::InterpreterFailed)
+    let result = interpreter.run_try_join(None).await;
+    result.map_err(Error::InterpreterFailed)
 }
 
 pub trait ConnectionHandler<S: NetStream> {

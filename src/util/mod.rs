@@ -6,7 +6,7 @@ use rand::distr::{Alphanumeric, Distribution};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::lang;
-use crate::lang::interpreter::{ErrorHandler, Interpreter};
+use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
 use crate::net::CHUNK_SIZE;
 
@@ -269,9 +269,6 @@ pub async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
     protospec: T,
     proxy: MockProxy,
 ) -> (lang::Result<usize>, lang::Result<usize>) {
-    let handler = ErrorHandler::builder()
-        .shutdown_net_on_app_eof()
-        .shutdown_app_on_net_eof();
     let mut interpreter = Interpreter::new(
         proxy.app.reader,
         proxy.app.writer,
@@ -279,7 +276,7 @@ pub async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
         proxy.net.writer,
         protospec,
     );
-    let (r1, r2) = interpreter.run_join(handler).await;
+    let (r1, r2) = interpreter.run_join(None).await;
     (r1.map_err(|e| e.into()), r2.map_err(|e| e.into()))
 }
 

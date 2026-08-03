@@ -105,6 +105,10 @@ where
         Ok(())
     }
 
+    pub fn num_bytes_recv(&self) -> usize {
+        self.n_recv_src
+    }
+
     pub fn num_bytes_sent(&self) -> usize {
         self.n_sent_dst
     }

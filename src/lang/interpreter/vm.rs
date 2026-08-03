@@ -47,6 +47,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VirtualMachine<R, W> {
         self.io.into_inner()
     }
 
+    pub fn num_bytes_recv(&self) -> usize {
+        self.io.num_bytes_recv()
+    }
+
     pub fn num_bytes_sent(&self) -> usize {
         self.io.num_bytes_sent()
     }

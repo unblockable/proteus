@@ -5,7 +5,7 @@ use supertunnel::proto::*;
 use supertunnel::util::{DecodedSinkWriter, EncodedStreamReader};
 use supertunnel::{FrameSize, Protocol};
 
-use crate::lang::interpreter::{ErrorHandler, Interpreter};
+use crate::lang::interpreter::Interpreter;
 use crate::lang::ir::bridge::TaskProvider;
 use crate::net::{NetPayload, NetPayloadFactory, NetStream};
 use crate::{lang, net};
@@ -47,11 +47,7 @@ where
     let (app_src, app_dst) = outbound.into_split();
 
     let mut interpreter = Interpreter::new(app_src, app_dst, net_src, net_dst, proto);
-    let handler = ErrorHandler::builder()
-        .shutdown_app_on_net_eof()
-        .shutdown_net_on_app_eof();
-
-    let result = interpreter.run_try_join(handler).await;
+    let result = interpreter.run_try_join(None).await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -82,7 +78,7 @@ where
 
     let payload = Payload::new(0, app_src, app_dst, stack_mss);
     let rely = Reliability::new(payload);
-    let mut rely_handle = rely.handle().clone();
+    let rely_handle = rely.handle().clone();
     let resume = ResumptionServer::new_with(rely, map);
     let stack = Framing::new(resume);
 
@@ -92,23 +88,12 @@ where
 
     // Run the interpreter to forward data.
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
-    let handler = ErrorHandler::builder()
-        .raise_err_on_net_eof()
-        .raise_err_on_app_eof();
 
     // In case of failure, the client might want to resume on a new connection.
     // Super Tunnel handles this through the ResumptionMap, so we can safely
     // drop the io components and return to clean up this spawned task.
-    match interpreter.run_try_join(handler).await {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            if rely_handle.is_shutdown_complete().await {
-                Ok(interpreter.num_bytes_sent())
-            } else {
-                Err(Error::InterpreterFailed(e))
-            }
-        }
-    }
+    let result = interpreter.run_try_join(Some(rely_handle)).await;
+    result.map_err(Error::InterpreterFailed)
 }
 
 pub async fn drive_io_routable<S, T, F>(inbound: S, proto: T) -> Result<(usize, usize), Error>
@@ -139,12 +124,7 @@ where
     let stack_writer = DecodedSinkWriter::<Stack<S, F>>::new(sink, Stack::<S, F>::codec());
 
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
-
-    let handler = ErrorHandler::builder()
-        .shutdown_app_on_net_eof()
-        .shutdown_net_on_app_eof();
-
-    let result = interpreter.run_try_join(handler).await;
+    let result = interpreter.run_try_join(None).await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -176,7 +156,7 @@ where
     let connector = NetPayloadFactory::new(stack_mss);
     let router = RoutingServer::new(connector).await;
     let rely = Reliability::new(router);
-    let mut rely_handle = rely.handle().clone();
+    let rely_handle = rely.handle().clone();
     let resume = ResumptionServer::new_with(rely, map);
     let stack = Framing::new(resume);
 
@@ -185,19 +165,6 @@ where
     let stack_writer = DecodedSinkWriter::<Stack<S, F>>::new(sink, Stack::<S, F>::codec());
 
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
-
-    let handler = ErrorHandler::builder()
-        .raise_err_on_net_eof()
-        .raise_err_on_app_eof();
-
-    match interpreter.run_try_join(handler).await {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            if rely_handle.is_shutdown_complete().await {
-                Ok(interpreter.num_bytes_sent())
-            } else {
-                Err(Error::InterpreterFailed(e))
-            }
-        }
-    }
+    let result = interpreter.run_try_join(Some(rely_handle)).await;
+    result.map_err(Error::InterpreterFailed)
 }
