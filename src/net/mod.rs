@@ -22,7 +22,7 @@ pub trait NetStream: AsyncRead + AsyncWrite + Send + Unpin + 'static {
 
     fn connect<A>(addr: A) -> impl Future<Output = std::io::Result<Self>> + Send
     where
-        A: ToSocketAddrs + Send,
+        A: ToSocketAddrs + std::fmt::Debug + Send,
         Self: Sized;
 
     fn name(&self) -> String;
@@ -109,18 +109,28 @@ pub fn fmt_listener_name(listener: &TcpListener) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
 
     use anyhow::anyhow;
     use fast_socks5::util::target_addr::TargetAddr;
+    use once_cell::sync::Lazy;
     use supertunnel::proto::{Reliability, ResumptionMap};
-    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+    use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
     use crate::lang::Role;
     use crate::lang::ir::test::basic::LengthPayloadSpec;
     use crate::net::{NetPayload, NetStream, client, server};
     use crate::util::{self, MockIo, MockProxy, MockProxyNetwork};
+
+    pub struct MockNetStream {
+        reader: Option<MockReadHalf>,
+        writer: Option<MockWriteHalf>,
+        name: String,
+    }
 
     pub struct MockReadHalf {
         inner: Box<dyn AsyncRead + Send + Unpin>,
@@ -128,58 +138,7 @@ mod tests {
         flaky: Option<usize>,
     }
     pub struct MockWriteHalf {
-        inner: Box<dyn AsyncWrite + Send + Unpin>,
-    }
-
-    impl AsyncRead for MockReadHalf {
-        fn poll_read(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: &mut ReadBuf,
-        ) -> Poll<std::io::Result<()>> {
-            if let Some(limit) = self.flaky
-                && self.count >= limit
-            {
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionReset,
-                    "Mocking a network connection error",
-                )));
-            }
-
-            let result = Pin::new(&mut self.inner).poll_read(cx, buf);
-            if matches!(result, Poll::Ready(Ok(_))) {
-                self.count += 1;
-            }
-            result
-        }
-    }
-
-    impl AsyncWrite for MockWriteHalf {
-        fn poll_write(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: &[u8],
-        ) -> Poll<Result<usize, std::io::Error>> {
-            Pin::new(&mut *self.inner.as_mut()).poll_write(cx, buf)
-        }
-        fn poll_flush(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context,
-        ) -> Poll<Result<(), std::io::Error>> {
-            Pin::new(&mut *self.inner.as_mut()).poll_flush(cx)
-        }
-        fn poll_shutdown(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context,
-        ) -> Poll<Result<(), std::io::Error>> {
-            Pin::new(&mut *self.inner.as_mut()).poll_shutdown(cx)
-        }
-    }
-
-    pub struct MockNetStream {
-        pub reader: Option<MockReadHalf>,
-        pub writer: Option<MockWriteHalf>,
-        pub name: String,
+        inner: Option<Box<dyn AsyncWrite + Send + Unpin>>,
     }
 
     impl MockNetStream {
@@ -190,7 +149,9 @@ mod tests {
                     count: 0,
                     flaky,
                 }),
-                writer: Some(MockWriteHalf { inner: io.writer }),
+                writer: Some(MockWriteHalf {
+                    inner: Some(io.writer),
+                }),
                 name: name.into(),
             }
         }
@@ -236,11 +197,11 @@ mod tests {
             (self.reader.take().unwrap(), self.writer.take().unwrap())
         }
 
-        async fn connect<A: tokio::net::ToSocketAddrs + Send>(_addr: A) -> std::io::Result<Self> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Use mock injection for connections",
-            ))
+        async fn connect<A: tokio::net::ToSocketAddrs + std::fmt::Debug + Send>(
+            addr: A,
+        ) -> std::io::Result<Self> {
+            let key = MockConnector::key(addr);
+            MockConnector::connect(key).await
         }
 
         fn name(&self) -> String {
@@ -248,15 +209,48 @@ mod tests {
         }
     }
 
-    impl Drop for MockWriteHalf {
-        fn drop(&mut self) {
-            log::trace!("Dropping MockWriteHalf");
+    impl AsyncRead for MockReadHalf {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &mut ReadBuf,
+        ) -> Poll<std::io::Result<()>> {
+            if let Some(limit) = self.flaky
+                && self.count >= limit
+            {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "Mocking a network connection error",
+                )));
+            }
+
+            let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+            if matches!(result, Poll::Ready(Ok(_))) {
+                self.count += 1;
+            }
+            result
         }
     }
 
-    impl Drop for MockReadHalf {
-        fn drop(&mut self) {
-            log::trace!("Dropping MockReadHalf");
+    impl AsyncWrite for MockWriteHalf {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize, std::io::Error>> {
+            Pin::new(&mut *self.inner.as_mut().unwrap()).poll_write(cx, buf)
+        }
+        fn poll_flush(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+        ) -> Poll<Result<(), std::io::Error>> {
+            Pin::new(&mut *self.inner.as_mut().unwrap()).poll_flush(cx)
+        }
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+        ) -> Poll<Result<(), std::io::Error>> {
+            Pin::new(&mut *self.inner.as_mut().unwrap()).poll_shutdown(cx)
         }
     }
 
@@ -266,8 +260,69 @@ mod tests {
         }
     }
 
+    impl Drop for MockReadHalf {
+        fn drop(&mut self) {
+            log::trace!("Dropping MockReadHalf");
+        }
+    }
+
+    impl Drop for MockWriteHalf {
+        fn drop(&mut self) {
+            log::trace!("Dropping MockWriteHalf");
+            // Need to call shutdown to propagate EOF signals during tests.
+            if let Some(mut writer) = self.inner.take() {
+                tokio::spawn(async move { writer.shutdown().await });
+            }
+        }
+    }
+
+    const FLAKY: Option<usize> = Some(25);
+    static CONNECTION_REGISTRY: Lazy<Mutex<HashMap<String, UnboundedSender<MockIo>>>> =
+        Lazy::new(|| Mutex::new(HashMap::new()));
+
+    struct MockConnector;
+    impl MockConnector {
+        fn key<A: tokio::net::ToSocketAddrs + std::fmt::Debug>(addr: A) -> String {
+            format!("{addr:?}")
+        }
+
+        fn register(key: String) -> UnboundedReceiver<MockIo> {
+            let (tx, rx) = mpsc::unbounded_channel();
+            CONNECTION_REGISTRY.lock().unwrap().insert(key, tx);
+            rx
+        }
+
+        async fn connect(key: String) -> std::io::Result<MockNetStream> {
+            if let Some(tx) = CONNECTION_REGISTRY.lock().unwrap().get(&key) {
+                let (c_io, s_io) = MockIo::new_pair();
+                tx.send(s_io).unwrap();
+                Ok(MockNetStream::new(
+                    c_io,
+                    "Reconnected MockNetStream client",
+                    FLAKY,
+                ))
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!("No MockConnector registered for {key}"),
+                ))
+            }
+        }
+
+        async fn accept(rx: &mut UnboundedReceiver<MockIo>) -> Option<MockNetStream> {
+            rx.recv()
+                .await
+                .map(|io| MockNetStream::new(io, "Reconnected MockNetStream", None))
+        }
+
+        fn clear() {
+            CONNECTION_REGISTRY.lock().unwrap().clear();
+        }
+    }
+
     #[tokio::test]
     async fn io_direct() {
+        // let _ = env_logger::try_init();
         for len in util::payload_len_iter() {
             let client_fwd = |proto, proxy: MockProxy| async move {
                 let inbound = MockNetStream::new(proxy.app, "client_app", None);
@@ -303,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn io_resumable() {
-        let _ = env_logger::try_init();
+        // let _ = env_logger::try_init();
         for len in util::payload_len_iter() {
             let map: ResumptionMap<Reliability<NetPayload<MockNetStream>>> = ResumptionMap::new();
             let addr: TargetAddr = TargetAddr::Domain("test".into(), 443);
@@ -343,6 +398,77 @@ mod tests {
                 )
                 .await
                 .assert(len);
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky() {
+        // let _ = env_logger::try_init();
+        for len in util::payload_len_iter() {
+            log::info!("Running test with length {len}");
+
+            let addr: TargetAddr = TargetAddr::Domain("io_resumable_flaky".into(), 666);
+            let key = MockConnector::key(addr.to_string());
+            let acceptor = Arc::new(Mutex::new(MockConnector::register(key)));
+
+            let client_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
+                let addr = addr.clone();
+                async move {
+                    let app = MockNetStream::new(proxy.app, "client_app", None);
+                    let net = MockNetStream::new(proxy.net, "client_net", FLAKY);
+
+                    let result = client::drive_io_resumable(app, net, proto, addr).await;
+                    MockConnector::clear();
+                    log::info!("Client exited");
+                    match result {
+                        Ok((tx, rx)) => (Ok(tx), Ok(rx)),
+                        Err(e) => (Err(anyhow!(e).into()), Err(anyhow!("Test Failed").into())),
+                    }
+                }
+            };
+
+            let server_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
+                let mut map = ResumptionMap::new();
+                let acceptor = acceptor.clone();
+                async move {
+                    let mut net = MockNetStream::new(proxy.net, "server_net", None);
+                    let mut app = MockNetStream::new(proxy.app, "server_app", None);
+                    let mut keep_alive = Vec::new();
+
+                    loop {
+                        let (proto, map) = (proto.clone(), map.clone());
+                        let _ = server::drive_io_resumable(net, app, proto, map).await;
+
+                        let mut rx = acceptor.lock().unwrap();
+                        match MockConnector::accept(&mut rx).await {
+                            Some(accepted_stream) => {
+                                net = accepted_stream;
+                                let (tmp_a, tmp_b) = MockIo::new_pair();
+                                app = MockNetStream::new(tmp_a, "server_app_tmp", None);
+                                keep_alive.push(tmp_b);
+                            }
+                            None => break,
+                        }
+                    }
+
+                    // Need to clear out the stale NetStreams to propagate EOF signals.
+                    // This prevents the MockProxyNetwork from stalling.
+                    map.clear().await;
+                    return (Ok(0), Ok(0));
+                }
+            };
+
+            MockProxyNetwork::new(len)
+                .run_with_forwarder(
+                    LengthPayloadSpec::new(Role::Client),
+                    client_fwd,
+                    LengthPayloadSpec::new(Role::Server),
+                    server_fwd,
+                )
+                .await
+                .assert(len);
+
+            MockConnector::clear();
         }
     }
 }

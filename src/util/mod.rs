@@ -68,7 +68,7 @@ impl MockIo {
         Self::new(r, w)
     }
 
-    fn new_pair() -> (Self, Self) {
+    pub fn new_pair() -> (Self, Self) {
         let (io_rw_1, io_rw_2) = duplex(CHUNK_SIZE);
         (Self::new_split(io_rw_1), Self::new_split(io_rw_2))
     }
