@@ -112,13 +112,14 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::pin::Pin;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::task::{Context, Poll};
 
     use anyhow::anyhow;
     use once_cell::sync::Lazy;
     use supertunnel::proto::{Reliability, ResumptionMap};
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+    use tokio::sync::Mutex;
     use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
     use tokio_util::sync::CancellationToken;
 
@@ -136,14 +137,14 @@ mod tests {
     pub struct MockReadHalf {
         inner: Box<dyn AsyncRead + Send + Unpin>,
         count: usize,
-        flaky: Option<usize>,
+        flaky: Option<MockErrSpec>,
     }
     pub struct MockWriteHalf {
         inner: Option<Box<dyn AsyncWrite + Send + Unpin>>,
     }
 
     impl MockNetStream {
-        pub fn new(io: MockIo, name: impl Into<String>, flaky: Option<usize>) -> Self {
+        pub fn new(io: MockIo, name: impl Into<String>, flaky: Option<MockErrSpec>) -> Self {
             Self {
                 reader: Some(MockReadHalf {
                     inner: io.reader,
@@ -210,23 +211,80 @@ mod tests {
         }
     }
 
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+    pub enum MockErrKind {
+        Io(std::io::ErrorKind),
+        Eof,
+    }
+
+    impl From<std::io::ErrorKind> for MockErrKind {
+        fn from(value: std::io::ErrorKind) -> Self {
+            MockErrKind::Io(value)
+        }
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+    pub enum MockErrSpec {
+        ErrAfterNumReads(usize, MockErrKind),
+        ErrEveryNumReads(usize, MockErrKind),
+        ErrAfterNumBytes(usize, MockErrKind),
+        ErrEveryNumBytes(usize, MockErrKind),
+    }
+
+    impl MockErrSpec {
+        fn increment(&mut self, num_bytes: usize, counter: usize) -> usize {
+            let inc = match self {
+                MockErrSpec::ErrAfterNumReads(_, _) | MockErrSpec::ErrEveryNumReads(_, _) => 1,
+                MockErrSpec::ErrAfterNumBytes(_, _) | MockErrSpec::ErrEveryNumBytes(_, _) => {
+                    num_bytes
+                }
+            };
+            counter + inc
+        }
+
+        fn try_error(&self, counter: usize) -> Option<MockErrKind> {
+            match self {
+                MockErrSpec::ErrAfterNumReads(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::ErrEveryNumReads(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::ErrAfterNumBytes(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::ErrEveryNumBytes(n, e) => counter.ge(n).then_some(*e),
+            }
+        }
+    }
+
     impl AsyncRead for MockReadHalf {
         fn poll_read(
             mut self: Pin<&mut Self>,
             cx: &mut Context,
             buf: &mut ReadBuf,
         ) -> Poll<std::io::Result<()>> {
-            if let Some(limit) = self.flaky
-                && self.count >= limit
+            let count = self.count;
+
+            if let Some(spec) = self.flaky.as_mut()
+                && let Some(err) = spec.try_error(count)
             {
-                return Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()));
+                let result = match err {
+                    MockErrKind::Io(kind) => Err(kind.into()),
+                    MockErrKind::Eof => Ok(()),
+                };
+                // return Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()));
                 // return Poll::Ready(Ok(()));
+                log::warn!("Injecting mock error now: {result:?}");
+                return Poll::Ready(result);
             }
 
+            let len_before = buf.filled().len();
             let result = Pin::new(&mut self.inner).poll_read(cx, buf);
-            if matches!(result, Poll::Ready(Ok(_))) {
-                self.count += 1;
+            let len_after = buf.filled().len();
+
+            if matches!(result, Poll::Ready(Ok(_)))
+                && let Some(spec) = self.flaky.as_mut()
+            {
+                let num_bytes = len_after.saturating_sub(len_before);
+                let new_count = spec.increment(num_bytes, count);
+                self.count = new_count;
             }
+
             result
         }
     }
@@ -271,9 +329,9 @@ mod tests {
         }
     }
 
-    const FLAKY: Option<usize> = Some(25);
-    static CONNECTION_REGISTRY: Lazy<Mutex<HashMap<String, UnboundedSender<MockIo>>>> =
-        Lazy::new(|| Mutex::new(HashMap::new()));
+    static CONNECTION_REGISTRY: Lazy<
+        Mutex<HashMap<String, (UnboundedSender<MockIo>, MockErrSpec)>>,
+    > = Lazy::new(|| Mutex::new(HashMap::new()));
 
     struct MockConnector;
     impl MockConnector {
@@ -281,20 +339,29 @@ mod tests {
             format!("{addr:?}")
         }
 
-        fn register(key: String) -> UnboundedReceiver<MockIo> {
+        async fn register(key: String, spec: MockErrSpec) -> UnboundedReceiver<MockIo> {
             let (tx, rx) = mpsc::unbounded_channel();
-            CONNECTION_REGISTRY.lock().unwrap().insert(key, tx);
+            CONNECTION_REGISTRY.lock().await.insert(key, (tx, spec));
             rx
         }
 
         async fn connect(key: String) -> std::io::Result<MockNetStream> {
-            if let Some(tx) = CONNECTION_REGISTRY.lock().unwrap().get(&key) {
+            if let Some((tx, spec)) = CONNECTION_REGISTRY.lock().await.get(&key) {
                 let (c_io, s_io) = MockIo::new_pair();
                 tx.send(s_io).unwrap();
+
+                let next_err =
+                    match spec {
+                        MockErrSpec::ErrAfterNumReads(_, _)
+                        | MockErrSpec::ErrAfterNumBytes(_, _) => None,
+                        MockErrSpec::ErrEveryNumReads(_, _)
+                        | MockErrSpec::ErrEveryNumBytes(_, _) => Some(spec.clone()),
+                    };
+
                 Ok(MockNetStream::new(
                     c_io,
                     "Reconnected MockNetStream client",
-                    FLAKY,
+                    next_err,
                 ))
             } else {
                 Err(std::io::Error::new(
@@ -310,8 +377,8 @@ mod tests {
                 .map(|io| MockNetStream::new(io, "Reconnected MockNetStream", None))
         }
 
-        fn clear() {
-            CONNECTION_REGISTRY.lock().unwrap().clear();
+        async fn deregister(key: &String) {
+            CONNECTION_REGISTRY.lock().await.remove(key);
         }
     }
 
@@ -393,30 +460,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn io_resumable_flaky() {
-        let _ = env_logger::try_init();
-        let len = 1_000_000;
-        log::info!("Running test with length {len}");
-
-        let addr = SocketAddr::from(([127, 0, 0, 1], 666));
+    /// WARNING:
+    /// Addr must be unique from other tests since we are using a global connector.
+    async fn io_resumable_flaky(len: usize, addr: SocketAddr, net_err: MockErrSpec) {
         let key = MockConnector::key(addr);
-        let acceptor = Arc::new(Mutex::new(MockConnector::register(key)));
+        let acceptor = MockConnector::register(key.clone(), net_err).await;
+        let acceptor = Arc::new(Mutex::new(acceptor));
         let token = CancellationToken::new();
 
         let client_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
-            let addr = addr.clone();
             let server_listen = token.clone();
 
             async move {
                 let app = MockNetStream::new(proxy.app, "client_app", None);
-                let net = MockNetStream::new(proxy.net, "client_net", FLAKY);
+                let net = MockNetStream::new(proxy.net, "client_net", Some(net_err));
 
                 let result = client::drive_io_resumable(app, net, proto, addr).await;
 
                 log::debug!("Test client done, cancelling server");
                 server_listen.cancel();
-                MockConnector::clear();
 
                 match result {
                     Ok((tx, rx)) => (Ok(tx), Ok(rx)),
@@ -444,7 +506,7 @@ mod tests {
                     //     _ = server::drive_io_resumable(net, app, proto, map) => {}
                     // };
 
-                    let mut rx = acceptor.lock().unwrap();
+                    let mut rx = acceptor.lock().await;
 
                     let result = tokio::select! {
                         _ = client_reconnect.cancelled() => break,
@@ -466,7 +528,7 @@ mod tests {
                 // This prevents the MockProxyNetwork from stalling.
                 map.clear().await;
                 log::debug!("Test server done, returning now");
-                return (Ok(0), Ok(0));
+                (Ok(0), Ok(0))
             }
         };
 
@@ -480,6 +542,119 @@ mod tests {
             .await
             .assert(len);
 
-        MockConnector::clear();
+        MockConnector::deregister(&key).await;
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_eof_after_5_reads() {
+        // let _ = env_logger::try_init();
+        // for (i, len) in util::payload_len_iter().enumerate() {
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 1, 0, 1], i as u16)),
+                MockErrSpec::ErrAfterNumReads(5, MockErrKind::Eof),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_eof_every_25_reads() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 1, 0, 2], i as u16)),
+                MockErrSpec::ErrEveryNumReads(25, MockErrKind::Eof),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_eof_after_10_000_bytes() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 1, 0, 3], i as u16)),
+                MockErrSpec::ErrAfterNumBytes(10_000, MockErrKind::Eof),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_eof_every_100_000_bytes() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 1, 0, 4], i as u16)),
+                MockErrSpec::ErrEveryNumBytes(100_000, MockErrKind::Eof),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_reset_after_5_reads() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 0, 0, 5], i as u16)),
+                MockErrSpec::ErrAfterNumReads(5, std::io::ErrorKind::ConnectionReset.into()),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_reset_every_25_reads() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 0, 0, 6], i as u16)),
+                MockErrSpec::ErrEveryNumReads(25, std::io::ErrorKind::ConnectionReset.into()),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_reset_after_10_000_bytes() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 0, 0, 7], i as u16)),
+                MockErrSpec::ErrAfterNumBytes(10_000, std::io::ErrorKind::ConnectionReset.into()),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn io_resumable_flaky_reset_every_100_000_bytes() {
+        // let _ = env_logger::try_init();
+        for (i, len) in [(0, 1_000_000)] {
+            log::info!("Running test {i} with length {len}");
+            io_resumable_flaky(
+                len,
+                SocketAddr::from(([127, 0, 0, 8], i as u16)),
+                MockErrSpec::ErrEveryNumBytes(100_000, std::io::ErrorKind::ConnectionReset.into()),
+            )
+            .await;
+        }
     }
 }
