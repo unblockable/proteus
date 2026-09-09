@@ -276,7 +276,7 @@ pub async fn io_copy_interpreter<T: TaskProvider + Clone + Send>(
         proxy.net.writer,
         protospec,
     );
-    let (r1, r2) = interpreter.run_join(None).await;
+    let (r1, r2) = interpreter.run_join().await;
     (r1.map_err(|e| e.into()), r2.map_err(|e| e.into()))
 }
 

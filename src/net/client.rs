@@ -75,7 +75,7 @@ where
     let (net_src, net_dst) = outbound.into_split();
 
     let mut interpreter = Interpreter::new(app_src, app_dst, net_src, net_dst, proto);
-    let result = interpreter.run_try_join(None).await;
+    let result = interpreter.run_try_join().await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -83,7 +83,7 @@ pub async fn drive_io_resumable<S, T>(
     inbound: S,
     outbound: S,
     proto: T,
-    reconnect_addr: TargetAddr,
+    server: SocketAddr,
 ) -> Result<(usize, usize), Error>
 where
     S: NetStream,
@@ -109,15 +109,7 @@ where
     let resume_handle = resume.handle().clone();
     let stack = Framing::new(resume);
 
-    reconnecting_client(
-        stack,
-        outbound,
-        proto,
-        rely_handle,
-        resume_handle,
-        reconnect_addr,
-    )
-    .await
+    reconnecting_client(stack, outbound, proto, rely_handle, resume_handle, server).await
 }
 
 async fn reconnecting_client<P, S, T>(
@@ -126,7 +118,7 @@ async fn reconnecting_client<P, S, T>(
     proto: T,
     mut rely_handle: ReliabilityHandle,
     resume_handle: ResumptionHandle,
-    target: TargetAddr,
+    server: SocketAddr,
 ) -> Result<(usize, usize), Error>
 where
     P: Protocol,
@@ -155,12 +147,8 @@ where
         );
 
         let result = tokio::select! {
-            result = interpreter.run_try_join(Some(rely_handle.clone())) => {
-                result
-            }
-            _ = cancel_token.cancelled() => {
-                return Err(Error::ResumeResponse);
-            }
+            _ = cancel_token.cancelled() => return Err(Error::ResumeResponse),
+            result = interpreter.run_try_join_with(rely_handle.clone()) => result,
         };
 
         match result {
@@ -174,9 +162,8 @@ where
 
         (stack_reader, stack_writer, _, _) = interpreter.into_inner();
 
-        let reconnected_stream = S::connect(target.to_string())
-            .await
-            .map_err(Error::ConnectFailed)?;
+        let reconnected_stream = S::connect(server).await.map_err(Error::ConnectFailed)?;
+
         (net_reader, net_writer) = reconnected_stream.into_split();
 
         stack_reader.clear();
@@ -218,7 +205,19 @@ async fn should_try_to_recover(err: &interpreter::Error, handle: &mut Reliabilit
     };
 
     // If we already performed a graceful shutdown, no need to recover.
-    is_caused_by_net && !handle.is_shutdown_complete().await
+    let is_graceful = handle.is_shutdown_complete().await;
+    let should_recover = is_caused_by_net && !is_graceful;
+
+    let verb = if should_recover { "will" } else { "will not" };
+
+    log::debug!(
+        "Client {verb} try to recover: \
+        net_caused={is_caused_by_net} \
+        graceful_shutdown={is_graceful} \
+        error={err:?}."
+    );
+
+    should_recover
 }
 
 fn network_target(target: TargetAddr) -> NetworkTarget {
@@ -248,7 +247,7 @@ where
     // Prepare the interpreter to transfer between the stack and network connection.
     let mut interpreter =
         Interpreter::new(stack_reader, stack_writer, net_reader, net_writer, proto);
-    let result = interpreter.run_try_join(None).await;
+    let result = interpreter.run_try_join().await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -297,7 +296,6 @@ impl<S: NetStream> Client<S> {
 async fn start_tunnel<S, T>(
     server: SocketAddr,
     proto: T,
-    target: TargetAddr,
     resume: bool,
 ) -> Result<RoutingHandle<NetPayload<S>>, Error>
 where
@@ -325,7 +323,7 @@ where
             proto,
             rely_handle,
             resume_handle,
-            target,
+            server,
         ));
 
         Ok(router_handle)
@@ -353,17 +351,14 @@ impl<S: NetStream> ConnectionHandler<S> for Client<S> {
         T: TaskProvider + Clone + Send + 'static,
     {
         let router = match &self.state {
-            ConnectionState::Simplex => {
-                start_tunnel::<S, T>(server, proto, target.clone(), self.resume).await?
-            }
+            ConnectionState::Simplex => start_tunnel::<S, T>(server, proto, self.resume).await?,
             ConnectionState::Multiplex(mutex) => {
                 let mut guard = mutex.lock().await;
 
                 if let Some(router) = guard.as_mut() {
                     router.clone()
                 } else {
-                    let router =
-                        start_tunnel::<S, T>(server, proto, target.clone(), self.resume).await?;
+                    let router = start_tunnel::<S, T>(server, proto, self.resume).await?;
                     guard.insert(router).clone()
                 }
             }

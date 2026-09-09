@@ -47,6 +47,49 @@ impl From<Error> for lang::Error {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CleanupAction {
+    /// Call shutdown to propagate valid EOF and let the other forwarder finish.
+    ShutdownThenOk,
+    /// Flush and shutdown the socket, but stop both forwarders.
+    ShutdownThenErr,
+    _Ok,
+    /// Stops both forwarders, but don't shutdown so we can still re-use the socket.
+    Err,
+}
+
+fn eof_shutdown_handler(error: &Error) -> CleanupAction {
+    match error {
+        Error::AppToNet(lang::Error::Io(io::Error::Eof)) => CleanupAction::ShutdownThenOk,
+        Error::NetToApp(lang::Error::Io(io::Error::Eof)) => CleanupAction::ShutdownThenOk,
+        _ => CleanupAction::ShutdownThenErr,
+    }
+}
+
+async fn reliable_shutdown_handler(error: &Error, handle: &mut ReliabilityHandle) -> CleanupAction {
+    // Check if this error is caused by the network-side connection.
+    #[allow(clippy::match_like_matches_macro)]
+    let action = match error {
+        Error::NetToApp(lang::Error::Io(io::Error::Eof))
+        | Error::AppToNet(lang::Error::Io(io::Error::Eof)) => {
+            if handle.is_shutdown_complete().await {
+                CleanupAction::ShutdownThenOk
+            } else {
+                CleanupAction::Err
+            }
+        }
+        Error::NetToApp(lang::Error::Io(io::Error::Read(_)))
+        | Error::AppToNet(lang::Error::Io(io::Error::Write(_))) => CleanupAction::Err,
+        Error::AppToNet(lang::Error::Io(io::Error::Read(_)))
+        | Error::NetToApp(lang::Error::Io(io::Error::Write(_))) => CleanupAction::ShutdownThenErr,
+        _ => CleanupAction::ShutdownThenErr,
+    };
+
+    log::debug!("Taking action {action:?} in response to error {error:?}");
+
+    action
+}
+
 pub struct Interpreter<NetR, AppR, NetW, AppW, T>
 where
     NetR: AsyncRead + Unpin,
@@ -101,14 +144,8 @@ where
     /// Runs the interpreter in both forwarding directions concurrently until
     /// **both** forwarding operations complete. Returns the result of each
     /// operation as `(app_to_net_result, net_to_app_result)`.
-    pub async fn run_join(
-        &mut self,
-        handle: Option<ReliabilityHandle>,
-    ) -> (Result<usize>, Result<usize>) {
-        let result = tokio::join!(
-            self.fwd_app_to_net.run(handle.clone()),
-            self.fwd_net_to_app.run(handle)
-        );
+    pub async fn run_join(&mut self) -> (Result<usize>, Result<usize>) {
+        let result = tokio::join!(self.fwd_app_to_net.run(None), self.fwd_net_to_app.run(None));
 
         self.log_completion(&format!("{:?}", result.0), &format!("{:?}", result.1));
 
@@ -119,7 +156,15 @@ where
     /// **both** forwarding operation completes, or one returns an error. On
     /// error, it returns the error of the first operation that failed after
     /// cancelling the other operation.
-    pub async fn run_try_join(
+    pub async fn run_try_join(&mut self) -> Result<(usize, usize)> {
+        self.run_try_join_internal(None).await
+    }
+
+    pub async fn run_try_join_with(&mut self, handle: ReliabilityHandle) -> Result<(usize, usize)> {
+        self.run_try_join_internal(Some(handle)).await
+    }
+
+    async fn run_try_join_internal(
         &mut self,
         handle: Option<ReliabilityHandle>,
     ) -> Result<(usize, usize)> {
@@ -200,12 +245,12 @@ where
         }
     }
 
-    async fn run(&mut self, mut handle: Option<ReliabilityHandle>) -> Result<usize> {
+    async fn run(&mut self, handle: Option<ReliabilityHandle>) -> Result<usize> {
         loop {
             // Load a program for our direction, once one becomes available.
             let mut program = match self.loader.load(self.direction).await {
                 Ok(prog) => prog,
-                Err(e) => return Err(Error::new(lang::Error::Anyhow(e), self.direction)),
+                Err(e) => return self.handle_error(lang::Error::Anyhow(e), handle).await,
             };
 
             // Runs the program by executing its sequence of instructions.
@@ -215,9 +260,9 @@ where
             let unload_result = self.loader.unload(program);
 
             if let Err(e) = exe_result {
-                return self.handle_error(e, &mut handle).await;
+                return self.handle_error(e, handle).await;
             } else if let Err(e) = unload_result {
-                return Err(Error::new(lang::Error::Anyhow(e), self.direction));
+                return self.handle_error(lang::Error::Anyhow(e), handle).await;
             }
         }
     }
@@ -225,41 +270,28 @@ where
     async fn handle_error(
         &mut self,
         error: lang::Error,
-        handle: &mut Option<ReliabilityHandle>,
+        handle: Option<ReliabilityHandle>,
     ) -> Result<usize> {
-        // Note: an on-path adversary can cause a premature EOF (e.g., by forging a TCP FIN packet).
-        match error {
-            lang::Error::Io(io::Error::Eof) => match &self.direction {
-                // We assume an app EOF is not forged and is valid.
-                ForwardingDirection::AppToNet => self.shutdown().await,
-                // A net EOF might be forged.
-                ForwardingDirection::NetToApp => {
-                    if let Some(rely) = handle {
-                        // Valid if the reliability subprotocol had a graceful shutdown.
-                        if rely.is_shutdown_complete().await {
-                            self.shutdown().await
-                        } else {
-                            self.error(error)
-                        }
-                    } else {
-                        // No reliability subprotocol, the best we can do is assume valid.
-                        self.shutdown().await
-                    }
-                }
-            },
-            // All other errors stop the interpreter, let the client choose to recover.
-            _ => self.error(error),
+        log::trace!("Forwarder direction {:?} error {error:?}", self.direction);
+        let ierror = Error::new(error, self.direction);
+
+        let result = match handle {
+            Some(mut handle) => reliable_shutdown_handler(&ierror, &mut handle).await,
+            None => eof_shutdown_handler(&ierror),
+        };
+
+        match result {
+            CleanupAction::ShutdownThenOk => {
+                let _ = self.vm.shutdown().await;
+                Ok(self.vm.num_bytes_sent())
+            }
+            CleanupAction::ShutdownThenErr => {
+                let _ = self.vm.shutdown().await;
+                Err(ierror)
+            }
+            CleanupAction::_Ok => Ok(self.vm.num_bytes_sent()),
+            CleanupAction::Err => Err(ierror),
         }
-    }
-
-    async fn shutdown(&mut self) -> Result<usize> {
-        let result = self.vm.shutdown().await;
-        log::debug!("{:?} shutdown(): {result:?}", self.direction);
-        Ok(self.vm.num_bytes_sent())
-    }
-
-    fn error(&mut self, error: lang::Error) -> Result<usize> {
-        Err(Error::new(error, self.direction))
     }
 }
 

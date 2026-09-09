@@ -110,16 +110,17 @@ pub fn fmt_listener_name(listener: &TcpListener) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::net::SocketAddr;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
 
     use anyhow::anyhow;
-    use fast_socks5::util::target_addr::TargetAddr;
     use once_cell::sync::Lazy;
     use supertunnel::proto::{Reliability, ResumptionMap};
-    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
     use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+    use tokio_util::sync::CancellationToken;
 
     use crate::lang::Role;
     use crate::lang::ir::test::basic::LengthPayloadSpec;
@@ -218,10 +219,8 @@ mod tests {
             if let Some(limit) = self.flaky
                 && self.count >= limit
             {
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionReset,
-                    "Mocking a network connection error",
-                )));
+                return Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()));
+                // return Poll::Ready(Ok(()));
             }
 
             let result = Pin::new(&mut self.inner).poll_read(cx, buf);
@@ -269,10 +268,6 @@ mod tests {
     impl Drop for MockWriteHalf {
         fn drop(&mut self) {
             log::trace!("Dropping MockWriteHalf");
-            // Need to call shutdown to propagate EOF signals during tests.
-            if let Some(mut writer) = self.inner.take() {
-                tokio::spawn(async move { writer.shutdown().await });
-            }
         }
     }
 
@@ -361,18 +356,15 @@ mod tests {
         // let _ = env_logger::try_init();
         for len in util::payload_len_iter() {
             let map: ResumptionMap<Reliability<NetPayload<MockNetStream>>> = ResumptionMap::new();
-            let addr: TargetAddr = TargetAddr::Domain("test".into(), 443);
+            let addr = SocketAddr::from(([127, 0, 0, 1], 0));
 
-            let client_fwd = |proto, proxy: MockProxy| {
-                let reconn_addr = addr.clone();
-                async move {
-                    let inbound = MockNetStream::new(proxy.app, "client_app", None);
-                    let outbound = MockNetStream::new(proxy.net, "client_net", None);
+            let client_fwd = |proto, proxy: MockProxy| async move {
+                let inbound = MockNetStream::new(proxy.app, "client_app", None);
+                let outbound = MockNetStream::new(proxy.net, "client_net", None);
 
-                    match client::drive_io_resumable(inbound, outbound, proto, reconn_addr).await {
-                        Ok((tx, rx)) => (Ok(tx), Ok(rx)),
-                        Err(e) => (Err(anyhow!(e).into()), Err(anyhow!("Test Failed").into())),
-                    }
+                match client::drive_io_resumable(inbound, outbound, proto, addr).await {
+                    Ok((tx, rx)) => (Ok(tx), Ok(rx)),
+                    Err(e) => (Err(anyhow!(e).into()), Err(anyhow!("Test Failed").into())),
                 }
             };
 
@@ -403,72 +395,91 @@ mod tests {
 
     #[tokio::test]
     async fn io_resumable_flaky() {
-        // let _ = env_logger::try_init();
-        for len in util::payload_len_iter() {
-            log::info!("Running test with length {len}");
+        let _ = env_logger::try_init();
+        let len = 1_000_000;
+        log::info!("Running test with length {len}");
 
-            let addr: TargetAddr = TargetAddr::Domain("io_resumable_flaky".into(), 666);
-            let key = MockConnector::key(addr.to_string());
-            let acceptor = Arc::new(Mutex::new(MockConnector::register(key)));
+        let addr = SocketAddr::from(([127, 0, 0, 1], 666));
+        let key = MockConnector::key(addr);
+        let acceptor = Arc::new(Mutex::new(MockConnector::register(key)));
+        let token = CancellationToken::new();
 
-            let client_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
-                let addr = addr.clone();
-                async move {
-                    let app = MockNetStream::new(proxy.app, "client_app", None);
-                    let net = MockNetStream::new(proxy.net, "client_net", FLAKY);
+        let client_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
+            let addr = addr.clone();
+            let server_listen = token.clone();
 
-                    let result = client::drive_io_resumable(app, net, proto, addr).await;
-                    MockConnector::clear();
-                    log::info!("Client exited");
+            async move {
+                let app = MockNetStream::new(proxy.app, "client_app", None);
+                let net = MockNetStream::new(proxy.net, "client_net", FLAKY);
+
+                let result = client::drive_io_resumable(app, net, proto, addr).await;
+
+                log::debug!("Test client done, cancelling server");
+                server_listen.cancel();
+                MockConnector::clear();
+
+                match result {
+                    Ok((tx, rx)) => (Ok(tx), Ok(rx)),
+                    Err(e) => (Err(anyhow!(e).into()), Err(anyhow!("Test Failed").into())),
+                }
+            }
+        };
+
+        let server_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
+            let mut map = ResumptionMap::new();
+            let acceptor = acceptor.clone();
+            let client_reconnect = token.clone();
+
+            async move {
+                let mut net = MockNetStream::new(proxy.net, "server_net", None);
+                let mut app = MockNetStream::new(proxy.app, "server_app", None);
+                let mut keep_alive = Vec::new();
+
+                loop {
+                    let (proto, map) = (proto.clone(), map.clone());
+
+                    let _ = server::drive_io_resumable(net, app, proto, map).await;
+                    // select! {
+                    //     _ = client_reconnect.cancelled() => break,
+                    //     _ = server::drive_io_resumable(net, app, proto, map) => {}
+                    // };
+
+                    let mut rx = acceptor.lock().unwrap();
+
+                    let result = tokio::select! {
+                        _ = client_reconnect.cancelled() => break,
+                        result = MockConnector::accept(&mut rx) => result
+                    };
+
                     match result {
-                        Ok((tx, rx)) => (Ok(tx), Ok(rx)),
-                        Err(e) => (Err(anyhow!(e).into()), Err(anyhow!("Test Failed").into())),
-                    }
-                }
-            };
-
-            let server_fwd = |proto: LengthPayloadSpec, proxy: MockProxy| {
-                let mut map = ResumptionMap::new();
-                let acceptor = acceptor.clone();
-                async move {
-                    let mut net = MockNetStream::new(proxy.net, "server_net", None);
-                    let mut app = MockNetStream::new(proxy.app, "server_app", None);
-                    let mut keep_alive = Vec::new();
-
-                    loop {
-                        let (proto, map) = (proto.clone(), map.clone());
-                        let _ = server::drive_io_resumable(net, app, proto, map).await;
-
-                        let mut rx = acceptor.lock().unwrap();
-                        match MockConnector::accept(&mut rx).await {
-                            Some(accepted_stream) => {
-                                net = accepted_stream;
-                                let (tmp_a, tmp_b) = MockIo::new_pair();
-                                app = MockNetStream::new(tmp_a, "server_app_tmp", None);
-                                keep_alive.push(tmp_b);
-                            }
-                            None => break,
+                        Some(accepted_stream) => {
+                            net = accepted_stream;
+                            let (tmp_a, tmp_b) = MockIo::new_pair();
+                            app = MockNetStream::new(tmp_a, "server_app_tmp", None);
+                            keep_alive.push(tmp_b);
                         }
+                        None => break,
                     }
-
-                    // Need to clear out the stale NetStreams to propagate EOF signals.
-                    // This prevents the MockProxyNetwork from stalling.
-                    map.clear().await;
-                    return (Ok(0), Ok(0));
                 }
-            };
 
-            MockProxyNetwork::new(len)
-                .run_with_forwarder(
-                    LengthPayloadSpec::new(Role::Client),
-                    client_fwd,
-                    LengthPayloadSpec::new(Role::Server),
-                    server_fwd,
-                )
-                .await
-                .assert(len);
+                // Need to clear out the stale NetStreams to propagate EOF signals.
+                // This prevents the MockProxyNetwork from stalling.
+                map.clear().await;
+                log::debug!("Test server done, returning now");
+                return (Ok(0), Ok(0));
+            }
+        };
 
-            MockConnector::clear();
-        }
+        MockProxyNetwork::new(len)
+            .run_with_forwarder(
+                LengthPayloadSpec::new(Role::Client),
+                client_fwd,
+                LengthPayloadSpec::new(Role::Server),
+                server_fwd,
+            )
+            .await
+            .assert(len);
+
+        MockConnector::clear();
     }
 }

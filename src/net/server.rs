@@ -47,7 +47,7 @@ where
     let (app_src, app_dst) = outbound.into_split();
 
     let mut interpreter = Interpreter::new(app_src, app_dst, net_src, net_dst, proto);
-    let result = interpreter.run_try_join(None).await;
+    let result = interpreter.run_try_join().await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -78,7 +78,7 @@ where
 
     let payload = Payload::new(0, app_src, app_dst, stack_mss);
     let rely = Reliability::new(payload);
-    let rely_handle = rely.handle().clone();
+    let handle = rely.handle().clone();
     let resume = ResumptionServer::new_with(rely, map);
     let stack = Framing::new(resume);
 
@@ -92,7 +92,7 @@ where
     // In case of failure, the client might want to resume on a new connection.
     // Super Tunnel handles this through the ResumptionMap, so we can safely
     // drop the io components and return to clean up this spawned task.
-    let result = interpreter.run_try_join(Some(rely_handle)).await;
+    let result = interpreter.run_try_join_with(handle).await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -124,7 +124,7 @@ where
     let stack_writer = DecodedSinkWriter::<Stack<S, F>>::new(sink, Stack::<S, F>::codec());
 
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
-    let result = interpreter.run_try_join(None).await;
+    let result = interpreter.run_try_join().await;
     result.map_err(Error::InterpreterFailed)
 }
 
@@ -165,6 +165,6 @@ where
     let stack_writer = DecodedSinkWriter::<Stack<S, F>>::new(sink, Stack::<S, F>::codec());
 
     let mut interpreter = Interpreter::new(stack_reader, stack_writer, net_src, net_dst, proto);
-    let result = interpreter.run_try_join(Some(rely_handle)).await;
+    let result = interpreter.run_try_join_with(rely_handle).await;
     result.map_err(Error::InterpreterFailed)
 }

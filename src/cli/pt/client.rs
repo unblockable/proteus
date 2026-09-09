@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::str::FromStr;
 
 use anyhow::bail;
 use fast_socks5::server::Socks5ServerProtocol;
@@ -87,18 +88,21 @@ async fn socks_then_transfer(inbound: TcpStream) -> Result<TargetAddr, client::E
         return Err(client::Error::SocksCommandNotSupported);
     };
 
+    let Ok(bridge) = SocketAddr::from_str(&target.clone().to_string()) else {
+        socks.reply_error(&ReplyError::AddressTypeNotSupported).await?;
+        return Err(client::Error::ConnectParseFailed);
+    };
+
     // Compile the chosen PSF for the given target bridge.
     let Ok(proto) = Compiler::parse_path(psf_path, Role::Client) else {
         socks.reply_error(&ReplyError::GeneralFailure).await?;
         return Err(client::Error::PsfCompileFailed);
     };
 
-    let (host, port) = target.clone().into_string_and_port();
-
-    let outbound = match client::connect((host, port)).await {
+    let outbound = match client::connect(bridge).await {
         Ok(stream) => stream,
         Err(e) => {
-            log::warn!("Connection to {target} failed: {e:?}.");
+            log::warn!("Connection to {bridge} failed: {e:?}.");
             socks.reply_error(&socks_reply_error(&e)).await?;
             return Err(e);
         }
@@ -113,7 +117,7 @@ async fn socks_then_transfer(inbound: TcpStream) -> Result<TargetAddr, client::E
         .get("persist")
         .is_some_and(|v| v.to_ascii_lowercase().eq("true"))
     {
-        client::drive_io_resumable(inbound, outbound, proto, target.clone()).await?;
+        client::drive_io_resumable(inbound, outbound, proto, bridge).await?;
         log::info!("Super transfer succeeded");
     } else {
         client::drive_io_direct(inbound, outbound, proto).await?;
