@@ -225,29 +225,27 @@ mod tests {
 
     #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
     pub enum MockErrSpec {
-        ErrAfterNumReads(usize, MockErrKind),
-        ErrEveryNumReads(usize, MockErrKind),
-        ErrAfterNumBytes(usize, MockErrKind),
-        ErrEveryNumBytes(usize, MockErrKind),
+        AfterNumReads(usize, MockErrKind),
+        EveryNumReads(usize, MockErrKind),
+        AfterNumBytes(usize, MockErrKind),
+        EveryNumBytes(usize, MockErrKind),
     }
 
     impl MockErrSpec {
         fn increment(&mut self, num_bytes: usize, counter: usize) -> usize {
             let inc = match self {
-                MockErrSpec::ErrAfterNumReads(_, _) | MockErrSpec::ErrEveryNumReads(_, _) => 1,
-                MockErrSpec::ErrAfterNumBytes(_, _) | MockErrSpec::ErrEveryNumBytes(_, _) => {
-                    num_bytes
-                }
+                MockErrSpec::AfterNumReads(_, _) | MockErrSpec::EveryNumReads(_, _) => 1,
+                MockErrSpec::AfterNumBytes(_, _) | MockErrSpec::EveryNumBytes(_, _) => num_bytes,
             };
             counter + inc
         }
 
         fn try_error(&self, counter: usize) -> Option<MockErrKind> {
             match self {
-                MockErrSpec::ErrAfterNumReads(n, e) => counter.ge(n).then_some(*e),
-                MockErrSpec::ErrEveryNumReads(n, e) => counter.ge(n).then_some(*e),
-                MockErrSpec::ErrAfterNumBytes(n, e) => counter.ge(n).then_some(*e),
-                MockErrSpec::ErrEveryNumBytes(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::AfterNumReads(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::EveryNumReads(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::AfterNumBytes(n, e) => counter.ge(n).then_some(*e),
+                MockErrSpec::EveryNumBytes(n, e) => counter.ge(n).then_some(*e),
             }
         }
     }
@@ -329,9 +327,8 @@ mod tests {
         }
     }
 
-    static CONNECTION_REGISTRY: Lazy<
-        Mutex<HashMap<String, (UnboundedSender<MockIo>, MockErrSpec)>>,
-    > = Lazy::new(|| Mutex::new(HashMap::new()));
+    type Registry = HashMap<String, (UnboundedSender<MockIo>, MockErrSpec)>;
+    static CONNECTION_REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
     struct MockConnector;
     impl MockConnector {
@@ -350,13 +347,12 @@ mod tests {
                 let (c_io, s_io) = MockIo::new_pair();
                 tx.send(s_io).unwrap();
 
-                let next_err =
-                    match spec {
-                        MockErrSpec::ErrAfterNumReads(_, _)
-                        | MockErrSpec::ErrAfterNumBytes(_, _) => None,
-                        MockErrSpec::ErrEveryNumReads(_, _)
-                        | MockErrSpec::ErrEveryNumBytes(_, _) => Some(spec.clone()),
-                    };
+                let next_err = match spec {
+                    MockErrSpec::AfterNumReads(_, _) | MockErrSpec::AfterNumBytes(_, _) => None,
+                    MockErrSpec::EveryNumReads(_, _) | MockErrSpec::EveryNumBytes(_, _) => {
+                        Some(*spec)
+                    }
+                };
 
                 Ok(MockNetStream::new(
                     c_io,
@@ -554,7 +550,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 1, 0, 1], i as u16)),
-                MockErrSpec::ErrAfterNumReads(5, MockErrKind::Eof),
+                MockErrSpec::AfterNumReads(5, MockErrKind::Eof),
             )
             .await;
         }
@@ -568,7 +564,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 1, 0, 2], i as u16)),
-                MockErrSpec::ErrEveryNumReads(25, MockErrKind::Eof),
+                MockErrSpec::EveryNumReads(25, MockErrKind::Eof),
             )
             .await;
         }
@@ -582,7 +578,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 1, 0, 3], i as u16)),
-                MockErrSpec::ErrAfterNumBytes(10_000, MockErrKind::Eof),
+                MockErrSpec::AfterNumBytes(10_000, MockErrKind::Eof),
             )
             .await;
         }
@@ -596,7 +592,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 1, 0, 4], i as u16)),
-                MockErrSpec::ErrEveryNumBytes(100_000, MockErrKind::Eof),
+                MockErrSpec::EveryNumBytes(100_000, MockErrKind::Eof),
             )
             .await;
         }
@@ -610,7 +606,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 0, 0, 5], i as u16)),
-                MockErrSpec::ErrAfterNumReads(5, std::io::ErrorKind::ConnectionReset.into()),
+                MockErrSpec::AfterNumReads(5, std::io::ErrorKind::ConnectionReset.into()),
             )
             .await;
         }
@@ -624,7 +620,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 0, 0, 6], i as u16)),
-                MockErrSpec::ErrEveryNumReads(25, std::io::ErrorKind::ConnectionReset.into()),
+                MockErrSpec::EveryNumReads(25, std::io::ErrorKind::ConnectionReset.into()),
             )
             .await;
         }
@@ -638,7 +634,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 0, 0, 7], i as u16)),
-                MockErrSpec::ErrAfterNumBytes(10_000, std::io::ErrorKind::ConnectionReset.into()),
+                MockErrSpec::AfterNumBytes(10_000, std::io::ErrorKind::ConnectionReset.into()),
             )
             .await;
         }
@@ -652,7 +648,7 @@ mod tests {
             io_resumable_flaky(
                 len,
                 SocketAddr::from(([127, 0, 0, 8], i as u16)),
-                MockErrSpec::ErrEveryNumBytes(100_000, std::io::ErrorKind::ConnectionReset.into()),
+                MockErrSpec::EveryNumBytes(100_000, std::io::ErrorKind::ConnectionReset.into()),
             )
             .await;
         }

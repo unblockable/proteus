@@ -89,7 +89,9 @@ async fn socks_then_transfer(inbound: TcpStream) -> Result<TargetAddr, client::E
     };
 
     let Ok(bridge) = SocketAddr::from_str(&target.clone().to_string()) else {
-        socks.reply_error(&ReplyError::AddressTypeNotSupported).await?;
+        socks
+            .reply_error(&ReplyError::AddressTypeNotSupported)
+            .await?;
         return Err(client::Error::ConnectParseFailed);
     };
 
