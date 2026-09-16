@@ -56,8 +56,8 @@ Maintain clippy standards:
     cargo clippy --all-targets -- -Dwarnings
 
 Pluggable Transport v1 specifications
-- https://gitweb.torproject.org/torspec.git/tree/pt-spec.txt
-- https://gitweb.torproject.org/torspec.git/tree/ext-orport-spec.txt
+- https://gitlab.torproject.org/tpo/core/torspec/-/tree/main/spec/pt-spec/
+- https://gitlab.torproject.org/tpo/core/torspec/-/blob/main/spec/ext-orport-spec.md
 
 ## Research notes
 
